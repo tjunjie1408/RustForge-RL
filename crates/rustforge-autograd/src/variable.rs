@@ -278,6 +278,17 @@ impl fmt::Debug for Variable {
     }
 }
 
+impl Variable {
+    pub fn graph_inputs(&self) -> Option<Vec<Variable>> {
+        let inner = self.inner.borrow();
+        inner.grad_fn.as_ref().map(|gf| gf.inputs())
+    }
+
+    pub fn id(&self) -> usize {
+        Rc::as_ptr(&self.inner) as usize
+    }
+}
+
 // ============================================================================
 // Unit Tests
 // ============================================================================
