@@ -92,11 +92,7 @@ fn topological_sort(output: &Variable) -> Vec<Variable> {
 }
 
 /// DFS helper: visits children first, then pushes the current node (post-order).
-fn dfs(
-    var: &Variable,
-    visited: &mut HashSet<usize>,
-    sorted: &mut Vec<Variable>,
-) {
+fn dfs(var: &Variable, visited: &mut HashSet<usize>, sorted: &mut Vec<Variable>) {
     let ptr = Rc::as_ptr(&var.inner) as usize;
     if visited.contains(&ptr) {
         return;

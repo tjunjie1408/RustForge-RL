@@ -13,8 +13,8 @@
 //!   modifying the original data. The autograd layer will add reference counting and gradient tracking
 //!   on top of this.
 
-use ndarray::{ArrayD, IxDyn, Axis};
-use serde::{Serialize, Deserialize};
+use ndarray::{ArrayD, Axis, IxDyn};
+use serde::{Deserialize, Serialize};
 
 use crate::error::{TensorError, TensorResult};
 use crate::shape;
@@ -314,7 +314,13 @@ impl Tensor {
     pub fn squeeze(&self, axis: Option<usize>) -> Tensor {
         match axis {
             Some(ax) => {
-                assert_eq!(self.shape()[ax], 1, "Cannot squeeze axis {} with size {}", ax, self.shape()[ax]);
+                assert_eq!(
+                    self.shape()[ax],
+                    1,
+                    "Cannot squeeze axis {} with size {}",
+                    ax,
+                    self.shape()[ax]
+                );
                 let mut new_shape: Vec<usize> = self.shape().to_vec();
                 new_shape.remove(ax);
                 if new_shape.is_empty() {
@@ -325,7 +331,8 @@ impl Tensor {
                 }
             }
             None => {
-                let new_shape: Vec<usize> = self.shape().iter().filter(|&&d| d != 1).cloned().collect();
+                let new_shape: Vec<usize> =
+                    self.shape().iter().filter(|&&d| d != 1).cloned().collect();
                 if new_shape.is_empty() {
                     Tensor::scalar(self.item())
                 } else {
@@ -361,10 +368,9 @@ impl Tensor {
                 ndim: self.ndim(),
             });
         }
-        let sliced = self.data.slice_axis(
-            Axis(axis),
-            ndarray::Slice::from(start..end),
-        );
+        let sliced = self
+            .data
+            .slice_axis(Axis(axis), ndarray::Slice::from(start..end));
         Ok(Tensor::from_ndarray(sliced.to_owned()))
     }
 
@@ -468,7 +474,6 @@ impl Tensor {
         let indices: Vec<usize> = self
             .data
             .axis_iter(Axis(axis))
-
             .map(|_lane| 0) // placeholder
             .collect();
 
@@ -489,8 +494,7 @@ impl Tensor {
     /// Calculates the variance of all elements.
     pub fn var(&self) -> Tensor {
         let mean = self.data.mean().unwrap_or(0.0);
-        let var = self.data.iter().map(|x| (x - mean).powi(2)).sum::<f32>()
-            / (self.numel() as f32);
+        let var = self.data.iter().map(|x| (x - mean).powi(2)).sum::<f32>() / (self.numel() as f32);
         Tensor::scalar(var)
     }
 
@@ -641,13 +645,12 @@ impl Tensor {
         }
 
         let views: Vec<_> = tensors.iter().map(|t| t.data.view()).collect();
-        let result = ndarray::concatenate(Axis(axis), &views).map_err(|_| {
-            TensorError::ShapeMismatch {
+        let result =
+            ndarray::concatenate(Axis(axis), &views).map_err(|_| TensorError::ShapeMismatch {
                 op: "cat".to_string(),
                 left: tensors[0].shape().to_vec(),
                 right: tensors.last().unwrap().shape().to_vec(),
-            }
-        })?;
+            })?;
 
         Ok(Tensor::from_ndarray(result))
     }
@@ -662,13 +665,12 @@ impl Tensor {
         }
 
         let views: Vec<_> = tensors.iter().map(|t| t.data.view()).collect();
-        let result = ndarray::stack(Axis(axis), &views).map_err(|_| {
-            TensorError::ShapeMismatch {
+        let result =
+            ndarray::stack(Axis(axis), &views).map_err(|_| TensorError::ShapeMismatch {
                 op: "stack".to_string(),
                 left: tensors[0].shape().to_vec(),
                 right: tensors.last().unwrap().shape().to_vec(),
-            }
-        })?;
+            })?;
 
         Ok(Tensor::from_ndarray(result))
     }

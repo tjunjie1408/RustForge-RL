@@ -23,13 +23,13 @@
 //! let f = d.softmax(1);
 //! ```
 
-pub mod tensor;
-pub mod ops;
-pub mod shape;
-pub mod random;
 pub mod display;
 pub mod error;
+pub mod ops;
+pub mod random;
+pub mod shape;
+pub mod tensor;
 
 // Re-export core types for user convenience
-pub use tensor::Tensor;
 pub use error::TensorError;
+pub use tensor::Tensor;
