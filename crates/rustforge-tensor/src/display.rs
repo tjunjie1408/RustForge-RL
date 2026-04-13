@@ -117,10 +117,12 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::approx_constant)]
     fn test_display_scalar() {
-        let t = Tensor::scalar(3.14);
+        let t = Tensor::scalar(3.14159);
         let s = format!("{}", t);
-        assert!(s.contains("3.14"));
+        // It's formatted to 4 decimal places inside `fmt`: "{:.4}"
+        assert!(s.contains("3.1416"));
         assert!(s.contains("shape=[]"));
     }
 }
