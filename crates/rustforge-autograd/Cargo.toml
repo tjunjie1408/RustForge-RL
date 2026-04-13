@@ -8,3 +8,6 @@ edition.workspace = true
 rustforge-tensor = { path = "../rustforge-tensor" }
 ndarray = { workspace = true }
 serde = { workspace = true }
+
+[dev-dependencies]
+approx = { workspace = true }
