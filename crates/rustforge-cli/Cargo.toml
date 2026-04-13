@@ -7,5 +7,6 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+anyhow = "1.0.102"
 rustforge-autograd = { path = "../rustforge-autograd" }
 rustforge-tensor = { path = "../rustforge-tensor" }
