@@ -468,8 +468,8 @@ impl Tensor {
         let indices: Vec<usize> = self
             .data
             .axis_iter(Axis(axis))
-            .enumerate()
-            .map(|(_i, _lane)| 0) // placeholder
+
+            .map(|_lane| 0) // placeholder
             .collect();
 
         // Correct implementation: find argmax along each lane of the axis
@@ -707,10 +707,11 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::approx_constant)]
     fn test_scalar() {
-        let s = Tensor::scalar(3.14);
+        let s = Tensor::scalar(3.14159);
         assert!(s.is_scalar());
-        assert_abs_diff_eq!(s.item(), 3.14, epsilon = 1e-6);
+        assert_abs_diff_eq!(s.item(), 3.14159, epsilon = 1e-6);
     }
 
     #[test]

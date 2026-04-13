@@ -27,7 +27,7 @@ use crate::tensor::Tensor;
 // Tensor + Tensor (Element-wise addition with broadcasting)
 // ============================================================================
 
-impl<'a, 'b> Add<&'b Tensor> for &'a Tensor {
+impl<'b> Add<&'b Tensor> for &Tensor {
     type Output = Tensor;
 
     /// Element-wise addition, supports broadcasting.
@@ -47,7 +47,7 @@ impl<'a, 'b> Add<&'b Tensor> for &'a Tensor {
 // Tensor - Tensor (Element-wise subtraction with broadcasting)
 // ============================================================================
 
-impl<'a, 'b> Sub<&'b Tensor> for &'a Tensor {
+impl<'b> Sub<&'b Tensor> for &Tensor {
     type Output = Tensor;
 
     fn sub(self, rhs: &'b Tensor) -> Tensor {
@@ -60,7 +60,7 @@ impl<'a, 'b> Sub<&'b Tensor> for &'a Tensor {
 // Tensor * Tensor (Element-wise multiplication / Hadamard product with broadcasting)
 // ============================================================================
 
-impl<'a, 'b> Mul<&'b Tensor> for &'a Tensor {
+impl<'b> Mul<&'b Tensor> for &Tensor {
     type Output = Tensor;
 
     /// Element-wise multiplication (Hadamard product), NOT matrix multiplication.
@@ -76,7 +76,7 @@ impl<'a, 'b> Mul<&'b Tensor> for &'a Tensor {
 // Tensor / Tensor (Element-wise division with broadcasting)
 // ============================================================================
 
-impl<'a, 'b> Div<&'b Tensor> for &'a Tensor {
+impl<'b> Div<&'b Tensor> for &Tensor {
     type Output = Tensor;
 
     fn div(self, rhs: &'b Tensor) -> Tensor {
@@ -100,6 +100,7 @@ impl Neg for &Tensor {
 impl Neg for Tensor {
     type Output = Tensor;
 
+    #[allow(clippy::needless_borrow)]
     fn neg(self) -> Tensor {
         (&self).neg()
     }
