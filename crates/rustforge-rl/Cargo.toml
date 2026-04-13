@@ -1,0 +1,14 @@
+[package]
+name = "rustforge-rl"
+description = "Reinforcement learning algorithms for RustForge RL"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rustforge-tensor = { path = "../rustforge-tensor" }
+rustforge-autograd = { path = "../rustforge-autograd" }
+rustforge-nn = { path = "../rustforge-nn" }
+ndarray = { workspace = true }
+rand = { workspace = true }
+rand_distr = { workspace = true }
+serde = { workspace = true }

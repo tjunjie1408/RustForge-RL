@@ -1,0 +1,10 @@
+[package]
+name = "rustforge-autograd"
+description = "Automatic differentiation engine for RustForge RL"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rustforge-tensor = { path = "../rustforge-tensor" }
+ndarray = { workspace = true }
+serde = { workspace = true }

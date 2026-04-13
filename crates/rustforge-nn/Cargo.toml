@@ -1,0 +1,11 @@
+[package]
+name = "rustforge-nn"
+description = "Neural network modules for RustForge RL"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rustforge-tensor = { path = "../rustforge-tensor" }
+rustforge-autograd = { path = "../rustforge-autograd" }
+ndarray = { workspace = true }
+serde = { workspace = true }
