@@ -16,7 +16,7 @@
   <img src="https://img.shields.io/badge/language-Rust-orange?style=flat-square&logo=rust" alt="Rust">
   <img src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue?style=flat-square" alt="License">
   <img src="https://img.shields.io/badge/status-Phase%201%20Complete-brightgreen?style=flat-square" alt="Status">
-  <img src="https://img.shields.io/badge/tests-60%20passing-brightgreen?style=flat-square" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-100%20passing-brightgreen?style=flat-square" alt="Tests">
 </p>
 
 ---
@@ -54,12 +54,14 @@ A PyTorch-style tensor library built on top of [`ndarray`](https://github.com/ru
 - **Random Init**: Uniform, Normal, Xavier/Glorot, Kaiming/He initialization strategies
 - **Display**: PyTorch-style pretty printing with automatic truncation for large tensors
 
-### 🔄 Autograd Engine (`rustforge-autograd`) — 🚧 In Progress
+### 🔄 Autograd Engine (`rustforge-autograd`) — ✅ Complete
 
-- `Variable` wrapper with gradient tracking
-- Dynamic computational graph construction
+- `Variable` wrapper with gradient tracking (`Rc<RefCell<>>`)
+- Dynamic computational graph construction via `GradFn` trait
 - Backward pass via topological sort + chain rule
-- Optimizers: SGD, Adam, RMSProp
+- 17 gradient mappings for operations and math functions
+- Numerical gradient checking (finite difference method)
+- Optimizers: SGD (w/ momentum), Adam (bias-corrected)
 
 ### 🧠 Neural Network Modules (`rustforge-nn`) — 📋 Planned
 
@@ -207,7 +209,7 @@ let weights = (& attention / 8.0_f32.sqrt()).softmax(1).unwrap();
 | Phase | Milestone | Status |
 |-------|-----------|--------|
 | **Phase 1** | Tensor Engine | ✅ Complete (51 tests passing) |
-| **Phase 1** | Autograd Engine | 🚧 In Progress |
+| **Phase 1** | Autograd Engine | ✅ Complete (49 tests passing) |
 | **Phase 2** | Neural Network Modules | 📋 Planned |
 | **Phase 2** | Optimizers (SGD, Adam) | 📋 Planned |
 | **Phase 3** | DQN + CartPole | 📋 Planned |
