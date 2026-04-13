@@ -34,7 +34,7 @@ fn needs_grad(inputs: &[&Variable]) -> bool {
 // Variable + Variable
 // ============================================================================
 
-impl<'a, 'b> Add<&'b Variable> for &'a Variable {
+impl<'b> Add<&'b Variable> for &Variable {
     type Output = Variable;
 
     fn add(self, rhs: &'b Variable) -> Variable {
@@ -56,7 +56,7 @@ impl<'a, 'b> Add<&'b Variable> for &'a Variable {
 // Variable - Variable
 // ============================================================================
 
-impl<'a, 'b> Sub<&'b Variable> for &'a Variable {
+impl<'b> Sub<&'b Variable> for &Variable {
     type Output = Variable;
 
     fn sub(self, rhs: &'b Variable) -> Variable {
@@ -78,7 +78,7 @@ impl<'a, 'b> Sub<&'b Variable> for &'a Variable {
 // Variable * Variable (element-wise)
 // ============================================================================
 
-impl<'a, 'b> Mul<&'b Variable> for &'a Variable {
+impl<'b> Mul<&'b Variable> for &Variable {
     type Output = Variable;
 
     fn mul(self, rhs: &'b Variable) -> Variable {
@@ -104,7 +104,7 @@ impl<'a, 'b> Mul<&'b Variable> for &'a Variable {
 // Variable / Variable
 // ============================================================================
 
-impl<'a, 'b> Div<&'b Variable> for &'a Variable {
+impl<'b> Div<&'b Variable> for &Variable {
     type Output = Variable;
 
     fn div(self, rhs: &'b Variable) -> Variable {

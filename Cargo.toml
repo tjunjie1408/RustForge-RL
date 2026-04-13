@@ -8,8 +8,6 @@ members = [
 ]
 resolver = "2"
 
-default-members = ["crates/rustforge-cli"]
-
 [workspace.package]
 version = "0.1.0"
 edition = "2021"

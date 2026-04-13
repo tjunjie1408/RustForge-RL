@@ -162,7 +162,7 @@ mod tests {
         assert_eq!(t.shape(), &[3, 4]);
         // All values should be within the [0, 1) range
         for &v in t.to_vec().iter() {
-            assert!(v >= 0.0 && v < 1.0, "Value {} out of range [0, 1)", v);
+            assert!((0.0..1.0).contains(&v), "Value {} out of range [0, 1)", v);
         }
     }
 
