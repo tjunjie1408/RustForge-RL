@@ -594,4 +594,103 @@ mod tests {
         assert!(!f.requires_grad());
         assert!(!f.has_grad_fn());
     }
+
+    #[test]
+    fn test_mixed_variable_operations() {
+        let a = Variable::new(Tensor::from_vec(vec![1.0, 2.0], &[2]), true);
+        let b = Variable::new(Tensor::from_vec(vec![3.0, 4.0], &[2]), false);
+
+        let c = a.clone() + &b;
+        assert!(c.requires_grad());
+
+        let d = &a + b.clone();
+        assert!(d.requires_grad());
+
+        let e = a.clone() + b.clone();
+        assert!(e.requires_grad());
+
+        let f = a.clone() - &b;
+        assert!(f.requires_grad());
+
+        let g = &a - b.clone();
+        assert!(g.requires_grad());
+
+        let h = a.clone() - b.clone();
+        assert!(h.requires_grad());
+
+        let i = a.clone() * &b;
+        assert!(i.requires_grad());
+
+        let j = &a * b.clone();
+        assert!(j.requires_grad());
+
+        let k = a.clone() * b.clone();
+        assert!(k.requires_grad());
+
+        let l = a.clone() / &b;
+        assert!(l.requires_grad());
+
+        let m = &a / b.clone();
+        assert!(m.requires_grad());
+
+        let n = a.clone() / b.clone();
+        assert!(n.requires_grad());
+    }
+
+    #[test]
+    fn test_div_by_zero() {
+        let a = Variable::new(Tensor::from_vec(vec![10.0], &[1]), false);
+        let b = Variable::new(Tensor::from_vec(vec![0.0], &[1]), false);
+        let c = &a / &b;
+        assert!(c.data().to_vec()[0].is_infinite());
+    }
+
+    #[test]
+    fn test_div_by_zero_scalar() {
+        let a = Variable::new(Tensor::from_vec(vec![10.0], &[1]), false);
+        let c = &a / 0.0;
+        assert!(c.data().to_vec()[0].is_infinite());
+
+        let d = a.clone() / 0.0;
+        assert!(d.data().to_vec()[0].is_infinite());
+    }
+
+    #[test]
+    fn test_mul_by_zero() {
+        let a = Variable::new(Tensor::from_vec(vec![10.0, 20.0], &[2]), true);
+        let b = &a * 0.0;
+        assert_eq!(b.data().to_vec(), vec![0.0, 0.0]);
+        assert!(b.requires_grad());
+
+        let c = 0.0 * &a;
+        assert_eq!(c.data().to_vec(), vec![0.0, 0.0]);
+        assert!(c.requires_grad());
+
+        let d = a.clone() * 0.0;
+        assert_eq!(d.data().to_vec(), vec![0.0, 0.0]);
+        assert!(d.requires_grad());
+
+        let e = 0.0 * a.clone();
+        assert_eq!(e.data().to_vec(), vec![0.0, 0.0]);
+        assert!(e.requires_grad());
+    }
+
+    #[test]
+    fn test_scalar_sub() {
+        let a = Variable::new(Tensor::from_vec(vec![10.0, 20.0], &[2]), true);
+        let b = &a - 2.0;
+        assert_eq!(b.data().to_vec(), vec![8.0, 18.0]);
+        assert!(b.requires_grad());
+
+        let c = a.clone() - 2.0;
+        assert_eq!(c.data().to_vec(), vec![8.0, 18.0]);
+        assert!(c.requires_grad());
+    }
+
+    #[test]
+    fn test_neg_value() {
+        let a = Variable::new(Tensor::from_vec(vec![1.0, -2.0, 3.0], &[3]), false);
+        let b = -a.clone();
+        assert_eq!(b.data().to_vec(), vec![-1.0, 2.0, -3.0]);
+    }
 }

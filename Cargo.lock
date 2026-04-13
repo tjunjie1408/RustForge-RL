@@ -210,6 +210,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustforge-cli"
+version = "0.1.0"
+dependencies = [
+ "rustforge-autograd",
+ "rustforge-tensor",
+]
+
+[[package]]
 name = "rustforge-nn"
 version = "0.1.0"
 dependencies = [

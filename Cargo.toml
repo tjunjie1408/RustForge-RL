@@ -4,8 +4,11 @@ members = [
     "crates/rustforge-autograd",
     "crates/rustforge-nn",
     "crates/rustforge-rl",
+    "crates/rustforge-cli",
 ]
 resolver = "2"
+
+default-members = ["crates/rustforge-cli"]
 
 [workspace.package]
 version = "0.1.0"
