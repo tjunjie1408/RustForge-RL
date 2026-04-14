@@ -21,7 +21,7 @@ use std::ops::{Add, Div, Mul, Neg, Sub};
 use crate::graph::{
     AddGrad, DivGrad, ExpGrad, GradFn, LogGrad, MatmulGrad, MeanGrad, MulGrad, NegGrad, PowGrad,
     ReluGrad, ScalarAddGrad, ScalarMulGrad, SigmoidGrad, SqrtGrad, SubGrad, SumAxisGrad, SumGrad,
-    TanhGrad,
+    TanhGrad, TransposeGrad,
 };
 use crate::variable::Variable;
 
@@ -528,9 +528,24 @@ pub fn var_sum_axis(input: &Variable, axis: usize, keepdim: bool) -> Variable {
     Variable::from_grad_fn(result_data, requires_grad, grad_fn)
 }
 
+/// Transpose (swap last two dimensions) with gradient tracking.
+pub fn var_transpose(input: &Variable) -> Variable {
+    let result_data = input.data().t();
+    let requires_grad = input.requires_grad();
+    let grad_fn: Option<Box<dyn GradFn>> = if requires_grad {
+        Some(Box::new(TransposeGrad {
+            input: input.clone(),
+        }))
+    } else {
+        None
+    };
+    Variable::from_grad_fn(result_data, requires_grad, grad_fn)
+}
+
 // ============================================================================
 // Unit Tests
 // ============================================================================
+
 
 #[cfg(test)]
 mod tests {

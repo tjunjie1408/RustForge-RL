@@ -541,6 +541,29 @@ impl GradFn for ScalarMulGrad {
 }
 
 // ============================================================================
+// Transpose: y = x^T (swap last two dimensions)
+// ============================================================================
+
+/// Gradient for matrix transpose.
+///
+/// Since transpose is its own inverse, the gradient is simply
+/// the transpose of the output gradient.
+pub struct TransposeGrad {
+    pub input: Variable,
+}
+
+impl GradFn for TransposeGrad {
+    fn inputs(&self) -> Vec<Variable> {
+        vec![self.input.clone()]
+    }
+
+    /// ∂L/∂x = transpose(grad_output)
+    fn backward(&self, grad_output: &Tensor) -> Vec<Tensor> {
+        vec![grad_output.t()]
+    }
+}
+
+// ============================================================================
 // Unit Tests
 // ============================================================================
 
