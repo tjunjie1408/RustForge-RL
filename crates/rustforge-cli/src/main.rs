@@ -1,9 +1,9 @@
-use std::env;
-use std::fs;
+use anyhow::Result;
 use rustforge_autograd::Variable;
 use rustforge_tensor::Tensor;
-use anyhow::Result;
 use std::collections::HashSet;
+use std::env;
+use std::fs;
 
 // A simple recursive DFS to print the graph using Mermaid notation.
 fn write_graph(var: &Variable, out: &mut String, visited: &mut HashSet<usize>) {
