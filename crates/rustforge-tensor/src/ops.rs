@@ -23,9 +23,7 @@ use std::ops::{Add, Div, Mul, Neg, Sub};
 
 use crate::tensor::Tensor;
 
-// ============================================================================
 // Tensor + Tensor (Element-wise addition with broadcasting)
-// ============================================================================
 
 impl<'b> Add<&'b Tensor> for &Tensor {
     type Output = Tensor;
@@ -43,9 +41,7 @@ impl<'b> Add<&'b Tensor> for &Tensor {
     }
 }
 
-// ============================================================================
 // Tensor - Tensor (Element-wise subtraction with broadcasting)
-// ============================================================================
 
 impl<'b> Sub<&'b Tensor> for &Tensor {
     type Output = Tensor;
@@ -56,9 +52,7 @@ impl<'b> Sub<&'b Tensor> for &Tensor {
     }
 }
 
-// ============================================================================
 // Tensor * Tensor (Element-wise multiplication / Hadamard product with broadcasting)
-// ============================================================================
 
 impl<'b> Mul<&'b Tensor> for &Tensor {
     type Output = Tensor;
@@ -72,9 +66,7 @@ impl<'b> Mul<&'b Tensor> for &Tensor {
     }
 }
 
-// ============================================================================
 // Tensor / Tensor (Element-wise division with broadcasting)
-// ============================================================================
 
 impl<'b> Div<&'b Tensor> for &Tensor {
     type Output = Tensor;
@@ -85,9 +77,7 @@ impl<'b> Div<&'b Tensor> for &Tensor {
     }
 }
 
-// ============================================================================
 // Unary negation -Tensor
-// ============================================================================
 
 impl Neg for &Tensor {
     type Output = Tensor;
@@ -106,9 +96,7 @@ impl Neg for Tensor {
     }
 }
 
-// ============================================================================
 // Tensor + Scalar / Scalar + Tensor
-// ============================================================================
 
 impl Add<f32> for &Tensor {
     type Output = Tensor;
@@ -158,10 +146,8 @@ impl Div<f32> for &Tensor {
     }
 }
 
-// ============================================================================
 // Operator overloading for value types (Ownership consuming versions)
 // These implementations allow users to avoid writing `&` references every time
-// ============================================================================
 
 impl Add<&Tensor> for Tensor {
     type Output = Tensor;
@@ -275,9 +261,7 @@ impl Div<f32> for Tensor {
     }
 }
 
-// ============================================================================
 // Matrix Multiplication (Not through operator overloading, uses method call)
-// ============================================================================
 
 impl Tensor {
     /// Matrix multiplication.

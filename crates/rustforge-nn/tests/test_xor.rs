@@ -20,9 +20,7 @@ use rustforge_tensor::Tensor;
 
 #[test]
 fn test_xor_training() {
-    // ================================================================
     // Model: Linear(2, 16) → ReLU → Linear(16, 1) → Sigmoid
-    // ================================================================
     let model = Sequential::new(vec![
         Box::new(Linear::new(2, 16)),
         Box::new(ReLU),
@@ -32,18 +30,14 @@ fn test_xor_training() {
 
     let mut optimizer = Adam::new(model.parameters(), 0.01);
 
-    // ================================================================
     // XOR dataset
-    // ================================================================
     let inputs = Variable::new(
         Tensor::from_vec(vec![0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0], &[4, 2]),
         false,
     );
     let targets = Variable::new(Tensor::from_vec(vec![0.0, 1.0, 1.0, 0.0], &[4, 1]), false);
 
-    // ================================================================
     // Training loop
-    // ================================================================
     let mut final_loss = f32::MAX;
     for _epoch in 0..2000 {
         optimizer.zero_grad();
@@ -61,9 +55,7 @@ fn test_xor_training() {
         }
     }
 
-    // ================================================================
     // Validation: check each XOR output
-    // ================================================================
     let output = model.forward(&inputs);
     let preds = output.data().to_vec();
 

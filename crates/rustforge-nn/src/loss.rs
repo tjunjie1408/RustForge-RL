@@ -134,9 +134,7 @@ pub fn huber_loss(pred: &Variable, target: &Variable, delta: f32) -> Variable {
     combined.mean()
 }
 
-// ============================================================================
 // Unit Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

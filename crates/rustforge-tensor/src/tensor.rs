@@ -40,9 +40,7 @@ pub struct Tensor {
 }
 
 impl Tensor {
-    // ========================================================================
     // Constructors
-    // ========================================================================
 
     /// Creates a tensor directly from an internal ndarray array.
     ///
@@ -164,9 +162,7 @@ impl Tensor {
         Tensor::from_vec(values, &[num])
     }
 
-    // ========================================================================
     // Property Queries
-    // ========================================================================
 
     /// Returns the shape of the tensor (sizes of dimensions).
     pub fn shape(&self) -> &[usize] {
@@ -225,9 +221,7 @@ impl Tensor {
         *self.data.iter().next().unwrap()
     }
 
-    // ========================================================================
     // Reshaping & Transformations
-    // ========================================================================
 
     /// Changes the tensor shape (without modifying data).
     ///
@@ -342,9 +336,7 @@ impl Tensor {
         }
     }
 
-    // ========================================================================
     // Indexing and Slicing
-    // ========================================================================
 
     /// Selects a specific index along a given axis, returning a sliced sub-tensor with reduced dimensions.
     ///
@@ -374,9 +366,7 @@ impl Tensor {
         Ok(Tensor::from_ndarray(sliced.to_owned()))
     }
 
-    // ========================================================================
     // Reduction Operations
-    // ========================================================================
 
     /// Calculates the sum of all elements.
     pub fn sum(&self) -> Tensor {
@@ -496,9 +486,7 @@ impl Tensor {
         Tensor::scalar(self.var().item().sqrt())
     }
 
-    // ========================================================================
     // Element-wise Mathematical Functions
-    // ========================================================================
 
     /// ReLU activation function: max(0, x)
     ///
@@ -576,9 +564,7 @@ impl Tensor {
         Tensor::from_ndarray(self.data.mapv(|x| 1.0 / x))
     }
 
-    // ========================================================================
     // Advanced Operations
-    // ========================================================================
 
     /// Softmax function (along a specified axis).
     ///
@@ -625,9 +611,7 @@ impl Tensor {
         Ok(&shifted - &log_sum_exp)
     }
 
-    // ========================================================================
     // Concatenation and Splitting
-    // ========================================================================
 
     /// Concatenates multiple tensors along a specified axis.
     ///
@@ -669,9 +653,7 @@ impl Tensor {
     }
 }
 
-// ============================================================================
 // PartialEq Implementation (Used for testing)
-// ============================================================================
 
 impl PartialEq for Tensor {
     fn eq(&self, other: &Self) -> bool {

@@ -71,9 +71,7 @@ fn assert_grads_close(analytic: &[f32], numerical: &[f32], atol: f32, rtol: f32)
     }
 }
 
-// ============================================================================
 // Basic gradient tests (exact, hand-computed)
-// ============================================================================
 
 #[test]
 fn test_grad_x_squared() {
@@ -322,9 +320,7 @@ fn test_grad_div() {
     assert_grads_close(&dy, &numerical_dy, 0.02, 1e-2);
 }
 
-// ============================================================================
 // Chain tests (multiple operations composed)
-// ============================================================================
 
 #[test]
 fn test_grad_chain_matmul_relu_sum() {
@@ -469,9 +465,7 @@ fn test_grad_scalar_ops() {
     assert_grads_close(&analytic, &numerical, 0.2, 1e-2);
 }
 
-// ============================================================================
 // Milestone test — the exact code from AGENT.md
-// ============================================================================
 
 #[test]
 fn test_milestone_matmul_relu_sum_backward() {
@@ -504,9 +498,7 @@ fn test_milestone_matmul_relu_sum_backward() {
     println!("   dw = {:?}", analytic_dw);
 }
 
-// ============================================================================
 // Optimizer integration tests
-// ============================================================================
 
 #[test]
 fn test_sgd_training_loop() {

@@ -30,9 +30,7 @@ fn needs_grad(inputs: &[&Variable]) -> bool {
     inputs.iter().any(|v| v.requires_grad())
 }
 
-// ============================================================================
 // Variable + Variable
-// ============================================================================
 
 impl<'b> Add<&'b Variable> for &Variable {
     type Output = Variable;
@@ -52,9 +50,7 @@ impl<'b> Add<&'b Variable> for &Variable {
     }
 }
 
-// ============================================================================
 // Variable - Variable
-// ============================================================================
 
 impl<'b> Sub<&'b Variable> for &Variable {
     type Output = Variable;
@@ -74,9 +70,7 @@ impl<'b> Sub<&'b Variable> for &Variable {
     }
 }
 
-// ============================================================================
 // Variable * Variable (element-wise)
-// ============================================================================
 
 impl<'b> Mul<&'b Variable> for &Variable {
     type Output = Variable;
@@ -100,9 +94,7 @@ impl<'b> Mul<&'b Variable> for &Variable {
     }
 }
 
-// ============================================================================
 // Variable / Variable
-// ============================================================================
 
 impl<'b> Div<&'b Variable> for &Variable {
     type Output = Variable;
@@ -126,9 +118,7 @@ impl<'b> Div<&'b Variable> for &Variable {
     }
 }
 
-// ============================================================================
 // -Variable (negation)
-// ============================================================================
 
 impl Neg for &Variable {
     type Output = Variable;
@@ -154,9 +144,7 @@ impl Neg for Variable {
     }
 }
 
-// ============================================================================
 // Ownership consuming variants (delegate to &-& version)
-// ============================================================================
 
 impl Add<&Variable> for Variable {
     type Output = Variable;
@@ -242,9 +230,7 @@ impl Div<Variable> for Variable {
     }
 }
 
-// ============================================================================
 // Variable + f32, Variable - f32
-// ============================================================================
 
 impl Add<f32> for &Variable {
     type Output = Variable;
@@ -285,9 +271,7 @@ impl Sub<f32> for Variable {
     }
 }
 
-// ============================================================================
 // Variable * f32, f32 * Variable
-// ============================================================================
 
 impl Mul<f32> for &Variable {
     type Output = Variable;
@@ -328,9 +312,7 @@ impl Mul<Variable> for f32 {
     }
 }
 
-// ============================================================================
 // Variable / f32
-// ============================================================================
 
 impl Div<f32> for &Variable {
     type Output = Variable;
@@ -348,9 +330,7 @@ impl Div<f32> for Variable {
     }
 }
 
-// ============================================================================
 // Named operation functions (called from Variable methods)
-// ============================================================================
 
 /// Matrix multiplication with gradient tracking.
 pub fn var_matmul(lhs: &Variable, rhs: &Variable) -> Variable {
@@ -542,9 +522,7 @@ pub fn var_transpose(input: &Variable) -> Variable {
     Variable::from_grad_fn(result_data, requires_grad, grad_fn)
 }
 
-// ============================================================================
 // Unit Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
