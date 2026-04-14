@@ -36,16 +36,10 @@ fn test_xor_training() {
     // XOR dataset
     // ================================================================
     let inputs = Variable::new(
-        Tensor::from_vec(
-            vec![0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0],
-            &[4, 2],
-        ),
+        Tensor::from_vec(vec![0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0], &[4, 2]),
         false,
     );
-    let targets = Variable::new(
-        Tensor::from_vec(vec![0.0, 1.0, 1.0, 0.0], &[4, 1]),
-        false,
-    );
+    let targets = Variable::new(Tensor::from_vec(vec![0.0, 1.0, 1.0, 0.0], &[4, 1]), false);
 
     // ================================================================
     // Training loop
