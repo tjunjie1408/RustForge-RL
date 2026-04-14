@@ -244,6 +244,31 @@ impl Variable {
     pub fn sum_axis(&self, axis: usize, keepdim: bool) -> Variable {
         crate::ops::var_sum_axis(self, axis, keepdim)
     }
+
+    /// Transpose: swaps the last two dimensions (with gradient tracking).
+    ///
+    /// For 2D tensors `[m, n]` → `[n, m]`.
+    /// For 1D or 0D tensors, returns a clone.
+    ///
+    /// ## Example
+    /// ```rust,ignore
+    /// let w = Variable::new(Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], &[2, 2]), true);
+    /// let wt = w.t(); // shape [2, 2] transposed
+    /// ```
+    pub fn t(&self) -> Variable {
+        crate::ops::var_transpose(self)
+    }
+
+    /// Creates a detached copy of this variable (no gradient tracking).
+    ///
+    /// The returned variable has the same tensor data but `requires_grad = false`
+    /// and no `grad_fn`. Useful for:
+    /// - Target values in loss computation
+    /// - Numerical stability shifts (e.g., max subtraction in softmax)
+    /// - Stopping gradient flow at a specific point
+    pub fn detach(&self) -> Variable {
+        Variable::from_tensor(self.data())
+    }
 }
 
 // ============================================================================
