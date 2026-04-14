@@ -279,11 +279,19 @@ impl fmt::Debug for Variable {
 }
 
 impl Variable {
+    /// Returns the input variables of this variable's gradient function, if any.
+    ///
+    /// Used for computation graph inspection and visualization (e.g. CLI graph export).
+    /// Returns `None` for leaf variables that have no `grad_fn`.
     pub fn graph_inputs(&self) -> Option<Vec<Variable>> {
         let inner = self.inner.borrow();
         inner.grad_fn.as_ref().map(|gf| gf.inputs())
     }
 
+    /// Returns a unique identifier for this variable based on its `Rc` pointer address.
+    ///
+    /// Useful for graph traversal visited-set tracking and Mermaid diagram node labeling.
+    /// Note: IDs are only unique within a single program execution.
     pub fn id(&self) -> usize {
         Rc::as_ptr(&self.inner) as usize
     }

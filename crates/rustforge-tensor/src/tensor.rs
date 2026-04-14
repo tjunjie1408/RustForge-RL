@@ -465,14 +465,8 @@ impl Tensor {
                 ndim: self.ndim(),
             });
         }
-        let indices: Vec<usize> = self
-            .data
-            .axis_iter(Axis(axis))
 
-            .map(|_lane| 0) // placeholder
-            .collect();
-
-        // Correct implementation: find argmax along each lane of the axis
+        // Find argmax along each lane of the axis
         let result = self.data.map_axis(Axis(axis), |lane| {
             lane.iter()
                 .enumerate()
@@ -480,8 +474,6 @@ impl Tensor {
                 .map(|(idx, _)| idx)
                 .unwrap_or(0)
         });
-
-        let _ = indices; // discard placeholder
 
         Ok(result.iter().cloned().collect())
     }
