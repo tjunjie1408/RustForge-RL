@@ -47,9 +47,7 @@ pub(crate) struct VariableInner {
 }
 
 impl Variable {
-    // ========================================================================
     // Constructors
-    // ========================================================================
 
     /// Creates a new variable with the given tensor data.
     ///
@@ -90,9 +88,7 @@ impl Variable {
         }
     }
 
-    // ========================================================================
     // Accessors
-    // ========================================================================
 
     /// Returns a clone of the underlying tensor data.
     pub fn data(&self) -> Tensor {
@@ -120,9 +116,7 @@ impl Variable {
         self.inner.borrow().grad_fn.is_some()
     }
 
-    // ========================================================================
     // Gradient Management
-    // ========================================================================
 
     /// Resets the gradient to `None`.
     pub fn zero_grad(&self) {
@@ -156,9 +150,7 @@ impl Variable {
         self.inner.borrow_mut().grad = Some(grad);
     }
 
-    // ========================================================================
     // Backward Pass
-    // ========================================================================
 
     /// Runs reverse-mode automatic differentiation from this variable.
     ///
@@ -180,9 +172,7 @@ impl Variable {
         backward::backward(self);
     }
 
-    // ========================================================================
     // Math Operations (forward computation + graph tracking)
-    // ========================================================================
 
     /// Matrix multiplication: self @ rhs
     ///
@@ -271,9 +261,7 @@ impl Variable {
     }
 }
 
-// ============================================================================
 // Trait Implementations
-// ============================================================================
 
 /// Pointer-based equality: two Variables are equal iff they share the same Rc.
 impl PartialEq for Variable {
@@ -322,9 +310,7 @@ impl Variable {
     }
 }
 
-// ============================================================================
 // Unit Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

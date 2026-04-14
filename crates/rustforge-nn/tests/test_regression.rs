@@ -12,9 +12,7 @@ use approx::assert_abs_diff_eq;
 
 #[test]
 fn test_linear_regression() {
-    // ================================================================
     // Model: Linear(1, 1) — learns y = wx + b
-    // ================================================================
     let model = Linear::new(1, 1);
 
     // Initialize with poor values to verify learning
@@ -23,18 +21,14 @@ fn test_linear_regression() {
 
     let mut optimizer = SGD::new(model.parameters(), 0.01, 0.0);
 
-    // ================================================================
     // Training data: y = 2x + 1
-    // ================================================================
     let x_data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
     let y_data: Vec<f32> = x_data.iter().map(|&x| 2.0 * x + 1.0).collect();
 
     let inputs = Variable::new(Tensor::from_vec(x_data, &[8, 1]), false);
     let targets = Variable::new(Tensor::from_vec(y_data, &[8, 1]), false);
 
-    // ================================================================
     // Training loop
-    // ================================================================
     for _epoch in 0..5000 {
         optimizer.zero_grad();
 
@@ -45,9 +39,7 @@ fn test_linear_regression() {
         optimizer.step();
     }
 
-    // ================================================================
     // Validation: weight ≈ 2.0, bias ≈ 1.0
-    // ================================================================
     let weight = model.parameters()[0].data().to_vec()[0];
     let bias = model.parameters()[1].data().to_vec()[0];
 
@@ -61,9 +53,7 @@ fn test_linear_regression() {
 
 #[test]
 fn test_cross_entropy_classification() {
-    // ================================================================
     // Simple classification: learn to separate two classes
-    // ================================================================
     use rustforge_autograd::optimizer::adam::Adam;
     use rustforge_nn::{cross_entropy_loss, ReLU, Sequential, Softmax};
 
