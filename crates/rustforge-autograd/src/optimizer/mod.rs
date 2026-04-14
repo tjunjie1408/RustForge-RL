@@ -4,8 +4,8 @@
 //! a loss function. This module provides the `Optimizer` trait and concrete
 //! implementations: SGD (with optional momentum) and Adam.
 
-pub mod sgd;
 pub mod adam;
+pub mod sgd;
 
 /// Trait for parameter optimizers.
 ///

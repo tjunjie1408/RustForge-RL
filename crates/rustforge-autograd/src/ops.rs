@@ -160,62 +160,86 @@ impl Neg for Variable {
 
 impl Add<&Variable> for Variable {
     type Output = Variable;
-    fn add(self, rhs: &Variable) -> Variable { &self + rhs }
+    fn add(self, rhs: &Variable) -> Variable {
+        &self + rhs
+    }
 }
 
 impl Add<Variable> for &Variable {
     type Output = Variable;
-    fn add(self, rhs: Variable) -> Variable { self + &rhs }
+    fn add(self, rhs: Variable) -> Variable {
+        self + &rhs
+    }
 }
 
 impl Add<Variable> for Variable {
     type Output = Variable;
-    fn add(self, rhs: Variable) -> Variable { &self + &rhs }
+    fn add(self, rhs: Variable) -> Variable {
+        &self + &rhs
+    }
 }
 
 impl Sub<&Variable> for Variable {
     type Output = Variable;
-    fn sub(self, rhs: &Variable) -> Variable { &self - rhs }
+    fn sub(self, rhs: &Variable) -> Variable {
+        &self - rhs
+    }
 }
 
 impl Sub<Variable> for &Variable {
     type Output = Variable;
-    fn sub(self, rhs: Variable) -> Variable { self - &rhs }
+    fn sub(self, rhs: Variable) -> Variable {
+        self - &rhs
+    }
 }
 
 impl Sub<Variable> for Variable {
     type Output = Variable;
-    fn sub(self, rhs: Variable) -> Variable { &self - &rhs }
+    fn sub(self, rhs: Variable) -> Variable {
+        &self - &rhs
+    }
 }
 
 impl Mul<&Variable> for Variable {
     type Output = Variable;
-    fn mul(self, rhs: &Variable) -> Variable { &self * rhs }
+    fn mul(self, rhs: &Variable) -> Variable {
+        &self * rhs
+    }
 }
 
 impl Mul<Variable> for &Variable {
     type Output = Variable;
-    fn mul(self, rhs: Variable) -> Variable { self * &rhs }
+    fn mul(self, rhs: Variable) -> Variable {
+        self * &rhs
+    }
 }
 
 impl Mul<Variable> for Variable {
     type Output = Variable;
-    fn mul(self, rhs: Variable) -> Variable { &self * &rhs }
+    fn mul(self, rhs: Variable) -> Variable {
+        &self * &rhs
+    }
 }
 
 impl Div<&Variable> for Variable {
     type Output = Variable;
-    fn div(self, rhs: &Variable) -> Variable { &self / rhs }
+    fn div(self, rhs: &Variable) -> Variable {
+        &self / rhs
+    }
 }
 
 impl Div<Variable> for &Variable {
     type Output = Variable;
-    fn div(self, rhs: Variable) -> Variable { self / &rhs }
+    fn div(self, rhs: Variable) -> Variable {
+        self / &rhs
+    }
 }
 
 impl Div<Variable> for Variable {
     type Output = Variable;
-    fn div(self, rhs: Variable) -> Variable { &self / &rhs }
+    fn div(self, rhs: Variable) -> Variable {
+        &self / &rhs
+    }
 }
 
 // ============================================================================
@@ -241,7 +265,9 @@ impl Add<f32> for &Variable {
 
 impl Add<f32> for Variable {
     type Output = Variable;
-    fn add(self, rhs: f32) -> Variable { &self + rhs }
+    fn add(self, rhs: f32) -> Variable {
+        &self + rhs
+    }
 }
 
 impl Sub<f32> for &Variable {
@@ -254,7 +280,9 @@ impl Sub<f32> for &Variable {
 
 impl Sub<f32> for Variable {
     type Output = Variable;
-    fn sub(self, rhs: f32) -> Variable { &self - rhs }
+    fn sub(self, rhs: f32) -> Variable {
+        &self - rhs
+    }
 }
 
 // ============================================================================
@@ -281,17 +309,23 @@ impl Mul<f32> for &Variable {
 
 impl Mul<f32> for Variable {
     type Output = Variable;
-    fn mul(self, rhs: f32) -> Variable { &self * rhs }
+    fn mul(self, rhs: f32) -> Variable {
+        &self * rhs
+    }
 }
 
 impl Mul<&Variable> for f32 {
     type Output = Variable;
-    fn mul(self, rhs: &Variable) -> Variable { rhs * self }
+    fn mul(self, rhs: &Variable) -> Variable {
+        rhs * self
+    }
 }
 
 impl Mul<Variable> for f32 {
     type Output = Variable;
-    fn mul(self, rhs: Variable) -> Variable { &rhs * self }
+    fn mul(self, rhs: Variable) -> Variable {
+        &rhs * self
+    }
 }
 
 // ============================================================================
@@ -309,7 +343,9 @@ impl Div<f32> for &Variable {
 
 impl Div<f32> for Variable {
     type Output = Variable;
-    fn div(self, rhs: f32) -> Variable { &self / rhs }
+    fn div(self, rhs: f32) -> Variable {
+        &self / rhs
+    }
 }
 
 // ============================================================================
@@ -499,8 +535,8 @@ pub fn var_sum_axis(input: &Variable, axis: usize, keepdim: bool) -> Variable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustforge_tensor::Tensor;
     use approx::assert_abs_diff_eq;
+    use rustforge_tensor::Tensor;
 
     #[test]
     fn test_add_forward() {
@@ -556,14 +592,8 @@ mod tests {
 
     #[test]
     fn test_matmul_forward() {
-        let a = Variable::new(
-            Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], &[2, 2]),
-            false,
-        );
-        let b = Variable::new(
-            Tensor::from_vec(vec![5.0, 6.0, 7.0, 8.0], &[2, 2]),
-            false,
-        );
+        let a = Variable::new(Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], &[2, 2]), false);
+        let b = Variable::new(Tensor::from_vec(vec![5.0, 6.0, 7.0, 8.0], &[2, 2]), false);
         let c = a.matmul(&b);
         let data = c.data().to_vec();
         assert_abs_diff_eq!(data[0], 19.0, epsilon = 1e-6);

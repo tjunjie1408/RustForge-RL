@@ -63,7 +63,10 @@ fn assert_grads_close(analytic: &[f32], numerical: &[f32], atol: f32, rtol: f32)
         assert!(
             (a - n).abs() <= tol,
             "Gradient mismatch at index {}: analytic={}, numerical={}, tol={}",
-            i, a, n, tol
+            i,
+            a,
+            n,
+            tol
         );
     }
 }
@@ -119,14 +122,8 @@ fn test_grad_linear() {
 
 #[test]
 fn test_grad_matmul() {
-    let x = Variable::new(
-        Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], &[2, 2]),
-        true,
-    );
-    let w = Variable::new(
-        Tensor::from_vec(vec![0.1, 0.2, 0.3, 0.4], &[2, 2]),
-        true,
-    );
+    let x = Variable::new(Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], &[2, 2]), true);
+    let w = Variable::new(Tensor::from_vec(vec![0.1, 0.2, 0.3, 0.4], &[2, 2]), true);
 
     let y = x.matmul(&w).sum();
     y.backward();
@@ -144,10 +141,7 @@ fn test_grad_matmul() {
 
     // Numerical check for w
     let f = || {
-        let xc = Variable::new(
-            Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], &[2, 2]),
-            false,
-        );
+        let xc = Variable::new(Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], &[2, 2]), false);
         xc.matmul(&w).sum()
     };
 
@@ -163,10 +157,7 @@ fn test_grad_matmul() {
 #[test]
 fn test_grad_relu() {
     // f(x) = sum(relu(x)), df/dx = (x > 0)
-    let x = Variable::new(
-        Tensor::from_vec(vec![-1.0, 0.0, 1.0, 2.0], &[4]),
-        true,
-    );
+    let x = Variable::new(Tensor::from_vec(vec![-1.0, 0.0, 1.0, 2.0], &[4]), true);
     let y = x.relu().sum();
     y.backward();
 
@@ -176,10 +167,7 @@ fn test_grad_relu() {
 
 #[test]
 fn test_grad_sigmoid() {
-    let x = Variable::new(
-        Tensor::from_vec(vec![0.5, -0.3, 1.0, -1.0], &[4]),
-        true,
-    );
+    let x = Variable::new(Tensor::from_vec(vec![0.5, -0.3, 1.0, -1.0], &[4]), true);
 
     let f = || x.sigmoid().sum();
 
@@ -195,10 +183,7 @@ fn test_grad_sigmoid() {
 
 #[test]
 fn test_grad_tanh() {
-    let x = Variable::new(
-        Tensor::from_vec(vec![0.5, -0.3, 1.0, -1.0], &[4]),
-        true,
-    );
+    let x = Variable::new(Tensor::from_vec(vec![0.5, -0.3, 1.0, -1.0], &[4]), true);
 
     let f = || x.tanh_().sum();
 
@@ -214,10 +199,7 @@ fn test_grad_tanh() {
 
 #[test]
 fn test_grad_exp() {
-    let x = Variable::new(
-        Tensor::from_vec(vec![0.5, 1.0, -0.5], &[3]),
-        true,
-    );
+    let x = Variable::new(Tensor::from_vec(vec![0.5, 1.0, -0.5], &[3]), true);
 
     let f = || x.exp().sum();
 
@@ -233,10 +215,7 @@ fn test_grad_exp() {
 
 #[test]
 fn test_grad_log() {
-    let x = Variable::new(
-        Tensor::from_vec(vec![1.0, 2.0, 3.0], &[3]),
-        true,
-    );
+    let x = Variable::new(Tensor::from_vec(vec![1.0, 2.0, 3.0], &[3]), true);
 
     let f = || x.log().sum();
 
@@ -257,10 +236,7 @@ fn test_grad_log() {
 #[test]
 fn test_grad_pow() {
     // f(x) = sum(x^3), df/dx = 3*x^2
-    let x = Variable::new(
-        Tensor::from_vec(vec![2.0, 3.0], &[2]),
-        true,
-    );
+    let x = Variable::new(Tensor::from_vec(vec![2.0, 3.0], &[2]), true);
 
     let f = || x.pow(3.0).sum();
 
@@ -279,10 +255,7 @@ fn test_grad_pow() {
 
 #[test]
 fn test_grad_sqrt() {
-    let x = Variable::new(
-        Tensor::from_vec(vec![4.0, 9.0, 16.0], &[3]),
-        true,
-    );
+    let x = Variable::new(Tensor::from_vec(vec![4.0, 9.0, 16.0], &[3]), true);
 
     let f = || x.sqrt().sum();
 
@@ -299,10 +272,7 @@ fn test_grad_sqrt() {
 #[test]
 fn test_grad_mean() {
     // f(x) = mean(x), df/dx_i = 1/n
-    let x = Variable::new(
-        Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], &[4]),
-        true,
-    );
+    let x = Variable::new(Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], &[4]), true);
     let y = x.mean();
     y.backward();
 
@@ -315,10 +285,7 @@ fn test_grad_mean() {
 #[test]
 fn test_grad_neg() {
     // f(x) = sum(-x), df/dx = -1
-    let x = Variable::new(
-        Tensor::from_vec(vec![1.0, 2.0, 3.0], &[3]),
-        true,
-    );
+    let x = Variable::new(Tensor::from_vec(vec![1.0, 2.0, 3.0], &[3]), true);
     let y = (-&x).sum();
     y.backward();
 
@@ -362,14 +329,8 @@ fn test_grad_div() {
 #[test]
 fn test_grad_chain_matmul_relu_sum() {
     // f(w) = sum(relu(x @ w))
-    let x = Variable::new(
-        Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], &[2, 2]),
-        true,
-    );
-    let w = Variable::new(
-        Tensor::from_vec(vec![0.1, 0.2, 0.3, 0.4], &[2, 2]),
-        true,
-    );
+    let x = Variable::new(Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], &[2, 2]), true);
+    let w = Variable::new(Tensor::from_vec(vec![0.1, 0.2, 0.3, 0.4], &[2, 2]), true);
 
     let f = || x.matmul(&w).relu().sum();
 
@@ -447,10 +408,7 @@ fn test_grad_broadcast_add() {
 
 #[test]
 fn test_grad_broadcast_mul() {
-    let x = Variable::new(
-        Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], &[2, 2]),
-        true,
-    );
+    let x = Variable::new(Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], &[2, 2]), true);
     let s = Variable::new(Tensor::from_vec(vec![10.0, 20.0], &[1, 2]), true);
 
     let f = || (&x * &s).sum();
@@ -517,14 +475,8 @@ fn test_grad_scalar_ops() {
 
 #[test]
 fn test_milestone_matmul_relu_sum_backward() {
-    let x = Variable::new(
-        Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], &[2, 2]),
-        true,
-    );
-    let w = Variable::new(
-        Tensor::from_vec(vec![0.1, 0.2, 0.3, 0.4], &[2, 2]),
-        true,
-    );
+    let x = Variable::new(Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], &[2, 2]), true);
+    let w = Variable::new(Tensor::from_vec(vec![0.1, 0.2, 0.3, 0.4], &[2, 2]), true);
 
     let y = x.matmul(&w).relu().sum();
     y.backward();
@@ -536,10 +488,7 @@ fn test_milestone_matmul_relu_sum_backward() {
 
     // Numerical verification for w
     let f = || {
-        let xc = Variable::new(
-            Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], &[2, 2]),
-            false,
-        );
+        let xc = Variable::new(Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], &[2, 2]), false);
         xc.matmul(&w).relu().sum()
     };
 

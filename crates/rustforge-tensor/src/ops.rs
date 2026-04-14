@@ -19,7 +19,7 @@
 //! let e = &a + b;    // ref + val (b is consumed)
 //! ```
 
-use std::ops::{Add, Sub, Mul, Div, Neg};
+use std::ops::{Add, Div, Mul, Neg, Sub};
 
 use crate::tensor::Tensor;
 
@@ -165,82 +165,114 @@ impl Div<f32> for &Tensor {
 
 impl Add<&Tensor> for Tensor {
     type Output = Tensor;
-    fn add(self, rhs: &Tensor) -> Tensor { &self + rhs }
+    fn add(self, rhs: &Tensor) -> Tensor {
+        &self + rhs
+    }
 }
 
 impl Add<Tensor> for &Tensor {
     type Output = Tensor;
-    fn add(self, rhs: Tensor) -> Tensor { self + &rhs }
+    fn add(self, rhs: Tensor) -> Tensor {
+        self + &rhs
+    }
 }
 
 impl Add<Tensor> for Tensor {
     type Output = Tensor;
-    fn add(self, rhs: Tensor) -> Tensor { &self + &rhs }
+    fn add(self, rhs: Tensor) -> Tensor {
+        &self + &rhs
+    }
 }
 
 impl Sub<&Tensor> for Tensor {
     type Output = Tensor;
-    fn sub(self, rhs: &Tensor) -> Tensor { &self - rhs }
+    fn sub(self, rhs: &Tensor) -> Tensor {
+        &self - rhs
+    }
 }
 
 impl Sub<Tensor> for &Tensor {
     type Output = Tensor;
-    fn sub(self, rhs: Tensor) -> Tensor { self - &rhs }
+    fn sub(self, rhs: Tensor) -> Tensor {
+        self - &rhs
+    }
 }
 
 impl Sub<Tensor> for Tensor {
     type Output = Tensor;
-    fn sub(self, rhs: Tensor) -> Tensor { &self - &rhs }
+    fn sub(self, rhs: Tensor) -> Tensor {
+        &self - &rhs
+    }
 }
 
 impl Mul<&Tensor> for Tensor {
     type Output = Tensor;
-    fn mul(self, rhs: &Tensor) -> Tensor { &self * rhs }
+    fn mul(self, rhs: &Tensor) -> Tensor {
+        &self * rhs
+    }
 }
 
 impl Mul<Tensor> for &Tensor {
     type Output = Tensor;
-    fn mul(self, rhs: Tensor) -> Tensor { self * &rhs }
+    fn mul(self, rhs: Tensor) -> Tensor {
+        self * &rhs
+    }
 }
 
 impl Mul<Tensor> for Tensor {
     type Output = Tensor;
-    fn mul(self, rhs: Tensor) -> Tensor { &self * &rhs }
+    fn mul(self, rhs: Tensor) -> Tensor {
+        &self * &rhs
+    }
 }
 
 impl Div<&Tensor> for Tensor {
     type Output = Tensor;
-    fn div(self, rhs: &Tensor) -> Tensor { &self / rhs }
+    fn div(self, rhs: &Tensor) -> Tensor {
+        &self / rhs
+    }
 }
 
 impl Div<Tensor> for &Tensor {
     type Output = Tensor;
-    fn div(self, rhs: Tensor) -> Tensor { self / &rhs }
+    fn div(self, rhs: Tensor) -> Tensor {
+        self / &rhs
+    }
 }
 
 impl Div<Tensor> for Tensor {
     type Output = Tensor;
-    fn div(self, rhs: Tensor) -> Tensor { &self / &rhs }
+    fn div(self, rhs: Tensor) -> Tensor {
+        &self / &rhs
+    }
 }
 
 impl Add<f32> for Tensor {
     type Output = Tensor;
-    fn add(self, rhs: f32) -> Tensor { &self + rhs }
+    fn add(self, rhs: f32) -> Tensor {
+        &self + rhs
+    }
 }
 
 impl Sub<f32> for Tensor {
     type Output = Tensor;
-    fn sub(self, rhs: f32) -> Tensor { &self - rhs }
+    fn sub(self, rhs: f32) -> Tensor {
+        &self - rhs
+    }
 }
 
 impl Mul<f32> for Tensor {
     type Output = Tensor;
-    fn mul(self, rhs: f32) -> Tensor { &self * rhs }
+    fn mul(self, rhs: f32) -> Tensor {
+        &self * rhs
+    }
 }
 
 impl Div<f32> for Tensor {
     type Output = Tensor;
-    fn div(self, rhs: f32) -> Tensor { &self / rhs }
+    fn div(self, rhs: f32) -> Tensor {
+        &self / rhs
+    }
 }
 
 // ============================================================================
@@ -281,7 +313,12 @@ impl Tensor {
                     a.shape()[0],
                     b.shape()[0]
                 );
-                let dot: f32 = a.data().iter().zip(b.data().iter()).map(|(x, y)| x * y).sum();
+                let dot: f32 = a
+                    .data()
+                    .iter()
+                    .zip(b.data().iter())
+                    .map(|(x, y)| x * y)
+                    .sum();
                 Tensor::scalar(dot)
             }
 
@@ -291,10 +328,20 @@ impl Tensor {
                     a.shape()[1],
                     b.shape()[0],
                     "matmul shape mismatch: [{}, {}] × [{}]",
-                    a.shape()[0], a.shape()[1], b.shape()[0]
+                    a.shape()[0],
+                    a.shape()[1],
+                    b.shape()[0]
                 );
-                let a_2d = a.data().clone().into_dimensionality::<ndarray::Ix2>().unwrap();
-                let b_1d = b.data().clone().into_dimensionality::<ndarray::Ix1>().unwrap();
+                let a_2d = a
+                    .data()
+                    .clone()
+                    .into_dimensionality::<ndarray::Ix2>()
+                    .unwrap();
+                let b_1d = b
+                    .data()
+                    .clone()
+                    .into_dimensionality::<ndarray::Ix1>()
+                    .unwrap();
                 let result = a_2d.dot(&b_1d);
                 Tensor::from_ndarray(result.into_dyn())
             }
@@ -305,10 +352,20 @@ impl Tensor {
                     a.shape()[0],
                     b.shape()[0],
                     "matmul shape mismatch: [{}] × [{}, {}]",
-                    a.shape()[0], b.shape()[0], b.shape()[1]
+                    a.shape()[0],
+                    b.shape()[0],
+                    b.shape()[1]
                 );
-                let a_1d = a.data().clone().into_dimensionality::<ndarray::Ix1>().unwrap();
-                let b_2d = b.data().clone().into_dimensionality::<ndarray::Ix2>().unwrap();
+                let a_1d = a
+                    .data()
+                    .clone()
+                    .into_dimensionality::<ndarray::Ix1>()
+                    .unwrap();
+                let b_2d = b
+                    .data()
+                    .clone()
+                    .into_dimensionality::<ndarray::Ix2>()
+                    .unwrap();
                 let result = a_1d.dot(&b_2d);
                 Tensor::from_ndarray(result.into_dyn())
             }
@@ -319,10 +376,21 @@ impl Tensor {
                     a.shape()[1],
                     b.shape()[0],
                     "matmul shape mismatch: [{}, {}] × [{}, {}]",
-                    a.shape()[0], a.shape()[1], b.shape()[0], b.shape()[1]
+                    a.shape()[0],
+                    a.shape()[1],
+                    b.shape()[0],
+                    b.shape()[1]
                 );
-                let a_2d = a.data().clone().into_dimensionality::<ndarray::Ix2>().unwrap();
-                let b_2d = b.data().clone().into_dimensionality::<ndarray::Ix2>().unwrap();
+                let a_2d = a
+                    .data()
+                    .clone()
+                    .into_dimensionality::<ndarray::Ix2>()
+                    .unwrap();
+                let b_2d = b
+                    .data()
+                    .clone()
+                    .into_dimensionality::<ndarray::Ix2>()
+                    .unwrap();
                 let result = a_2d.dot(&b_2d);
                 Tensor::from_ndarray(result.into_dyn())
             }

@@ -39,12 +39,12 @@
 //! | Reductions | `sum`, `mean`, `sum_axis` |
 //! | Scalar | `Variable ± f32`, `Variable × f32` |
 
-pub mod variable;
-pub mod graph;
 pub mod backward;
+pub mod graph;
 pub mod ops;
 pub mod optimizer;
+pub mod variable;
 
 // Re-export core types for user convenience
-pub use variable::Variable;
 pub use optimizer::Optimizer;
+pub use variable::Variable;

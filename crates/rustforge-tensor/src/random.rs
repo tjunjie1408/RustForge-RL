@@ -14,9 +14,9 @@
 
 use ndarray::{ArrayD, IxDyn};
 use ndarray_rand::RandomExt;
-use rand::SeedableRng;
 use rand::rngs::StdRng;
-use rand_distr::{Uniform, Normal};
+use rand::SeedableRng;
+use rand_distr::{Normal, Uniform};
 
 use crate::tensor::Tensor;
 
@@ -179,7 +179,11 @@ mod tests {
     fn test_reproducibility() {
         let t1 = Tensor::rand_uniform(&[5, 5], 0.0, 1.0, Some(123));
         let t2 = Tensor::rand_uniform(&[5, 5], 0.0, 1.0, Some(123));
-        assert_eq!(t1.to_vec(), t2.to_vec(), "Same seed should produce same values");
+        assert_eq!(
+            t1.to_vec(),
+            t2.to_vec(),
+            "Same seed should produce same values"
+        );
     }
 
     #[test]
@@ -189,7 +193,11 @@ mod tests {
         // Xavier's range should be sqrt(6/(128+256)) ≈ 0.125
         let a = (6.0_f32 / (128.0 + 256.0)).sqrt();
         for &v in t.to_vec().iter() {
-            assert!(v >= -a && v <= a, "Xavier value {} out of expected range", v);
+            assert!(
+                v >= -a && v <= a,
+                "Xavier value {} out of expected range",
+                v
+            );
         }
     }
 

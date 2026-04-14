@@ -32,10 +32,7 @@ pub enum TensorError {
     },
 
     /// Axis index out of bounds error.
-    AxisOutOfBounds {
-        axis: usize,
-        ndim: usize,
-    },
+    AxisOutOfBounds { axis: usize, ndim: usize },
 
     /// Empty tensor error.
     EmptyTensor,

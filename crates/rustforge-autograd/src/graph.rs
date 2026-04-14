@@ -283,9 +283,12 @@ impl GradFn for ReluGrad {
     /// ∂L/∂x = grad_output * (x > 0)
     /// The gradient passes through where x > 0 and is zeroed where x <= 0.
     fn backward(&self, grad_output: &Tensor) -> Vec<Tensor> {
-        let mask = Tensor::from_ndarray(
-            self.input_data.data().mapv(|x| if x > 0.0 { 1.0 } else { 0.0 }),
-        );
+        let mask =
+            Tensor::from_ndarray(
+                self.input_data
+                    .data()
+                    .mapv(|x| if x > 0.0 { 1.0 } else { 0.0 }),
+            );
         vec![grad_output * &mask]
     }
 }
@@ -570,7 +573,7 @@ mod tests {
         let result = reduce_grad_for_broadcast(&grad, &[2, 1]);
         assert_eq!(result.shape(), &[2, 1]);
         let data = result.to_vec();
-        assert_abs_diff_eq!(data[0], 6.0, epsilon = 1e-6);  // 1+2+3
+        assert_abs_diff_eq!(data[0], 6.0, epsilon = 1e-6); // 1+2+3
         assert_abs_diff_eq!(data[1], 15.0, epsilon = 1e-6); // 4+5+6
     }
 
