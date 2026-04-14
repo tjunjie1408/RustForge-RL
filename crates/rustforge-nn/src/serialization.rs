@@ -198,9 +198,9 @@ mod tests {
         let model = Linear::new(2, 1);
         let path = "test_model_roundtrip.bin";
 
-        // Set known values
+        // Set known values (using values that don't trigger clippy::approx_constant)
         model.parameters()[0].set_data(rustforge_tensor::Tensor::from_vec(
-            vec![3.14, 2.72],
+            vec![3.15, 2.73],
             &[1, 2],
         ));
         model.parameters()[1].set_data(rustforge_tensor::Tensor::from_vec(vec![0.42], &[1]));
@@ -212,8 +212,8 @@ mod tests {
 
         let w = model2.parameters()[0].data().to_vec();
         let b = model2.parameters()[1].data().to_vec();
-        assert_abs_diff_eq!(w[0], 3.14, epsilon = 1e-6);
-        assert_abs_diff_eq!(w[1], 2.72, epsilon = 1e-6);
+        assert_abs_diff_eq!(w[0], 3.15, epsilon = 1e-6);
+        assert_abs_diff_eq!(w[1], 2.73, epsilon = 1e-6);
         assert_abs_diff_eq!(b[0], 0.42, epsilon = 1e-6);
 
         let _ = fs::remove_file(path);
