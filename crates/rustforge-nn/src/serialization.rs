@@ -40,10 +40,7 @@ pub enum SerializationError {
     /// Bincode serialization/deserialization error.
     Bincode(bincode::Error),
     /// Parameter count mismatch between model and saved file.
-    ParameterCountMismatch {
-        expected: usize,
-        got: usize,
-    },
+    ParameterCountMismatch { expected: usize, got: usize },
     /// Shape mismatch between model parameter and saved tensor.
     ShapeMismatch {
         index: usize,
@@ -202,12 +199,11 @@ mod tests {
         let path = "test_model_roundtrip.bin";
 
         // Set known values
-        model.parameters()[0].set_data(
-            rustforge_tensor::Tensor::from_vec(vec![3.14, 2.72], &[1, 2]),
-        );
-        model.parameters()[1].set_data(
-            rustforge_tensor::Tensor::from_vec(vec![0.42], &[1]),
-        );
+        model.parameters()[0].set_data(rustforge_tensor::Tensor::from_vec(
+            vec![3.14, 2.72],
+            &[1, 2],
+        ));
+        model.parameters()[1].set_data(rustforge_tensor::Tensor::from_vec(vec![0.42], &[1]));
 
         save_parameters(&model, path).unwrap();
 

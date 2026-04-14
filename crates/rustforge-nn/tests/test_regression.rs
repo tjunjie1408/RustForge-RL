@@ -29,14 +29,8 @@ fn test_linear_regression() {
     let x_data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
     let y_data: Vec<f32> = x_data.iter().map(|&x| 2.0 * x + 1.0).collect();
 
-    let inputs = Variable::new(
-        Tensor::from_vec(x_data, &[8, 1]),
-        false,
-    );
-    let targets = Variable::new(
-        Tensor::from_vec(y_data, &[8, 1]),
-        false,
-    );
+    let inputs = Variable::new(Tensor::from_vec(x_data, &[8, 1]), false);
+    let targets = Variable::new(Tensor::from_vec(y_data, &[8, 1]), false);
 
     // ================================================================
     // Training loop

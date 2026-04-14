@@ -114,15 +114,14 @@ pub fn huber_loss(pred: &Variable, target: &Variable, delta: f32) -> Variable {
     let abs_diff_data = abs_diff.data();
 
     // Build condition mask: 1.0 where |diff| <= delta, 0.0 otherwise
-    let mask_data = Tensor::from_ndarray(
-        abs_diff_data
-            .data()
-            .mapv(|x| if x <= delta { 1.0 } else { 0.0 }),
-    );
+    let mask_data =
+        Tensor::from_ndarray(
+            abs_diff_data
+                .data()
+                .mapv(|x| if x <= delta { 1.0 } else { 0.0 }),
+        );
     let mask = Variable::from_tensor(mask_data.clone());
-    let inv_mask = Variable::from_tensor(Tensor::from_ndarray(
-        mask_data.data().mapv(|x| 1.0 - x),
-    ));
+    let inv_mask = Variable::from_tensor(Tensor::from_ndarray(mask_data.data().mapv(|x| 1.0 - x)));
 
     // Quadratic part: 0.5 * diff²
     let quadratic = diff.pow(2.0) * 0.5;
@@ -198,14 +197,8 @@ mod tests {
 
     #[test]
     fn test_cross_entropy_gradient_flow() {
-        let logits = Variable::new(
-            Tensor::from_vec(vec![1.0, 2.0, 3.0], &[1, 3]),
-            true,
-        );
-        let targets = Variable::new(
-            Tensor::from_vec(vec![1.0, 0.0, 0.0], &[1, 3]),
-            false,
-        );
+        let logits = Variable::new(Tensor::from_vec(vec![1.0, 2.0, 3.0], &[1, 3]), true);
+        let targets = Variable::new(Tensor::from_vec(vec![1.0, 0.0, 0.0], &[1, 3]), false);
         let loss = cross_entropy_loss(&logits, &targets);
         loss.backward();
         assert!(logits.grad().is_some(), "Logits should have gradients");
@@ -218,10 +211,7 @@ mod tests {
             Tensor::from_vec(vec![1000.0, 1001.0, 1002.0], &[1, 3]),
             true,
         );
-        let targets = Variable::new(
-            Tensor::from_vec(vec![0.0, 0.0, 1.0], &[1, 3]),
-            false,
-        );
+        let targets = Variable::new(Tensor::from_vec(vec![0.0, 0.0, 1.0], &[1, 3]), false);
         let loss = cross_entropy_loss(&logits, &targets);
         assert!(
             !loss.data().item().is_nan(),

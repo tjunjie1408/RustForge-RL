@@ -144,10 +144,7 @@ mod tests {
     #[test]
     fn test_layernorm_gradient_flow() {
         let ln = LayerNorm::new(3);
-        let x = Variable::new(
-            Tensor::from_vec(vec![1.0, 2.0, 3.0], &[1, 3]),
-            true,
-        );
+        let x = Variable::new(Tensor::from_vec(vec![1.0, 2.0, 3.0], &[1, 3]), true);
         let y = ln.forward(&x);
         y.sum().backward();
 

@@ -546,7 +546,6 @@ pub fn var_transpose(input: &Variable) -> Variable {
 // Unit Tests
 // ============================================================================
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
