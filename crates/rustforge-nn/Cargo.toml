@@ -9,3 +9,8 @@ rustforge-tensor = { path = "../rustforge-tensor" }
 rustforge-autograd = { path = "../rustforge-autograd" }
 ndarray = { workspace = true }
 serde = { workspace = true }
+bincode = { workspace = true }
+rand = { workspace = true }
+
+[dev-dependencies]
+approx = { workspace = true }
