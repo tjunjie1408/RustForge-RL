@@ -15,8 +15,8 @@
 <p align="center">
   <img src="https://img.shields.io/badge/language-Rust-orange?style=flat-square&logo=rust" alt="Rust">
   <img src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue?style=flat-square" alt="License">
-  <img src="https://img.shields.io/badge/status-Phase%201%20Complete-brightgreen?style=flat-square" alt="Status">
-  <img src="https://img.shields.io/badge/tests-100%20passing-brightgreen?style=flat-square" alt="Tests">
+  <img src="https://img.shields.io/badge/status-Phase%202%20Complete-brightgreen?style=flat-square" alt="Status">
+  <img src="https://img.shields.io/badge/tests-152%20passing-brightgreen?style=flat-square" alt="Tests">
 </p>
 
 ---
@@ -63,7 +63,7 @@ A PyTorch-style tensor library built on top of [`ndarray`](https://github.com/ru
 - Numerical gradient checking (finite difference method)
 - Optimizers: SGD (w/ momentum), Adam (bias-corrected)
 
-### 🧠 Neural Network Modules (`rustforge-nn`) — 📋 Planned
+### 🧠 Neural Network Modules (`rustforge-nn`) — ✅ Complete
 
 - `Linear`, `Conv2d`, `BatchNorm`, `LayerNorm`
 - `Sequential` container, `Module` trait
@@ -210,8 +210,8 @@ let weights = (& attention / 8.0_f32.sqrt()).softmax(1).unwrap();
 |-------|-----------|--------|
 | **Phase 1** | Tensor Engine | ✅ Complete (51 tests passing) |
 | **Phase 1** | Autograd Engine | ✅ Complete (49 tests passing) |
-| **Phase 2** | Neural Network Modules | 📋 Planned |
-| **Phase 2** | Optimizers (SGD, Adam) | 📋 Planned |
+| **Phase 2** | Neural Network Modules | ✅ Complete (37 tests passing) |
+| **Phase 2** | Optimizers (SGD, Adam) | ✅ Complete |
 | **Phase 3** | DQN + CartPole | 📋 Planned |
 | **Phase 3** | PPO + Continuous Control | 📋 Planned |
 | **Phase 4** | SAC, TD3, DDPG | 📋 Planned |
