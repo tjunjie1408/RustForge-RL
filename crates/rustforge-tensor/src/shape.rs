@@ -152,7 +152,7 @@ pub fn matmul_shape(shape_a: &[usize], shape_b: &[usize]) -> TensorResult<Vec<us
 ///
 /// This is the product of all dimension sizes. An empty shape (scalar) returns 1.
 pub fn shape_numel(shape: &[usize]) -> usize {
-    shape.iter().product::<usize>().max(1)
+    shape.iter().product::<usize>()
 }
 
 /// Computes the default strides for a given shape (row-major / C-order).
