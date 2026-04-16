@@ -29,12 +29,16 @@ use crate::module::Module;
 /// `output = layers[n]( ... layers[1]( layers[0](input) ) )`
 pub struct Sequential {
     layers: Vec<Box<dyn Module>>,
+    training: bool,
 }
 
 impl Sequential {
     /// Creates a new Sequential container from a list of modules.
     pub fn new(layers: Vec<Box<dyn Module>>) -> Self {
-        Sequential { layers }
+        Sequential {
+            layers,
+            training: true,
+        }
     }
 
     /// Returns the number of layers in the container.
@@ -68,9 +72,15 @@ impl Module for Sequential {
 
     /// Propagates training mode to all child layers.
     fn set_training(&mut self, training: bool) {
+        self.training = training;
         for layer in &mut self.layers {
             layer.set_training(training);
         }
+    }
+
+    /// Returns whether the container is in training mode.
+    fn is_training(&self) -> bool {
+        self.training
     }
 }
 
