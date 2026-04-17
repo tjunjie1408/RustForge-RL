@@ -12,3 +12,8 @@ ndarray = { workspace = true }
 rand = { workspace = true }
 rand_distr = { workspace = true }
 serde = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+approx = { workspace = true }
