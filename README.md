@@ -15,8 +15,8 @@
 <p align="center">
   <img src="https://img.shields.io/badge/language-Rust-orange?style=flat-square&logo=rust" alt="Rust">
   <img src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue?style=flat-square" alt="License">
-  <img src="https://img.shields.io/badge/status-Phase%202%20Complete-brightgreen?style=flat-square" alt="Status">
-  <img src="https://img.shields.io/badge/tests-152%20passing-brightgreen?style=flat-square" alt="Tests">
+  <img src="https://img.shields.io/badge/status-Phase%203%20In%20Progress-blue?style=flat-square" alt="Status">
+  <img src="https://img.shields.io/badge/tests-215%20passing-brightgreen?style=flat-square" alt="Tests">
 </p>
 
 ---
@@ -70,12 +70,12 @@ A PyTorch-style tensor library built on top of [`ndarray`](https://github.com/ru
 - Loss functions: MSE, CrossEntropy, Huber
 - Model serialization and checkpointing
 
-### 🎮 RL Algorithms (`rustforge-rl`) — 📋 Planned
+### 🎮 RL Algorithms (`rustforge-rl`) — 🚧 In Progress
 
 - **Value-Based**: DQN, Double DQN, Dueling DQN, Prioritized Experience Replay
 - **Policy Gradient**: REINFORCE, A2C, PPO (clip & penalty variants)
 - **Off-Policy**: SAC, TD3, DDPG
-- **Environment Interface**: Gymnasium-compatible trait for custom environments
+- **Environment Interface**: Gymnasium-compatible traits, zero-cost wrappers, and vectorized environments (`SyncVectorEnv`) ✅ Complete
 - **Replay Buffers**: Uniform, Prioritized (SumTree), HER
 
 ### 🐍 Python Bindings (`rustforge-python`) — 📋 Planned
@@ -113,6 +113,8 @@ rustforge-rl/
 │   ├── rustforge-autograd/    # 🔄 Automatic differentiation
 │   ├── rustforge-nn/          # 🧠 Neural network layers
 │   └── rustforge-rl/          # 🎮 RL algorithms
+│       └── src/
+│           └── env/           # 🌍 Zero-cost Gymnasium environments & wrappers
 │
 ├── examples/                  # Runnable examples (coming soon)
 └── benches/                   # Performance benchmarks (coming soon)
@@ -210,8 +212,9 @@ let weights = (& attention / 8.0_f32.sqrt()).softmax(1).unwrap();
 |-------|-----------|--------|
 | **Phase 1** | Tensor Engine | ✅ Complete (51 tests passing) |
 | **Phase 1** | Autograd Engine | ✅ Complete (49 tests passing) |
-| **Phase 2** | Neural Network Modules | ✅ Complete (37 tests passing) |
+| **Phase 2** | Neural Network Modules | ✅ Complete (74 tests passing) |
 | **Phase 2** | Optimizers (SGD, Adam) | ✅ Complete |
+| **Phase 3** | Environment Infra & Vectorization | ✅ Complete (32 tests passing) |
 | **Phase 3** | DQN + CartPole | 📋 Planned |
 | **Phase 3** | PPO + Continuous Control | 📋 Planned |
 | **Phase 4** | SAC, TD3, DDPG | 📋 Planned |
