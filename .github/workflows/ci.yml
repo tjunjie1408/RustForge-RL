@@ -24,6 +24,8 @@ jobs:
 
     - name: Cache cargo registry
       uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: "v2-arm64-fix"
 
     - name: Check formatting
       run: cargo fmt --all -- --check
