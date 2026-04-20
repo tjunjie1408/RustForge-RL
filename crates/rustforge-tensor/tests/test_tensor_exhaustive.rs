@@ -803,17 +803,20 @@ mod elementwise_math {
     }
 
     #[test]
-    fn log_zero_gives_neg_inf() {
+    fn log_zero_gives_clamped_value() {
+        // After numerics hardening, log(0) is clamped to log(1e-7) ≈ -16.12
         let t = Tensor::from_vec(vec![0.0], &[1]);
         let l = t.log();
-        assert!(l.item().is_infinite() && l.item().is_sign_negative());
+        assert!(l.item().is_finite(), "log(0) should be clamped to finite value");
+        assert!(l.item() < -10.0, "log(0) clamped value should be very negative");
     }
 
     #[test]
-    fn log_negative_gives_nan() {
+    fn log_negative_gives_clamped_value() {
+        // After numerics hardening, log(-1) is clamped to log(1e-7) ≈ -16.12
         let t = Tensor::from_vec(vec![-1.0], &[1]);
         let l = t.log();
-        assert!(l.item().is_nan());
+        assert!(l.item().is_finite(), "log(negative) should be clamped to finite value");
     }
 
     #[test]
@@ -854,9 +857,10 @@ mod elementwise_math {
     }
 
     #[test]
-    fn sqrt_negative_gives_nan() {
+    fn sqrt_negative_gives_zero() {
+        // After numerics hardening, sqrt(-1) is clamped to sqrt(0) = 0.0
         let t = Tensor::from_vec(vec![-1.0], &[1]);
-        assert!(t.sqrt().item().is_nan());
+        assert_abs_diff_eq!(t.sqrt().item(), 0.0, epsilon = 1e-6);
     }
 
     #[test]
@@ -881,9 +885,12 @@ mod elementwise_math {
     }
 
     #[test]
-    fn reciprocal_zero_gives_inf() {
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "reciprocal() called with zero elements")]
+    fn reciprocal_zero_panics_in_debug() {
+        // After numerics hardening, reciprocal(0) panics in debug builds
         let t = Tensor::from_vec(vec![0.0], &[1]);
-        assert!(t.reciprocal().item().is_infinite());
+        let _ = t.reciprocal();
     }
 
     #[test]

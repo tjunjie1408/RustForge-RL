@@ -4,10 +4,15 @@ description = "Automatic differentiation engine for RustForge RL"
 version.workspace = true
 edition.workspace = true
 
+[features]
+dhat-heap = ["dhat"]
+
 [dependencies]
 rustforge-tensor = { path = "../rustforge-tensor" }
 ndarray = { workspace = true }
 serde = { workspace = true }
+smallvec = { workspace = true }
+dhat = { workspace = true, optional = true }
 
 [dev-dependencies]
 approx = { workspace = true }

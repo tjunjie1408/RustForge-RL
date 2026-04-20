@@ -33,3 +33,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Test
 approx = "0.5"
 proptest = "1"
+dhat = "0.3"
+
+# Performance
+smallvec = "1.13"
