@@ -13,7 +13,7 @@ mod into_tensor_buffer {
 
     #[test]
     fn f32_array_write_roundtrip() {
-        let obs: [f32; 4] = [1.0, -2.5, 3.14, 0.001];
+        let obs: [f32; 4] = [1.0, -2.5, std::f32::consts::PI, 0.001];
         let mut buf = [0.0f32; 4];
         obs.write_to_buffer(&mut buf);
         assert_eq!(buf, obs, "write_to_buffer should produce exact copy");
