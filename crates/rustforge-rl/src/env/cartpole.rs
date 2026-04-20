@@ -237,5 +237,3 @@ impl Environment for CartPole {
         )
     }
 }
-
-

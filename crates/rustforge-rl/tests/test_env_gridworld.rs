@@ -60,7 +60,11 @@ mod movement {
             if terminated {
                 assert_eq!(reward, 1.0, "Goal reward should be 1.0");
             } else {
-                assert!(reward < 0.0, "Step penalty should be negative at step {}", i);
+                assert!(
+                    reward < 0.0,
+                    "Step penalty should be negative at step {}",
+                    i
+                );
             }
         }
     }
@@ -90,7 +94,11 @@ mod boundaries {
         env.reset(Some(42));
         // Agent at [0,0] — try to go up (should stay at [0,0])
         let (obs, _, _, _, _) = env.step(GridAction::Up);
-        assert_eq!(obs, [0, 0], "Should stay at [0,0] when moving up from top edge");
+        assert_eq!(
+            obs,
+            [0, 0],
+            "Should stay at [0,0] when moving up from top edge"
+        );
 
         // Try to go left (should also stay at [0,0])
         let (obs, _, _, _, _) = env.step(GridAction::Left);

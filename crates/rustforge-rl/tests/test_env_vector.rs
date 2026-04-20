@@ -4,9 +4,7 @@
 //! batch determinism, zero-copy ndarray bridge, IntoTensorBuffer correctness,
 //! SoA layout validation, and borrow-split safety.
 
-use rustforge_rl::env::{
-    CartPole, CartPoleAction, IntoTensorBuffer, SyncVectorEnv,
-};
+use rustforge_rl::env::{CartPole, CartPoleAction, IntoTensorBuffer, SyncVectorEnv};
 
 // IntoTensorBuffer Trait
 
@@ -125,9 +123,7 @@ mod auto_reset {
     #[test]
     fn auto_reset_preserves_terminal_obs() {
         // Use very short env that terminates quickly
-        let envs: Vec<CartPole> = (0..2)
-            .map(|_| CartPole::with_max_steps(5))
-            .collect();
+        let envs: Vec<CartPole> = (0..2).map(|_| CartPole::with_max_steps(5)).collect();
         let mut vec_env = SyncVectorEnv::new(envs);
         vec_env.reset_all(Some(&[42, 43]));
 
@@ -171,7 +167,10 @@ mod auto_reset {
             }
         }
 
-        assert!(found_terminal, "At least one env should have terminated within 20 steps");
+        assert!(
+            found_terminal,
+            "At least one env should have terminated within 20 steps"
+        );
     }
 }
 
@@ -195,9 +194,21 @@ mod soa_layout {
         let result = vec_env.step_batch(&actions);
 
         assert_eq!(result.rewards.len(), 4, "Rewards should have N elements");
-        assert_eq!(result.terminated.len(), 4, "Terminated should have N elements");
-        assert_eq!(result.truncated.len(), 4, "Truncated should have N elements");
-        assert_eq!(result.terminal_obs.len(), 4, "Terminal obs should have N elements");
+        assert_eq!(
+            result.terminated.len(),
+            4,
+            "Terminated should have N elements"
+        );
+        assert_eq!(
+            result.truncated.len(),
+            4,
+            "Truncated should have N elements"
+        );
+        assert_eq!(
+            result.terminal_obs.len(),
+            4,
+            "Terminal obs should have N elements"
+        );
         assert_eq!(result.obs.len(), 16, "Obs should have N × DIM elements");
     }
 }
@@ -230,16 +241,8 @@ mod batch_determinism {
             let r1 = ve1.step_batch(&actions);
             let r2 = ve2.step_batch(&actions);
 
-            assert_eq!(
-                r1.obs, r2.obs,
-                "Obs buffers diverged at step {}",
-                step
-            );
-            assert_eq!(
-                r1.rewards, r2.rewards,
-                "Rewards diverged at step {}",
-                step
-            );
+            assert_eq!(r1.obs, r2.obs, "Obs buffers diverged at step {}", step);
+            assert_eq!(r1.rewards, r2.rewards, "Rewards diverged at step {}", step);
             assert_eq!(
                 r1.terminated, r2.terminated,
                 "Terminated diverged at step {}",
