@@ -100,7 +100,7 @@ impl From<bincode::Error> for SerializationError {
 /// - `path`: File path to write to.
 pub fn save_parameters(module: &dyn Module, path: &str) -> Result<(), SerializationError> {
     let params = module.parameters();
-    let tensors: Vec<Tensor> = params.iter().map(|p| p.data()).collect();
+    let tensors: Vec<Tensor> = params.iter().map(|p| p.data().clone()).collect();
     let encoded = bincode::serialize(&tensors)?;
     fs::write(path, encoded)?;
     Ok(())

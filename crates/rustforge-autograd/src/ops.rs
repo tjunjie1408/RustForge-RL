@@ -36,7 +36,9 @@ impl<'b> Add<&'b Variable> for &Variable {
     type Output = Variable;
 
     fn add(self, rhs: &'b Variable) -> Variable {
-        let result_data = &self.data() + &rhs.data();
+        let lhs_d = self.data();
+        let rhs_d = rhs.data();
+        let result_data = &*lhs_d + &*rhs_d;
         let requires_grad = needs_grad(&[self, rhs]);
         let grad_fn: Option<Box<dyn GradFn>> = if requires_grad {
             Some(Box::new(AddGrad {
@@ -56,7 +58,9 @@ impl<'b> Sub<&'b Variable> for &Variable {
     type Output = Variable;
 
     fn sub(self, rhs: &'b Variable) -> Variable {
-        let result_data = &self.data() - &rhs.data();
+        let lhs_d = self.data();
+        let rhs_d = rhs.data();
+        let result_data = &*lhs_d - &*rhs_d;
         let requires_grad = needs_grad(&[self, rhs]);
         let grad_fn: Option<Box<dyn GradFn>> = if requires_grad {
             Some(Box::new(SubGrad {
@@ -78,14 +82,14 @@ impl<'b> Mul<&'b Variable> for &Variable {
     fn mul(self, rhs: &'b Variable) -> Variable {
         let lhs_data = self.data();
         let rhs_data = rhs.data();
-        let result_data = &lhs_data * &rhs_data;
+        let result_data = &*lhs_data * &*rhs_data;
         let requires_grad = needs_grad(&[self, rhs]);
         let grad_fn: Option<Box<dyn GradFn>> = if requires_grad {
             Some(Box::new(MulGrad {
                 lhs: self.clone(),
                 rhs: rhs.clone(),
-                lhs_data,
-                rhs_data,
+                lhs_data: lhs_data.clone(),
+                rhs_data: rhs_data.clone(),
             }))
         } else {
             None
@@ -102,14 +106,14 @@ impl<'b> Div<&'b Variable> for &Variable {
     fn div(self, rhs: &'b Variable) -> Variable {
         let lhs_data = self.data();
         let rhs_data = rhs.data();
-        let result_data = &lhs_data / &rhs_data;
+        let result_data = &*lhs_data / &*rhs_data;
         let requires_grad = needs_grad(&[self, rhs]);
         let grad_fn: Option<Box<dyn GradFn>> = if requires_grad {
             Some(Box::new(DivGrad {
                 lhs: self.clone(),
                 rhs: rhs.clone(),
-                lhs_data,
-                rhs_data,
+                lhs_data: lhs_data.clone(),
+                rhs_data: rhs_data.clone(),
             }))
         } else {
             None
@@ -124,7 +128,8 @@ impl Neg for &Variable {
     type Output = Variable;
 
     fn neg(self) -> Variable {
-        let result_data = self.data().neg();
+        let d = self.data();
+        let result_data = -&*d;
         let requires_grad = self.requires_grad();
         let grad_fn: Option<Box<dyn GradFn>> = if requires_grad {
             Some(Box::new(NegGrad {
@@ -236,7 +241,8 @@ impl Add<f32> for &Variable {
     type Output = Variable;
 
     fn add(self, rhs: f32) -> Variable {
-        let result_data = &self.data() + rhs;
+        let d = self.data();
+        let result_data = &*d + rhs;
         let requires_grad = self.requires_grad();
         let grad_fn: Option<Box<dyn GradFn>> = if requires_grad {
             Some(Box::new(ScalarAddGrad {
@@ -277,7 +283,8 @@ impl Mul<f32> for &Variable {
     type Output = Variable;
 
     fn mul(self, rhs: f32) -> Variable {
-        let result_data = &self.data() * rhs;
+        let d = self.data();
+        let result_data = &*d * rhs;
         let requires_grad = self.requires_grad();
         let grad_fn: Option<Box<dyn GradFn>> = if requires_grad {
             Some(Box::new(ScalarMulGrad {
@@ -342,8 +349,8 @@ pub fn var_matmul(lhs: &Variable, rhs: &Variable) -> Variable {
         Some(Box::new(MatmulGrad {
             lhs: lhs.clone(),
             rhs: rhs.clone(),
-            lhs_data,
-            rhs_data,
+            lhs_data: lhs_data.clone(),
+            rhs_data: rhs_data.clone(),
         }))
     } else {
         None
@@ -359,7 +366,7 @@ pub fn var_relu(input: &Variable) -> Variable {
     let grad_fn: Option<Box<dyn GradFn>> = if requires_grad {
         Some(Box::new(ReluGrad {
             input: input.clone(),
-            input_data,
+            input_data: input_data.clone(),
         }))
     } else {
         None
@@ -423,7 +430,7 @@ pub fn var_log(input: &Variable) -> Variable {
     let grad_fn: Option<Box<dyn GradFn>> = if requires_grad {
         Some(Box::new(LogGrad {
             input: input.clone(),
-            input_data,
+            input_data: input_data.clone(),
         }))
     } else {
         None
@@ -439,7 +446,7 @@ pub fn var_pow(input: &Variable, p: f32) -> Variable {
     let grad_fn: Option<Box<dyn GradFn>> = if requires_grad {
         Some(Box::new(PowGrad {
             input: input.clone(),
-            input_data,
+            input_data: input_data.clone(),
             exponent: p,
         }))
     } else {

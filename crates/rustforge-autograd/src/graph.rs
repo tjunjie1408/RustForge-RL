@@ -12,8 +12,14 @@
 //! The `backward()` method receives ∂L/∂y (grad_output) and computes ∂L/∂a, ∂L/∂b, ...
 
 use rustforge_tensor::Tensor;
+use smallvec::{smallvec, SmallVec};
 
 use crate::variable::Variable;
+
+/// Stack-allocated small vectors for GradFn results.
+/// Capacity 2 covers all unary and binary ops without heap allocation.
+pub type GradInputs = SmallVec<[Variable; 2]>;
+pub type GradOutputs = SmallVec<[Tensor; 2]>;
 
 /// Trait for computation graph nodes.
 ///
@@ -22,12 +28,12 @@ use crate::variable::Variable;
 pub trait GradFn {
     /// Returns the input variables this operation depends on.
     /// Used for topological sort during the backward pass.
-    fn inputs(&self) -> Vec<Variable>;
+    fn inputs(&self) -> GradInputs;
 
     /// Computes gradients for each input given the output gradient.
     ///
     /// Returns gradients in the same order as `inputs()`.
-    fn backward(&self, grad_output: &Tensor) -> Vec<Tensor>;
+    fn backward(&self, grad_output: &Tensor) -> GradOutputs;
 }
 
 // Helper: Broadcasting gradient reduction
@@ -48,20 +54,25 @@ pub trait GradFn {
 /// If `grad` has shape [3, 4] and `original_shape` is [4]:
 /// → Sum along axis 0 → [1, 4] → reshape to [4]
 pub(crate) fn reduce_grad_for_broadcast(grad: &Tensor, original_shape: &[usize]) -> Tensor {
-    let grad_shape = grad.shape().to_vec();
+    let grad_shape = grad.shape();
     let orig_shape = original_shape;
 
     // Fast path: shapes already match
-    if grad_shape.as_slice() == orig_shape {
+    if grad_shape == orig_shape {
         return grad.clone();
     }
 
     let grad_ndim = grad_shape.len();
     let orig_ndim = orig_shape.len();
+    let pad_len = grad_ndim.saturating_sub(orig_ndim);
 
-    // Pad original shape with leading 1s to match grad dimensions
-    let mut padded = vec![1usize; grad_ndim.saturating_sub(orig_ndim)];
-    padded.extend_from_slice(orig_shape);
+    // Build padded shape on stack for ndim <= 8, heap fallback otherwise
+    let padded: smallvec::SmallVec<[usize; 8]> = {
+        let mut p = smallvec::SmallVec::new();
+        p.extend(std::iter::repeat(1usize).take(pad_len));
+        p.extend_from_slice(orig_shape);
+        p
+    };
 
     let mut result = grad.clone();
 
@@ -85,16 +96,16 @@ pub struct AddGrad {
 }
 
 impl GradFn for AddGrad {
-    fn inputs(&self) -> Vec<Variable> {
-        vec![self.lhs.clone(), self.rhs.clone()]
+    fn inputs(&self) -> GradInputs {
+        smallvec![self.lhs.clone(), self.rhs.clone()]
     }
 
     /// ∂L/∂a = grad_output, ∂L/∂b = grad_output
     /// (with broadcast reduction if shapes differ)
-    fn backward(&self, grad_output: &Tensor) -> Vec<Tensor> {
+    fn backward(&self, grad_output: &Tensor) -> GradOutputs {
         let grad_lhs = reduce_grad_for_broadcast(grad_output, &self.lhs.shape());
         let grad_rhs = reduce_grad_for_broadcast(grad_output, &self.rhs.shape());
-        vec![grad_lhs, grad_rhs]
+        smallvec![grad_lhs, grad_rhs]
     }
 }
 
@@ -106,16 +117,16 @@ pub struct SubGrad {
 }
 
 impl GradFn for SubGrad {
-    fn inputs(&self) -> Vec<Variable> {
-        vec![self.lhs.clone(), self.rhs.clone()]
+    fn inputs(&self) -> GradInputs {
+        smallvec![self.lhs.clone(), self.rhs.clone()]
     }
 
     /// ∂L/∂a = grad_output, ∂L/∂b = -grad_output
-    fn backward(&self, grad_output: &Tensor) -> Vec<Tensor> {
+    fn backward(&self, grad_output: &Tensor) -> GradOutputs {
         let grad_lhs = reduce_grad_for_broadcast(grad_output, &self.lhs.shape());
         let neg_grad = grad_output.neg();
         let grad_rhs = reduce_grad_for_broadcast(&neg_grad, &self.rhs.shape());
-        vec![grad_lhs, grad_rhs]
+        smallvec![grad_lhs, grad_rhs]
     }
 }
 
@@ -131,17 +142,17 @@ pub struct MulGrad {
 }
 
 impl GradFn for MulGrad {
-    fn inputs(&self) -> Vec<Variable> {
-        vec![self.lhs.clone(), self.rhs.clone()]
+    fn inputs(&self) -> GradInputs {
+        smallvec![self.lhs.clone(), self.rhs.clone()]
     }
 
     /// ∂L/∂a = grad_output * b, ∂L/∂b = grad_output * a
-    fn backward(&self, grad_output: &Tensor) -> Vec<Tensor> {
+    fn backward(&self, grad_output: &Tensor) -> GradOutputs {
         let raw_grad_lhs = grad_output * &self.rhs_data;
         let raw_grad_rhs = grad_output * &self.lhs_data;
         let grad_lhs = reduce_grad_for_broadcast(&raw_grad_lhs, &self.lhs.shape());
         let grad_rhs = reduce_grad_for_broadcast(&raw_grad_rhs, &self.rhs.shape());
-        vec![grad_lhs, grad_rhs]
+        smallvec![grad_lhs, grad_rhs]
     }
 }
 
@@ -155,22 +166,33 @@ pub struct DivGrad {
 }
 
 impl GradFn for DivGrad {
-    fn inputs(&self) -> Vec<Variable> {
-        vec![self.lhs.clone(), self.rhs.clone()]
+    fn inputs(&self) -> GradInputs {
+        smallvec![self.lhs.clone(), self.rhs.clone()]
     }
 
     /// ∂L/∂a = grad_output / b
     /// ∂L/∂b = -grad_output * a / b²
-    fn backward(&self, grad_output: &Tensor) -> Vec<Tensor> {
+    ///
+    /// Numerical safety: clamps b² away from zero to prevent inf gradients.
+    fn backward(&self, grad_output: &Tensor) -> GradOutputs {
+        debug_assert!(
+            self.rhs_data.data().iter().all(|v| *v != 0.0),
+            "DivGrad: division by zero detected in rhs_data"
+        );
+
         let raw_grad_lhs = grad_output / &self.rhs_data;
 
         let numerator = grad_output * &self.lhs_data;
         let b_sq = &self.rhs_data * &self.rhs_data;
-        let raw_grad_rhs = (&numerator / &b_sq).neg();
+        // Clamp b² away from zero to prevent inf/NaN gradient explosion
+        let b_sq_safe = Tensor::from_ndarray(
+            b_sq.data().mapv(|x| if x.abs() < 1e-12 { 1e-12_f32.copysign(x) } else { x })
+        );
+        let raw_grad_rhs = (&numerator / &b_sq_safe).neg();
 
         let grad_lhs = reduce_grad_for_broadcast(&raw_grad_lhs, &self.lhs.shape());
         let grad_rhs = reduce_grad_for_broadcast(&raw_grad_rhs, &self.rhs.shape());
-        vec![grad_lhs, grad_rhs]
+        smallvec![grad_lhs, grad_rhs]
     }
 }
 
@@ -181,13 +203,13 @@ pub struct NegGrad {
 }
 
 impl GradFn for NegGrad {
-    fn inputs(&self) -> Vec<Variable> {
-        vec![self.input.clone()]
+    fn inputs(&self) -> GradInputs {
+        smallvec![self.input.clone()]
     }
 
     /// ∂L/∂a = -grad_output
-    fn backward(&self, grad_output: &Tensor) -> Vec<Tensor> {
-        vec![grad_output.neg()]
+    fn backward(&self, grad_output: &Tensor) -> GradOutputs {
+        smallvec![grad_output.neg()]
     }
 }
 
@@ -201,8 +223,8 @@ pub struct MatmulGrad {
 }
 
 impl GradFn for MatmulGrad {
-    fn inputs(&self) -> Vec<Variable> {
-        vec![self.lhs.clone(), self.rhs.clone()]
+    fn inputs(&self) -> GradInputs {
+        smallvec![self.lhs.clone(), self.rhs.clone()]
     }
 
     /// For y = A @ B:
@@ -210,7 +232,7 @@ impl GradFn for MatmulGrad {
     ///   ∂L/∂B = Aᵀ @ grad_output
     ///
     /// Handles 1D and 2D cases with appropriate reshaping.
-    fn backward(&self, grad_output: &Tensor) -> Vec<Tensor> {
+    fn backward(&self, grad_output: &Tensor) -> GradOutputs {
         let a = &self.lhs_data;
         let b = &self.rhs_data;
 
@@ -218,7 +240,7 @@ impl GradFn for MatmulGrad {
             // Dot product: [k] · [k] → scalar
             (1, 1) => {
                 let g = grad_output.item();
-                vec![b * g, a * g]
+                smallvec![b * g, a * g]
             }
             // Matrix-vector: [m,k] × [k] → [m]
             (2, 1) => {
@@ -226,7 +248,7 @@ impl GradFn for MatmulGrad {
                 let grad_a = grad_output.unsqueeze(1).matmul(&b.unsqueeze(0));
                 // ∂L/∂b = A.T @ grad → [k]
                 let grad_b = a.t().matmul(grad_output);
-                vec![grad_a, grad_b]
+                smallvec![grad_a, grad_b]
             }
             // Vector-matrix: [k] × [k,n] → [n]
             (1, 2) => {
@@ -234,19 +256,19 @@ impl GradFn for MatmulGrad {
                 let grad_a = grad_output.matmul(&b.t());
                 // ∂L/∂B = a[:,None] @ grad[None,:] (outer product) → [k,n]
                 let grad_b = a.unsqueeze(1).matmul(&grad_output.unsqueeze(0));
-                vec![grad_a, grad_b]
+                smallvec![grad_a, grad_b]
             }
             // Standard 2D: [m,k] × [k,n] → [m,n]
             (2, 2) => {
                 let grad_a = grad_output.matmul(&b.t());
                 let grad_b = a.t().matmul(grad_output);
-                vec![grad_a, grad_b]
+                smallvec![grad_a, grad_b]
             }
             // Higher dimensions: treat as batch matmul (simplified)
             _ => {
                 let grad_a = grad_output.matmul(&b.t());
                 let grad_b = a.t().matmul(grad_output);
-                vec![grad_a, grad_b]
+                smallvec![grad_a, grad_b]
             }
         }
     }
@@ -260,20 +282,20 @@ pub struct ReluGrad {
 }
 
 impl GradFn for ReluGrad {
-    fn inputs(&self) -> Vec<Variable> {
-        vec![self.input.clone()]
+    fn inputs(&self) -> GradInputs {
+        smallvec![self.input.clone()]
     }
 
     /// ∂L/∂x = grad_output * (x > 0)
     /// The gradient passes through where x > 0 and is zeroed where x <= 0.
-    fn backward(&self, grad_output: &Tensor) -> Vec<Tensor> {
+    fn backward(&self, grad_output: &Tensor) -> GradOutputs {
         let mask =
             Tensor::from_ndarray(
                 self.input_data
                     .data()
                     .mapv(|x| if x > 0.0 { 1.0 } else { 0.0 }),
             );
-        vec![grad_output * &mask]
+        smallvec![grad_output * &mask]
     }
 }
 
@@ -286,16 +308,16 @@ pub struct SigmoidGrad {
 }
 
 impl GradFn for SigmoidGrad {
-    fn inputs(&self) -> Vec<Variable> {
-        vec![self.input.clone()]
+    fn inputs(&self) -> GradInputs {
+        smallvec![self.input.clone()]
     }
 
     /// ∂L/∂x = grad_output * σ(x) * (1 - σ(x))
-    fn backward(&self, grad_output: &Tensor) -> Vec<Tensor> {
+    fn backward(&self, grad_output: &Tensor) -> GradOutputs {
         let one = Tensor::ones(self.output_data.shape());
         let one_minus_sig = &one - &self.output_data;
         let local_grad = &self.output_data * &one_minus_sig;
-        vec![grad_output * &local_grad]
+        smallvec![grad_output * &local_grad]
     }
 }
 
@@ -308,16 +330,16 @@ pub struct TanhGrad {
 }
 
 impl GradFn for TanhGrad {
-    fn inputs(&self) -> Vec<Variable> {
-        vec![self.input.clone()]
+    fn inputs(&self) -> GradInputs {
+        smallvec![self.input.clone()]
     }
 
     /// ∂L/∂x = grad_output * (1 - tanh²(x))
-    fn backward(&self, grad_output: &Tensor) -> Vec<Tensor> {
+    fn backward(&self, grad_output: &Tensor) -> GradOutputs {
         let one = Tensor::ones(self.output_data.shape());
         let tanh_sq = &self.output_data * &self.output_data;
         let local_grad = &one - &tanh_sq;
-        vec![grad_output * &local_grad]
+        smallvec![grad_output * &local_grad]
     }
 }
 
@@ -330,13 +352,13 @@ pub struct ExpGrad {
 }
 
 impl GradFn for ExpGrad {
-    fn inputs(&self) -> Vec<Variable> {
-        vec![self.input.clone()]
+    fn inputs(&self) -> GradInputs {
+        smallvec![self.input.clone()]
     }
 
     /// ∂L/∂x = grad_output * exp(x)
-    fn backward(&self, grad_output: &Tensor) -> Vec<Tensor> {
-        vec![grad_output * &self.output_data]
+    fn backward(&self, grad_output: &Tensor) -> GradOutputs {
+        smallvec![grad_output * &self.output_data]
     }
 }
 
@@ -348,13 +370,19 @@ pub struct LogGrad {
 }
 
 impl GradFn for LogGrad {
-    fn inputs(&self) -> Vec<Variable> {
-        vec![self.input.clone()]
+    fn inputs(&self) -> GradInputs {
+        smallvec![self.input.clone()]
     }
 
     /// ∂L/∂x = grad_output / x
-    fn backward(&self, grad_output: &Tensor) -> Vec<Tensor> {
-        vec![grad_output / &self.input_data]
+    ///
+    /// Numerical safety: clamps input away from zero to prevent inf gradients.
+    fn backward(&self, grad_output: &Tensor) -> GradOutputs {
+        // Clamp input_data away from zero to prevent division by zero in gradient
+        let safe_input = Tensor::from_ndarray(
+            self.input_data.data().mapv(|x| if x.abs() < 1e-7 { 1e-7_f32.copysign(x) } else { x })
+        );
+        smallvec![grad_output / &safe_input]
     }
 }
 
@@ -367,15 +395,22 @@ pub struct PowGrad {
 }
 
 impl GradFn for PowGrad {
-    fn inputs(&self) -> Vec<Variable> {
-        vec![self.input.clone()]
+    fn inputs(&self) -> GradInputs {
+        smallvec![self.input.clone()]
     }
 
     /// ∂L/∂x = grad_output * p * x^(p-1)
-    fn backward(&self, grad_output: &Tensor) -> Vec<Tensor> {
+    ///
+    /// Numerical safety: debug-asserts finite gradient output.
+    fn backward(&self, grad_output: &Tensor) -> GradOutputs {
         let p = self.exponent;
         let local_grad = &self.input_data.pow(p - 1.0) * p;
-        vec![grad_output * &local_grad]
+        let result = grad_output * &local_grad;
+        debug_assert!(
+            result.data().iter().all(|v| v.is_finite()),
+            "PowGrad: non-finite gradient detected (exponent={})", p
+        );
+        smallvec![result]
     }
 }
 
@@ -388,14 +423,20 @@ pub struct SqrtGrad {
 }
 
 impl GradFn for SqrtGrad {
-    fn inputs(&self) -> Vec<Variable> {
-        vec![self.input.clone()]
+    fn inputs(&self) -> GradInputs {
+        smallvec![self.input.clone()]
     }
 
     /// ∂L/∂x = grad_output / (2√x)
-    fn backward(&self, grad_output: &Tensor) -> Vec<Tensor> {
-        let two_sqrt = &self.output_data * 2.0;
-        vec![grad_output / &two_sqrt]
+    ///
+    /// Numerical safety: clamps √x away from zero to prevent inf gradients.
+    fn backward(&self, grad_output: &Tensor) -> GradOutputs {
+        // Clamp output away from zero to prevent division by zero
+        let safe_output = Tensor::from_ndarray(
+            self.output_data.data().mapv(|x| x.max(1e-7))
+        );
+        let two_sqrt = &safe_output * 2.0;
+        smallvec![grad_output / &two_sqrt]
     }
 }
 
@@ -406,16 +447,16 @@ pub struct SumGrad {
 }
 
 impl GradFn for SumGrad {
-    fn inputs(&self) -> Vec<Variable> {
-        vec![self.input.clone()]
+    fn inputs(&self) -> GradInputs {
+        smallvec![self.input.clone()]
     }
 
     /// ∂L/∂x_i = grad_output (broadcast to input shape)
     /// Since sum reduces to scalar, gradient is uniform across all elements.
-    fn backward(&self, grad_output: &Tensor) -> Vec<Tensor> {
+    fn backward(&self, grad_output: &Tensor) -> GradOutputs {
         let shape = self.input.shape();
         let grad = Tensor::full(&shape, grad_output.item());
-        vec![grad]
+        smallvec![grad]
     }
 }
 
@@ -428,12 +469,12 @@ pub struct SumAxisGrad {
 }
 
 impl GradFn for SumAxisGrad {
-    fn inputs(&self) -> Vec<Variable> {
-        vec![self.input.clone()]
+    fn inputs(&self) -> GradInputs {
+        smallvec![self.input.clone()]
     }
 
     /// ∂L/∂x = grad_output broadcast back to input shape along the summed axis.
-    fn backward(&self, grad_output: &Tensor) -> Vec<Tensor> {
+    fn backward(&self, grad_output: &Tensor) -> GradOutputs {
         let input_shape = self.input.shape();
 
         // If keepdim=false, re-insert the reduced dimension
@@ -445,7 +486,7 @@ impl GradFn for SumAxisGrad {
 
         // Broadcast: multiply ones_like(input) * grad_expanded
         let ones = Tensor::ones(&input_shape);
-        vec![&ones * &grad_expanded]
+        smallvec![&ones * &grad_expanded]
     }
 }
 
@@ -456,16 +497,16 @@ pub struct MeanGrad {
 }
 
 impl GradFn for MeanGrad {
-    fn inputs(&self) -> Vec<Variable> {
-        vec![self.input.clone()]
+    fn inputs(&self) -> GradInputs {
+        smallvec![self.input.clone()]
     }
 
     /// ∂L/∂x_i = grad_output / numel
-    fn backward(&self, grad_output: &Tensor) -> Vec<Tensor> {
+    fn backward(&self, grad_output: &Tensor) -> GradOutputs {
         let shape = self.input.shape();
         let numel: usize = shape.iter().product();
         let grad = Tensor::full(&shape, grad_output.item() / numel as f32);
-        vec![grad]
+        smallvec![grad]
     }
 }
 
@@ -477,13 +518,13 @@ pub struct ScalarAddGrad {
 }
 
 impl GradFn for ScalarAddGrad {
-    fn inputs(&self) -> Vec<Variable> {
-        vec![self.input.clone()]
+    fn inputs(&self) -> GradInputs {
+        smallvec![self.input.clone()]
     }
 
     /// ∂L/∂x = grad_output (adding a constant has derivative 1)
-    fn backward(&self, grad_output: &Tensor) -> Vec<Tensor> {
-        vec![grad_output.clone()]
+    fn backward(&self, grad_output: &Tensor) -> GradOutputs {
+        smallvec![grad_output.clone()]
     }
 }
 
@@ -494,13 +535,13 @@ pub struct ScalarMulGrad {
 }
 
 impl GradFn for ScalarMulGrad {
-    fn inputs(&self) -> Vec<Variable> {
-        vec![self.input.clone()]
+    fn inputs(&self) -> GradInputs {
+        smallvec![self.input.clone()]
     }
 
     /// ∂L/∂x = grad_output * scalar
-    fn backward(&self, grad_output: &Tensor) -> Vec<Tensor> {
-        vec![grad_output * self.scalar]
+    fn backward(&self, grad_output: &Tensor) -> GradOutputs {
+        smallvec![grad_output * self.scalar]
     }
 }
 
@@ -515,13 +556,13 @@ pub struct TransposeGrad {
 }
 
 impl GradFn for TransposeGrad {
-    fn inputs(&self) -> Vec<Variable> {
-        vec![self.input.clone()]
+    fn inputs(&self) -> GradInputs {
+        smallvec![self.input.clone()]
     }
 
     /// ∂L/∂x = transpose(grad_output)
-    fn backward(&self, grad_output: &Tensor) -> Vec<Tensor> {
-        vec![grad_output.t()]
+    fn backward(&self, grad_output: &Tensor) -> GradOutputs {
+        smallvec![grad_output.t()]
     }
 }
 

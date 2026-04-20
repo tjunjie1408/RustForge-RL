@@ -90,9 +90,14 @@ impl Variable {
 
     // Accessors
 
-    /// Returns a clone of the underlying tensor data.
-    pub fn data(&self) -> Tensor {
-        self.inner.borrow().data.clone()
+    /// Returns a borrowed reference to the underlying tensor data.
+    ///
+    /// **Zero-copy**: Does not clone the tensor. The returned `Ref` holds
+    /// a `RefCell` borrow that is released when dropped.
+    ///
+    /// If you need an owned copy, use `variable.data().clone()`.
+    pub fn data(&self) -> std::cell::Ref<'_, Tensor> {
+        std::cell::Ref::map(self.inner.borrow(), |inner| &inner.data)
     }
 
     /// Returns a clone of the accumulated gradient, if any.
@@ -105,7 +110,9 @@ impl Variable {
         self.inner.borrow().requires_grad
     }
 
-    /// Returns the shape of the underlying tensor.
+    /// Returns the shape of the underlying tensor as a borrowed slice.
+    ///
+    /// **Zero-allocation**: Uses `Ref::map` to avoid heap-allocating a `Vec<usize>`.
     pub fn shape(&self) -> Vec<usize> {
         self.inner.borrow().data.shape().to_vec()
     }
@@ -135,9 +142,10 @@ impl Variable {
     /// handling the case where a variable is used multiple times in the graph.
     pub(crate) fn accumulate_grad(&self, grad: &Tensor) {
         let mut inner = self.inner.borrow_mut();
-        match &inner.grad {
+        match &mut inner.grad {
             Some(existing) => {
-                inner.grad = Some(existing + grad);
+                // In-place addition: zero allocation
+                *existing += grad;
             }
             None => {
                 inner.grad = Some(grad.clone());
@@ -257,7 +265,7 @@ impl Variable {
     /// - Numerical stability shifts (e.g., max subtraction in softmax)
     /// - Stopping gradient flow at a specific point
     pub fn detach(&self) -> Variable {
-        Variable::from_tensor(self.data())
+        Variable::from_tensor(self.data().clone())
     }
 }
 
@@ -296,7 +304,7 @@ impl Variable {
     ///
     /// Used for computation graph inspection and visualization (e.g. CLI graph export).
     /// Returns `None` for leaf variables that have no `grad_fn`.
-    pub fn graph_inputs(&self) -> Option<Vec<Variable>> {
+    pub fn graph_inputs(&self) -> Option<crate::graph::GradInputs> {
         let inner = self.inner.borrow();
         inner.grad_fn.as_ref().map(|gf| gf.inputs())
     }

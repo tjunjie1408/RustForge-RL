@@ -103,7 +103,10 @@ impl Optimizer for Adam {
                 // θ = θ - lr · m̂ / (√v̂ + ε)
                 let denom = &v_hat.sqrt() + self.epsilon;
                 let update = &m_hat / &denom;
-                let new_data = &param.data() - &(&update * self.lr);
+                let new_data = {
+                    let param_d = param.data();
+                    &*param_d - &(&update * self.lr)
+                };
                 param.set_data(new_data);
             }
         }

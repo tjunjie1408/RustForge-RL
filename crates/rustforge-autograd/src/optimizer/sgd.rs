@@ -69,12 +69,18 @@ impl Optimizer for SGD {
                         None => grad.clone(),
                     };
                     // θ = θ - lr·v
-                    let new_data = &param.data() - &(&v * self.lr);
+                    let new_data = {
+                        let param_d = param.data();
+                        &*param_d - &(&v * self.lr)
+                    };
                     self.velocities[i] = Some(v);
                     param.set_data(new_data);
                 } else {
                     // θ = θ - lr·∇θ
-                    let new_data = &param.data() - &(&grad * self.lr);
+                    let new_data = {
+                        let param_d = param.data();
+                        &*param_d - &(&grad * self.lr)
+                    };
                     param.set_data(new_data);
                 }
             }

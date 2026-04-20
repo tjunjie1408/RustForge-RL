@@ -13,7 +13,7 @@ fn numerical_gradient<F>(f: &F, param: &Variable, epsilon: f32) -> Vec<f32>
 where
     F: Fn() -> Variable,
 {
-    let data = param.data();
+    let data = param.data().clone();
     let n = data.numel();
     let mut num_grads = vec![0.0f32; n];
     for i in 0..n {
