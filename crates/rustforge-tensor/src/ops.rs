@@ -19,7 +19,7 @@
 //! let e = &a + b;    // ref + val (b is consumed)
 //! ```
 
-use std::ops::{Add, Div, Mul, Neg, Sub};
+use std::ops::{Add, AddAssign, Div, Mul, Neg, Sub, SubAssign};
 
 use crate::tensor::Tensor;
 
@@ -261,6 +261,23 @@ impl Div<f32> for Tensor {
     }
 }
 
+// In-place operations (zero-allocation for hot paths)
+
+impl AddAssign<&Tensor> for Tensor {
+    /// In-place addition: `self += other` without allocating a new tensor.
+    ///
+    /// Critical for gradient accumulation in the backward pass.
+    fn add_assign(&mut self, rhs: &Tensor) {
+        *self.data_mut() += rhs.data();
+    }
+}
+
+impl SubAssign<&Tensor> for Tensor {
+    fn sub_assign(&mut self, rhs: &Tensor) {
+        *self.data_mut() -= rhs.data();
+    }
+}
+
 // Matrix Multiplication (Not through operator overloading, uses method call)
 
 impl Tensor {
@@ -318,12 +335,12 @@ impl Tensor {
                 );
                 let a_2d = a
                     .data()
-                    .clone()
+                    .view()
                     .into_dimensionality::<ndarray::Ix2>()
                     .unwrap();
                 let b_1d = b
                     .data()
-                    .clone()
+                    .view()
                     .into_dimensionality::<ndarray::Ix1>()
                     .unwrap();
                 let result = a_2d.dot(&b_1d);
@@ -342,12 +359,12 @@ impl Tensor {
                 );
                 let a_1d = a
                     .data()
-                    .clone()
+                    .view()
                     .into_dimensionality::<ndarray::Ix1>()
                     .unwrap();
                 let b_2d = b
                     .data()
-                    .clone()
+                    .view()
                     .into_dimensionality::<ndarray::Ix2>()
                     .unwrap();
                 let result = a_1d.dot(&b_2d);
@@ -367,12 +384,12 @@ impl Tensor {
                 );
                 let a_2d = a
                     .data()
-                    .clone()
+                    .view()
                     .into_dimensionality::<ndarray::Ix2>()
                     .unwrap();
                 let b_2d = b
                     .data()
-                    .clone()
+                    .view()
                     .into_dimensionality::<ndarray::Ix2>()
                     .unwrap();
                 let result = a_2d.dot(&b_2d);
