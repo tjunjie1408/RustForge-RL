@@ -32,15 +32,19 @@ use crate::variable::Variable;
 /// ## Panics
 /// Panics if `output` is not a scalar (single-element tensor).
 pub fn backward(output: &Variable) {
-    let output_data = output.data();
-    assert!(
-        output_data.numel() == 1,
-        "backward() can only be called on scalar (single-element) variables, got shape {:?}",
-        output_data.shape()
-    );
+    // Scope data() borrow so the Ref drops before set_grad needs borrow_mut
+    let seed_grad = {
+        let output_data = output.data();
+        assert!(
+            output_data.numel() == 1,
+            "backward() can only be called on scalar (single-element) variables, got shape {:?}",
+            output_data.shape()
+        );
+        Tensor::ones(output_data.shape())
+    };
 
     // Step 1: Seed the output gradient to 1.0
-    output.set_grad(Tensor::ones(output_data.shape()));
+    output.set_grad(seed_grad);
 
     // Step 2: Topological sort (output first, leaves last)
     let sorted = topological_sort(output);

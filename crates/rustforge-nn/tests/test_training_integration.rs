@@ -547,7 +547,8 @@ mod optimizer_compare {
                     (&d * &d).sum().backward();
                     adam.step();
                 }
-                w.data().to_vec()[0].abs()
+                let w_data = w.data();
+                w_data.to_vec()[0].abs()
             })
             .collect();
 
