@@ -24,12 +24,18 @@ mod tests {
     use rustforge_autograd::Variable;
     use rustforge_tensor::Tensor;
 
+    #[test]
+    fn test_all_dhat_allocation_budgets() {
+        run_matmul_backward_allocation_budget();
+        run_forward_only_allocation_budget();
+        run_training_loop_allocation_consistency();
+    }
+
     /// Performs a matmul forward + backward pass and reports heap allocation stats.
     ///
     /// Phase A baseline: captures current allocation count.
     /// After Phase B+C optimizations, the allocation count should drop dramatically.
-    #[test]
-    fn test_matmul_backward_allocation_budget() {
+    fn run_matmul_backward_allocation_budget() {
         // --- Setup phase (allocations here are expected and not measured) ---
         let a_data = Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], &[2, 2]);
         let b_data = Tensor::from_vec(vec![5.0, 6.0, 7.0, 8.0], &[2, 2]);
@@ -77,8 +83,7 @@ mod tests {
     }
 
     /// Tests that a simple forward-only pass (no backward) has minimal allocations.
-    #[test]
-    fn test_forward_only_allocation_budget() {
+    fn run_forward_only_allocation_budget() {
         let a_data = Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], &[2, 2]);
         let b_data = Tensor::from_vec(vec![5.0, 6.0, 7.0, 8.0], &[2, 2]);
 
@@ -112,8 +117,7 @@ mod tests {
     }
 
     /// Stress test: repeated forward+backward in a loop, measuring per-iteration cost.
-    #[test]
-    fn test_training_loop_allocation_consistency() {
+    fn run_training_loop_allocation_consistency() {
         let a = Variable::new(Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], &[2, 2]), true);
         let b = Variable::new(Tensor::from_vec(vec![5.0, 6.0, 7.0, 8.0], &[2, 2]), true);
 
