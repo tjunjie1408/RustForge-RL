@@ -807,8 +807,14 @@ mod elementwise_math {
         // After numerics hardening, log(0) is clamped to log(1e-7) ≈ -16.12
         let t = Tensor::from_vec(vec![0.0], &[1]);
         let l = t.log();
-        assert!(l.item().is_finite(), "log(0) should be clamped to finite value");
-        assert!(l.item() < -10.0, "log(0) clamped value should be very negative");
+        assert!(
+            l.item().is_finite(),
+            "log(0) should be clamped to finite value"
+        );
+        assert!(
+            l.item() < -10.0,
+            "log(0) clamped value should be very negative"
+        );
     }
 
     #[test]
@@ -816,7 +822,10 @@ mod elementwise_math {
         // After numerics hardening, log(-1) is clamped to log(1e-7) ≈ -16.12
         let t = Tensor::from_vec(vec![-1.0], &[1]);
         let l = t.log();
-        assert!(l.item().is_finite(), "log(negative) should be clamped to finite value");
+        assert!(
+            l.item().is_finite(),
+            "log(negative) should be clamped to finite value"
+        );
     }
 
     #[test]
