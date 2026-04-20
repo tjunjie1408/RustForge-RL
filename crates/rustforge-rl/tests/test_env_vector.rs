@@ -98,7 +98,7 @@ mod buffer_layout {
         // All values should be finite and within [-0.05, 0.05] (CartPole init range)
         for (i, &v) in obs.iter().enumerate() {
             assert!(
-                v.is_finite() && v >= -0.06 && v <= 0.06,
+                v.is_finite() && (-0.06..=0.06).contains(&v),
                 "obs[{}] = {} should be finite and near zero",
                 i,
                 v
