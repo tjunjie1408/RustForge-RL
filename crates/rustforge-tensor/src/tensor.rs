@@ -264,14 +264,25 @@ impl Tensor {
     /// Transpose matrix (for 2D tensors).
     ///
     /// For higher-dimensional tensors, swaps the last two dimensions.
+    /// Uses stack allocation for axes when ndim <= 8 (covers all practical RL cases).
     pub fn t(&self) -> Tensor {
-        if self.ndim() < 2 {
+        let ndim = self.ndim();
+        if ndim < 2 {
             return self.clone();
         }
-        let mut axes: Vec<usize> = (0..self.ndim()).collect();
-        let n = axes.len();
-        axes.swap(n - 2, n - 1);
-        self.permute(&axes)
+        // Fast path: stack-allocated axes for ndim <= 8 (avoids heap allocation)
+        if ndim <= 8 {
+            let mut axes = [0usize; 8];
+            for i in 0..ndim {
+                axes[i] = i;
+            }
+            axes.swap(ndim - 2, ndim - 1);
+            self.permute(&axes[..ndim])
+        } else {
+            let mut axes: Vec<usize> = (0..ndim).collect();
+            axes.swap(ndim - 2, ndim - 1);
+            self.permute(&axes)
+        }
     }
 
     /// Permutes the tensor dimensions according to the specified axis order.
@@ -525,13 +536,22 @@ impl Tensor {
     }
 
     /// Natural logarithm: ln(x)
+    ///
+    /// ## Numerical Safety
+    /// Clamps input to `max(x, 1e-7)` to prevent `-inf` from `ln(0)` and
+    /// `NaN` from `ln(negative)`. In debug builds, asserts all outputs are finite.
     pub fn log(&self) -> Tensor {
-        Tensor::from_ndarray(self.data.mapv(|x| x.ln()))
+        let result = Tensor::from_ndarray(self.data.mapv(|x| x.max(1e-7).ln()));
+        debug_assert!(
+            result.data.iter().all(|v| v.is_finite()),
+            "log() produced non-finite values"
+        );
+        result
     }
 
     /// Safe logarithm: ln(x + eps) to avoid log(0) producing -inf
     pub fn log_safe(&self, eps: f32) -> Tensor {
-        Tensor::from_ndarray(self.data.mapv(|x| (x + eps).ln()))
+        Tensor::from_ndarray(self.data.mapv(|x| (x + eps).max(1e-7).ln()))
     }
 
     /// Power operation: x^p
@@ -540,8 +560,11 @@ impl Tensor {
     }
 
     /// Square root: sqrt(x)
+    ///
+    /// ## Numerical Safety
+    /// Clamps input to `max(x, 0.0)` to prevent `NaN` from negative inputs.
     pub fn sqrt(&self) -> Tensor {
-        Tensor::from_ndarray(self.data.mapv(|x| x.sqrt()))
+        Tensor::from_ndarray(self.data.mapv(|x| x.max(0.0).sqrt()))
     }
 
     /// Absolute value: |x|
@@ -560,7 +583,14 @@ impl Tensor {
     }
 
     /// Reciprocal: 1/x
+    ///
+    /// ## Numerical Safety
+    /// In debug builds, asserts no element is exactly zero.
     pub fn reciprocal(&self) -> Tensor {
+        debug_assert!(
+            self.data.iter().all(|v| *v != 0.0),
+            "reciprocal() called with zero elements"
+        );
         Tensor::from_ndarray(self.data.mapv(|x| 1.0 / x))
     }
 
