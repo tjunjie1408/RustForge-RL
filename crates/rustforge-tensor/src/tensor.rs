@@ -273,8 +273,8 @@ impl Tensor {
         // Fast path: stack-allocated axes for ndim <= 8 (avoids heap allocation)
         if ndim <= 8 {
             let mut axes = [0usize; 8];
-            for i in 0..ndim {
-                axes[i] = i;
+            for (i, axis) in axes.iter_mut().enumerate().take(ndim) {
+                *axis = i;
             }
             axes.swap(ndim - 2, ndim - 1);
             self.permute(&axes[..ndim])

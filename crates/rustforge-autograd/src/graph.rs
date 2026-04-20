@@ -69,7 +69,7 @@ pub(crate) fn reduce_grad_for_broadcast(grad: &Tensor, original_shape: &[usize])
     // Build padded shape on stack for ndim <= 8, heap fallback otherwise
     let padded: smallvec::SmallVec<[usize; 8]> = {
         let mut p = smallvec::SmallVec::new();
-        p.extend(std::iter::repeat(1usize).take(pad_len));
+        p.extend(std::iter::repeat_n(1usize, pad_len));
         p.extend_from_slice(orig_shape);
         p
     };
@@ -185,9 +185,13 @@ impl GradFn for DivGrad {
         let numerator = grad_output * &self.lhs_data;
         let b_sq = &self.rhs_data * &self.rhs_data;
         // Clamp b² away from zero to prevent inf/NaN gradient explosion
-        let b_sq_safe = Tensor::from_ndarray(
-            b_sq.data().mapv(|x| if x.abs() < 1e-12 { 1e-12_f32.copysign(x) } else { x })
-        );
+        let b_sq_safe = Tensor::from_ndarray(b_sq.data().mapv(|x| {
+            if x.abs() < 1e-12 {
+                1e-12_f32.copysign(x)
+            } else {
+                x
+            }
+        }));
         let raw_grad_rhs = (&numerator / &b_sq_safe).neg();
 
         let grad_lhs = reduce_grad_for_broadcast(&raw_grad_lhs, &self.lhs.shape());
@@ -379,9 +383,13 @@ impl GradFn for LogGrad {
     /// Numerical safety: clamps input away from zero to prevent inf gradients.
     fn backward(&self, grad_output: &Tensor) -> GradOutputs {
         // Clamp input_data away from zero to prevent division by zero in gradient
-        let safe_input = Tensor::from_ndarray(
-            self.input_data.data().mapv(|x| if x.abs() < 1e-7 { 1e-7_f32.copysign(x) } else { x })
-        );
+        let safe_input = Tensor::from_ndarray(self.input_data.data().mapv(|x| {
+            if x.abs() < 1e-7 {
+                1e-7_f32.copysign(x)
+            } else {
+                x
+            }
+        }));
         smallvec![grad_output / &safe_input]
     }
 }
@@ -408,7 +416,8 @@ impl GradFn for PowGrad {
         let result = grad_output * &local_grad;
         debug_assert!(
             result.data().iter().all(|v| v.is_finite()),
-            "PowGrad: non-finite gradient detected (exponent={})", p
+            "PowGrad: non-finite gradient detected (exponent={})",
+            p
         );
         smallvec![result]
     }
@@ -432,9 +441,7 @@ impl GradFn for SqrtGrad {
     /// Numerical safety: clamps √x away from zero to prevent inf gradients.
     fn backward(&self, grad_output: &Tensor) -> GradOutputs {
         // Clamp output away from zero to prevent division by zero
-        let safe_output = Tensor::from_ndarray(
-            self.output_data.data().mapv(|x| x.max(1e-7))
-        );
+        let safe_output = Tensor::from_ndarray(self.output_data.data().mapv(|x| x.max(1e-7)));
         let two_sqrt = &safe_output * 2.0;
         smallvec![grad_output / &two_sqrt]
     }

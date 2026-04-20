@@ -114,14 +114,8 @@ mod tests {
     /// Stress test: repeated forward+backward in a loop, measuring per-iteration cost.
     #[test]
     fn test_training_loop_allocation_consistency() {
-        let a = Variable::new(
-            Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], &[2, 2]),
-            true,
-        );
-        let b = Variable::new(
-            Tensor::from_vec(vec![5.0, 6.0, 7.0, 8.0], &[2, 2]),
-            true,
-        );
+        let a = Variable::new(Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], &[2, 2]), true);
+        let b = Variable::new(Tensor::from_vec(vec![5.0, 6.0, 7.0, 8.0], &[2, 2]), true);
 
         // Warm-up
         {
