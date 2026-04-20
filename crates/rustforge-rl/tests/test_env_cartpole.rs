@@ -351,7 +351,7 @@ mod reset_behavior {
             let (obs, _) = env.reset(Some(seed));
             for (i, &v) in obs.iter().enumerate() {
                 assert!(
-                    v >= -0.05 && v <= 0.05,
+                    (-0.05..=0.05).contains(&v),
                     "Reset obs[{}] = {} should be in [-0.05, 0.05] for seed {}",
                     i,
                     v,
