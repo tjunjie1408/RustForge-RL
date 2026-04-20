@@ -55,7 +55,10 @@ mod time_limit {
             let (_, _, terminated, truncated, _) = env.step(CartPoleAction::Right);
             if terminated {
                 natural_term = true;
-                assert!(!truncated, "Truncated should be false when naturally terminated");
+                assert!(
+                    !truncated,
+                    "Truncated should be false when naturally terminated"
+                );
                 break;
             }
         }
@@ -79,11 +82,7 @@ mod time_limit {
 
         // Reset should zero the counter
         env.reset(Some(99));
-        assert_eq!(
-            env.current_step(),
-            0,
-            "Counter should be 0 after reset"
-        );
+        assert_eq!(env.current_step(), 0, "Counter should be 0 after reset");
     }
 
     #[test]

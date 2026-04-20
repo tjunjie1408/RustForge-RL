@@ -93,10 +93,9 @@ impl Space {
                 .zip(high.iter())
                 .map(|(&l, &h)| rng.gen_range(l..=h))
                 .collect(),
-            Space::MultiDiscrete(nvec) => nvec
-                .iter()
-                .map(|&n| rng.gen_range(0..n) as f32)
-                .collect(),
+            Space::MultiDiscrete(nvec) => {
+                nvec.iter().map(|&n| rng.gen_range(0..n) as f32).collect()
+            }
         }
     }
 
