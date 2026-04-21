@@ -573,6 +573,43 @@ impl GradFn for TransposeGrad {
     }
 }
 
+// Gather along axis: y[i] = x[i, indices[i]]
+
+/// Gradient for gather operation (used in DQN for Q-value extraction).
+///
+/// Forward: `output[i] = input[i, indices[i]]` for axis=1
+/// Backward: scatter-add the output gradient back to the gathered positions.
+///
+/// ```text
+/// grad_input = zeros_like(input)
+/// grad_input[i, indices[i]] += grad_output[i]
+/// ```
+pub struct GatherAxisGrad {
+    pub input: Variable,
+    /// The indices used during the forward gather.
+    pub indices: Vec<usize>,
+    /// Original input shape `[B, A]` for scatter_add target.
+    pub input_shape: Vec<usize>,
+    pub axis: usize,
+}
+
+impl GradFn for GatherAxisGrad {
+    fn inputs(&self) -> GradInputs {
+        smallvec![self.input.clone()]
+    }
+
+    /// ∂L/∂input[i, indices[i]] = grad_output[i]
+    /// All other positions receive zero gradient.
+    fn backward(&self, grad_output: &Tensor) -> GradOutputs {
+        // grad_output shape: [B, 1] → flatten to [B] for scatter_add values
+        let grad_flat = grad_output.flatten();
+        let scattered =
+            Tensor::scatter_add(&self.input_shape, self.axis, &self.indices, &grad_flat)
+                .expect("scatter_add failed in GatherAxisGrad::backward");
+        smallvec![scattered]
+    }
+}
+
 // Unit Tests
 
 #[cfg(test)]

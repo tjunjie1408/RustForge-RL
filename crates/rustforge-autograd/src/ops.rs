@@ -19,9 +19,9 @@
 use std::ops::{Add, Div, Mul, Neg, Sub};
 
 use crate::graph::{
-    AddGrad, DivGrad, ExpGrad, GradFn, LogGrad, MatmulGrad, MeanGrad, MulGrad, NegGrad, PowGrad,
-    ReluGrad, ScalarAddGrad, ScalarMulGrad, SigmoidGrad, SqrtGrad, SubGrad, SumAxisGrad, SumGrad,
-    TanhGrad, TransposeGrad,
+    AddGrad, DivGrad, ExpGrad, GatherAxisGrad, GradFn, LogGrad, MatmulGrad, MeanGrad, MulGrad,
+    NegGrad, PowGrad, ReluGrad, ScalarAddGrad, ScalarMulGrad, SigmoidGrad, SqrtGrad, SubGrad,
+    SumAxisGrad, SumGrad, TanhGrad, TransposeGrad,
 };
 use crate::variable::Variable;
 
@@ -522,6 +522,34 @@ pub fn var_transpose(input: &Variable) -> Variable {
     let grad_fn: Option<Box<dyn GradFn>> = if requires_grad {
         Some(Box::new(TransposeGrad {
             input: input.clone(),
+        }))
+    } else {
+        None
+    };
+    Variable::from_grad_fn(result_data, requires_grad, grad_fn)
+}
+
+/// Gather along axis with gradient tracking.
+///
+/// Extracts values from a 2D Variable at specified indices along axis 1.
+/// This is the core operation for DQN: `Q(s, a_taken) = q_values.gather(1, actions)`.
+///
+/// ## Backward
+/// Uses scatter-add: gradient flows only to the gathered positions.
+/// `grad_input[i, indices[i]] += grad_output[i]`, all others zero.
+pub fn var_gather(input: &Variable, axis: usize, indices: &[usize]) -> Variable {
+    let input_data = input.data();
+    let input_shape = input_data.shape().to_vec();
+    let result_data = input_data
+        .gather(axis, indices)
+        .expect("gather forward failed in var_gather");
+    let requires_grad = input.requires_grad();
+    let grad_fn: Option<Box<dyn GradFn>> = if requires_grad {
+        Some(Box::new(GatherAxisGrad {
+            input: input.clone(),
+            indices: indices.to_vec(),
+            input_shape,
+            axis,
         }))
     } else {
         None
