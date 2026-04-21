@@ -11,7 +11,13 @@
 //! │   ├── gridworld.rs   (Discrete 2D grid maze)
 //! │   ├── wrappers.rs    (TimeLimit, RewardScale — zero-cost generic wrappers)
 //! │   └── vector.rs      (SyncVectorEnv — batched env with pre-allocated buffers)
-//! └── (future: agents, buffers, trainer)
+//! ├── buffer/            (Experience replay buffers)
+//! │   └── replay.rs      (ReplayBuffer — SoA layout, zero-alloc sample)
+//! └── agent/             (RL algorithm implementations)
+//!     ├── epsilon_greedy.rs  (ε-greedy exploration with linear decay)
+//!     └── dqn.rs             (DQN + Double DQN with target network)
 //! ```
 
+pub mod agent;
+pub mod buffer;
 pub mod env;
