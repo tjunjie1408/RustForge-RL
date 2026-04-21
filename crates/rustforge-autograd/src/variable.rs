@@ -243,6 +243,23 @@ impl Variable {
         crate::ops::var_sum_axis(self, axis, keepdim)
     }
 
+    /// Gather values along an axis using integer indices.
+    ///
+    /// For a 2D variable `[B, A]` with `axis=1`:
+    ///   `output[i] = self[i, indices[i]]`
+    ///
+    /// This is the key operation for DQN loss computation:
+    /// `Q(s, a_taken) = q_values.gather(1, &actions)`
+    ///
+    /// ## Example
+    /// ```rust,ignore
+    /// let q = Variable::new(Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], &[2, 2]), true);
+    /// let gathered = q.gather(1, &[1, 0]); // picks q[0,1]=2.0, q[1,0]=3.0
+    /// ```
+    pub fn gather(&self, axis: usize, indices: &[usize]) -> Variable {
+        crate::ops::var_gather(self, axis, indices)
+    }
+
     /// Transpose: swaps the last two dimensions (with gradient tracking).
     ///
     /// For 2D tensors `[m, n]` → `[n, m]`.
