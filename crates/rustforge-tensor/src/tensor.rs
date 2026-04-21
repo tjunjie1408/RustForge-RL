@@ -681,6 +681,125 @@ impl Tensor {
 
         Ok(Tensor::from_ndarray(result))
     }
+
+    // Index-based Gathering and Scattering (DQN core ops)
+
+    /// Gathers values along an axis using integer indices.
+    ///
+    /// For a 2D tensor `[B, A]` with `axis=1` and `indices` of length `B`:
+    ///   `output[i] = self[i, indices[i]]`
+    ///
+    /// This is the key operation for DQN: extracting `Q(s, a_taken)` from the
+    /// full Q-value matrix `Q(s, :)` of shape `[batch, num_actions]`.
+    ///
+    /// ## Arguments
+    /// - `axis`: The axis along which to gather. Currently only `axis=1` on 2D
+    ///   tensors is supported (covers all DQN/RL use cases).
+    /// - `indices`: Integer indices, one per row. Length must equal `self.shape()[0]`.
+    ///
+    /// ## Returns
+    /// A tensor of shape `[B, 1]` containing the gathered values.
+    ///
+    /// ## Example
+    /// ```rust
+    /// use rustforge_tensor::Tensor;
+    /// let q_values = Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], &[2, 3]);
+    /// let actions = vec![2, 0]; // batch 0 picks action 2, batch 1 picks action 0
+    /// let gathered = q_values.gather(1, &actions).unwrap();
+    /// assert_eq!(gathered.to_vec(), vec![3.0, 4.0]); // q[0,2]=3.0, q[1,0]=4.0
+    /// assert_eq!(gathered.shape(), &[2, 1]);
+    /// ```
+    pub fn gather(&self, axis: usize, indices: &[usize]) -> TensorResult<Tensor> {
+        if self.ndim() != 2 {
+            return Err(TensorError::ShapeMismatch {
+                op: "gather".to_string(),
+                left: self.shape().to_vec(),
+                right: vec![indices.len()],
+            });
+        }
+        if axis != 1 {
+            return Err(TensorError::AxisOutOfBounds {
+                axis,
+                ndim: self.ndim(),
+            });
+        }
+        let batch_size = self.shape()[0];
+        let num_cols = self.shape()[1];
+        if indices.len() != batch_size {
+            return Err(TensorError::ShapeMismatch {
+                op: "gather".to_string(),
+                left: self.shape().to_vec(),
+                right: vec![indices.len()],
+            });
+        }
+
+        // Extract values: output[i] = self[i, indices[i]]
+        let flat = self.to_vec();
+        let mut result = Vec::with_capacity(batch_size);
+        for (i, &idx) in indices.iter().enumerate() {
+            debug_assert!(
+                idx < num_cols,
+                "gather index {} out of bounds for axis with size {}",
+                idx,
+                num_cols
+            );
+            result.push(flat[i * num_cols + idx]);
+        }
+        Ok(Tensor::from_vec(result, &[batch_size, 1]))
+    }
+
+    /// Scatter-add: creates a zeros tensor with the given shape and adds `values`
+    /// at the positions specified by `indices` along `axis`.
+    ///
+    /// This is the backward operation of `gather`: it distributes gradients back
+    /// to the positions from which they were gathered.
+    ///
+    /// For `axis=1`, shape `[B, A]`:
+    ///   `result[i, indices[i]] += values[i]`
+    ///
+    /// ## Arguments
+    /// - `shape`: Output shape (e.g. `[batch_size, num_actions]`).
+    /// - `axis`: Axis along which to scatter. Currently only `axis=1` supported.
+    /// - `indices`: One index per row. Length must equal `shape[0]`.
+    /// - `values`: Values to scatter. Must have `shape[0]` elements.
+    ///
+    /// ## Returns
+    /// A tensor of given `shape` with values scattered at the indexed positions.
+    pub fn scatter_add(
+        shape: &[usize],
+        axis: usize,
+        indices: &[usize],
+        values: &Tensor,
+    ) -> TensorResult<Tensor> {
+        if shape.len() != 2 || axis != 1 {
+            return Err(TensorError::AxisOutOfBounds {
+                axis,
+                ndim: shape.len(),
+            });
+        }
+        let batch_size = shape[0];
+        let num_cols = shape[1];
+        if indices.len() != batch_size {
+            return Err(TensorError::ShapeMismatch {
+                op: "scatter_add".to_string(),
+                left: shape.to_vec(),
+                right: vec![indices.len()],
+            });
+        }
+
+        let values_flat = values.to_vec();
+        let mut result = vec![0.0f32; batch_size * num_cols];
+        for (i, &idx) in indices.iter().enumerate() {
+            debug_assert!(
+                idx < num_cols,
+                "scatter_add index {} out of bounds for axis with size {}",
+                idx,
+                num_cols
+            );
+            result[i * num_cols + idx] += values_flat[i];
+        }
+        Ok(Tensor::from_vec(result, shape))
+    }
 }
 
 // PartialEq Implementation (Used for testing)
