@@ -232,7 +232,10 @@ impl DQN {
 
         // ── 6. Periodically update target network (hard copy) ──
         self.train_steps += 1;
-        if self.train_steps.is_multiple_of(self.config.target_update_freq) {
+        if self
+            .train_steps
+            .is_multiple_of(self.config.target_update_freq)
+        {
             self.update_target();
         }
 
