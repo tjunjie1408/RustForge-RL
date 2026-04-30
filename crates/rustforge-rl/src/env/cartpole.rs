@@ -49,6 +49,27 @@ pub enum CartPoleAction {
     Right,
 }
 
+impl TryFrom<usize> for CartPoleAction {
+    type Error = &'static str;
+
+    fn try_from(value: usize) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(CartPoleAction::Left),
+            1 => Ok(CartPoleAction::Right),
+            _ => Err("CartPole action index must be 0 (Left) or 1 (Right)"),
+        }
+    }
+}
+
+impl From<CartPoleAction> for usize {
+    fn from(action: CartPoleAction) -> Self {
+        match action {
+            CartPoleAction::Left => 0,
+            CartPoleAction::Right => 1,
+        }
+    }
+}
+
 /// CartPole-v1 environment following Gymnasium specification.
 ///
 /// # Constants (matching Gymnasium source)
