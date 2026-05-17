@@ -34,4 +34,14 @@ pub trait Optimizer {
     /// Should be called at the beginning of each training iteration
     /// to prevent gradient accumulation across iterations.
     fn zero_grad(&mut self);
+
+    /// Updates the learning rate.
+    ///
+    /// Used by `LRSchedule` to adjust the learning rate during training.
+    /// Every optimizer must implement this — a default no-op would silently
+    /// ignore scheduler calls if an optimizer forgets to override.
+    fn set_lr(&mut self, lr: f32);
+
+    /// Returns the current learning rate.
+    fn lr(&self) -> f32;
 }
