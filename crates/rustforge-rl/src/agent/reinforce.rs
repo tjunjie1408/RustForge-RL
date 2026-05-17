@@ -321,7 +321,10 @@ mod tests {
         let loss = log_probs.sum();
         loss.backward();
 
-        assert!(logits.grad().is_some(), "Gradient should flow through log_softmax");
+        assert!(
+            logits.grad().is_some(),
+            "Gradient should flow through log_softmax"
+        );
     }
 
     #[test]

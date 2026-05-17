@@ -314,9 +314,15 @@ mod tests {
         // Trunk and actor_head should have gradients
         let params = net.parameters();
         // Trunk weight (param 0) should have grad from actor path
-        assert!(params[0].grad().is_some(), "Trunk weight should have gradient");
+        assert!(
+            params[0].grad().is_some(),
+            "Trunk weight should have gradient"
+        );
         // Actor head weight (param 2) should have grad
-        assert!(params[2].grad().is_some(), "Actor head should have gradient");
+        assert!(
+            params[2].grad().is_some(),
+            "Actor head should have gradient"
+        );
 
         // Reset and test critic path
         for p in &params {
@@ -329,8 +335,14 @@ mod tests {
         critic_loss.backward();
 
         // Trunk and critic_head should have gradients
-        assert!(params[0].grad().is_some(), "Trunk weight should have gradient from critic");
-        assert!(params[4].grad().is_some(), "Critic head should have gradient");
+        assert!(
+            params[0].grad().is_some(),
+            "Trunk weight should have gradient from critic"
+        );
+        assert!(
+            params[4].grad().is_some(),
+            "Critic head should have gradient"
+        );
     }
 
     #[test]
@@ -400,10 +412,7 @@ mod tests {
         assert_abs_diff_eq!(entropy_val, (2.0_f32).ln(), epsilon = 1e-4);
 
         // Peaked distribution → lower entropy
-        let peaked_logits = Variable::new(
-            Tensor::from_vec(vec![10.0, -10.0], &[1, 2]),
-            true,
-        );
+        let peaked_logits = Variable::new(Tensor::from_vec(vec![10.0, -10.0], &[1, 2]), true);
         let peaked_log_probs = log_softmax_var(&peaked_logits);
         let peaked_probs = softmax_var(&peaked_logits);
         let peaked_entropy = -(&peaked_probs * &peaked_log_probs)
@@ -465,7 +474,17 @@ mod tests {
                 let (next_state, reward, terminated, truncated, _) = env.step(env_action);
                 episode_reward += reward;
 
-                buf.push(&state, action_idx, reward, value, if replay_done(terminated, truncated) { 1.0 } else { 0.0 });
+                buf.push(
+                    &state,
+                    action_idx,
+                    reward,
+                    value,
+                    if replay_done(terminated, truncated) {
+                        1.0
+                    } else {
+                        0.0
+                    },
+                );
 
                 state = next_state;
                 if episode_done(terminated, truncated) {
@@ -473,7 +492,11 @@ mod tests {
                 }
             }
 
-            let last_value = if buf.len() > 0 { agent.value_of(&state) } else { 0.0 };
+            let last_value = if buf.len() > 0 {
+                agent.value_of(&state)
+            } else {
+                0.0
+            };
             buf.compute_returns_and_advantages(0.99, 0.95, last_value);
             let batch = buf.to_batch();
             agent.train_on_rollout(&batch);
