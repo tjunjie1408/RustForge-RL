@@ -144,6 +144,15 @@ impl REINFORCE {
     /// ## Returns
     /// Sampled action index.
     pub fn sample_action(logits: &Tensor, rng: &mut impl Rng) -> usize {
+        // Guard against batched logits [B, A] with B > 1, which would flatten
+        // to B*A elements and return indices >= A, breaking action conversion.
+        let shape = logits.shape();
+        assert!(
+            shape.len() <= 2 && (shape.len() < 2 || shape[0] == 1),
+            "sample_action expects logits of shape [A] or [1, A], got {:?}",
+            shape
+        );
+
         let flat = logits.to_vec();
 
         // Stable softmax

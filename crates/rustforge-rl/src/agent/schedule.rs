@@ -51,6 +51,7 @@ impl LRSchedule {
 
     /// Creates a linear decay schedule.
     pub fn linear_decay(start: f32, end: f32, total_steps: usize) -> Self {
+        debug_assert!(total_steps > 0, "total_steps must be > 0 for LinearDecay");
         LRSchedule::LinearDecay {
             start,
             end,
@@ -60,6 +61,7 @@ impl LRSchedule {
 
     /// Creates a cosine annealing schedule.
     pub fn cosine_annealing(max_lr: f32, min_lr: f32, t_max: usize) -> Self {
+        debug_assert!(t_max > 0, "t_max must be > 0 for CosineAnnealing");
         LRSchedule::CosineAnnealing {
             max_lr,
             min_lr,
