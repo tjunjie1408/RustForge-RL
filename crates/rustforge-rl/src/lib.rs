@@ -1,4 +1,4 @@
-//! RustForge RL — Reinforcement Learning Algorithms (Phase 3-4 Implementation)
+//! RustForge RL — Reinforcement Learning Algorithms (Phase 3 Implementation)
 //!
 //! ## Architecture
 //!
@@ -11,11 +11,17 @@
 //! │   ├── gridworld.rs   (Discrete 2D grid maze)
 //! │   ├── wrappers.rs    (TimeLimit, RewardScale — zero-cost generic wrappers)
 //! │   └── vector.rs      (SyncVectorEnv — batched env with pre-allocated buffers)
-//! ├── buffer/            (Experience replay buffers)
-//! │   └── replay.rs      (ReplayBuffer — SoA layout, zero-alloc sample)
-//! └── agent/             (RL algorithm implementations)
-//!     ├── epsilon_greedy.rs  (ε-greedy exploration with linear decay)
-//!     └── dqn.rs             (DQN + Double DQN with target network)
+//! ├── buffer/            (Experience buffers)
+//! │   ├── replay.rs      (ReplayBuffer — off-policy, SoA layout, zero-alloc sample)
+//! │   └── rollout.rs     (RolloutBuffer — on-policy, collect→compute→consume→clear)
+//! ├── agent/             (RL algorithm implementations)
+//! │   ├── epsilon_greedy.rs  (ε-greedy exploration with linear decay)
+//! │   ├── dqn.rs             (DQN + Double DQN with target network)
+//! │   ├── reinforce.rs       (REINFORCE — Monte Carlo policy gradient)
+//! │   ├── a2c.rs             (A2C — Advantage Actor-Critic, shared trunk)
+//! │   ├── returns.rs         (Discounted returns + GAE computation)
+//! │   └── schedule.rs        (LR scheduling: Constant, LinearDecay, CosineAnnealing)
+//! └── training.rs        (episode_done / replay_done helpers)
 //! ```
 
 pub mod agent;
