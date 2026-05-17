@@ -1,8 +1,10 @@
-//! Experience replay buffer module.
+//! Experience buffer modules for RL training.
 //!
-//! Provides `ReplayBuffer` for DQN off-policy training with uniform random sampling.
-//! Uses Structure-of-Arrays (SoA) layout for cache-friendly, zero-allocation hot paths.
+//! - `ReplayBuffer`: Off-policy uniform sampling (DQN). SoA layout, zero-alloc hot path.
+//! - `RolloutBuffer`: On-policy trajectory collection (REINFORCE, A2C). Collect→Compute→Consume→Clear.
 
 pub mod replay;
+pub mod rollout;
 
 pub use replay::{ReplayBuffer, TransitionBatch};
+pub use rollout::{RolloutBatch, RolloutBuffer};
