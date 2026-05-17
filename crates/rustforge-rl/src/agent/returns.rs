@@ -213,8 +213,7 @@ mod tests {
         // G_2 = 1 + 1*1 = 2
         // G_1 = 1 (done=1 zeroes future)
         // G_0 = 1 + 1*(1-0)*1 = 1 + 1 = 2
-        let returns =
-            compute_discounted_returns(&[1.0, 1.0, 1.0, 1.0], &[0.0, 1.0, 0.0, 0.0], 1.0);
+        let returns = compute_discounted_returns(&[1.0, 1.0, 1.0, 1.0], &[0.0, 1.0, 0.0, 0.0], 1.0);
         assert_abs_diff_eq!(returns[0], 2.0, epsilon = 1e-6);
         assert_abs_diff_eq!(returns[1], 1.0, epsilon = 1e-6);
         assert_abs_diff_eq!(returns[2], 2.0, epsilon = 1e-6);
@@ -265,8 +264,7 @@ mod tests {
         let dones = [0.0, 0.0, 0.0];
         let last_value = 0.0; // pretend episode ends after step 2
 
-        let (advantages, returns) =
-            compute_gae(&rewards, &values, &dones, last_value, 1.0, 1.0);
+        let (advantages, returns) = compute_gae(&rewards, &values, &dones, last_value, 1.0, 1.0);
 
         // MC returns: G_2=3, G_1=2+3=5, G_0=1+2+3=6
         assert_abs_diff_eq!(returns[0], 6.0, epsilon = 1e-5);
@@ -331,8 +329,7 @@ mod tests {
         let dones = [1.0]; // TERMINAL
         let last_value = 100.0; // should be ignored
 
-        let (advantages, _returns) =
-            compute_gae(&rewards, &values, &dones, last_value, 0.99, 1.0);
+        let (advantages, _returns) = compute_gae(&rewards, &values, &dones, last_value, 0.99, 1.0);
 
         // δ_0 = 1 + 0.99*100*(1-1) - 0 = 1 (last_value zeroed by done)
         // Wait: done is at step 0 — it means the transition at step 0 ended the episode.
