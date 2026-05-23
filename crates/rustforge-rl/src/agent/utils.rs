@@ -150,9 +150,9 @@ pub fn clamp_var(x: &Variable, min_val: f32, max_val: f32) -> Variable {
 
     // min(low_clipped, max_val): clamp from above
     let max_const = Variable::from_tensor(Tensor::from_vec(vec![max_val; numel], &shape));
-    let result = &max_const - &(&max_const - &low_clipped).relu();
+    
 
-    result
+    &max_const - &(&max_const - &low_clipped).relu()
 }
 
 #[cfg(test)]

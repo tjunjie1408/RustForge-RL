@@ -741,8 +741,8 @@ mod tests {
             slice[2] = 3.0;
 
             // Populate indices 3..10 with massive dummy values (e.g. 1_000_000.0)
-            for i in 3..10 {
-                slice[i] = 1_000_000.0;
+            for val in &mut slice[3..10] {
+                *val = 1_000_000.0;
             }
         }
 
@@ -759,8 +759,8 @@ mod tests {
         // norm = [(1-2)/std, (2-2)/std, (3-2)/std] = [-1.22474487, 0.0, 1.22474487]
 
         assert_eq!(norm_adv.len(), 3);
-        approx::assert_relative_eq!(norm_adv[0], -1.22474487, epsilon = 1e-5);
+        approx::assert_relative_eq!(norm_adv[0], -1.224_744_9, epsilon = 1e-5);
         approx::assert_relative_eq!(norm_adv[1], 0.0, epsilon = 1e-5);
-        approx::assert_relative_eq!(norm_adv[2], 1.22474487, epsilon = 1e-5);
+        approx::assert_relative_eq!(norm_adv[2], 1.224_744_9, epsilon = 1e-5);
     }
 }

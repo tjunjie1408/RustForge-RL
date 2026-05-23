@@ -392,9 +392,10 @@ mod tests {
         let final_alpha = agent.alpha();
         // Alpha should have changed from initial value
         // (We can't predict direction, just that it moves)
+        let diff = (final_alpha - initial_alpha).abs();
         assert!(
-            (final_alpha - initial_alpha).abs() > 1e-6 || true, // May not change much in 5 steps
-            "Alpha should be auto-tuned"
+            diff.is_finite(),
+            "Alpha change should be finite"
         );
         assert!(final_alpha > 0.0, "Alpha must remain positive");
     }
