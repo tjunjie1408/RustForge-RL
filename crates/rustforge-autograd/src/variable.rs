@@ -260,6 +260,11 @@ impl Variable {
         crate::ops::var_gather(self, axis, indices)
     }
 
+    /// Concatenates this variable with another variable along a specified axis.
+    pub fn concat(&self, other: &Variable, axis: usize) -> Variable {
+        crate::ops::var_concat(self, other, axis)
+    }
+
     /// Transpose: swaps the last two dimensions (with gradient tracking).
     ///
     /// For 2D tensors `[m, n]` → `[n, m]`.

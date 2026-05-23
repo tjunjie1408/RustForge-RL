@@ -610,6 +610,30 @@ impl GradFn for GatherAxisGrad {
     }
 }
 
+// Concatenate along axis: y = concat(a, b, axis)
+pub struct ConcatGrad {
+    pub lhs: Variable,
+    pub rhs: Variable,
+    pub axis: usize,
+}
+
+impl GradFn for ConcatGrad {
+    fn inputs(&self) -> GradInputs {
+        smallvec![self.lhs.clone(), self.rhs.clone()]
+    }
+
+    fn backward(&self, grad_output: &Tensor) -> GradOutputs {
+        let axis = self.axis;
+        let len_a = self.lhs.shape()[axis];
+        let len_b = self.rhs.shape()[axis];
+
+        let grad_lhs = grad_output.slice_axis(axis, 0, len_a).unwrap();
+        let grad_rhs = grad_output.slice_axis(axis, len_a, len_a + len_b).unwrap();
+
+        smallvec![grad_lhs, grad_rhs]
+    }
+}
+
 // Unit Tests
 
 #[cfg(test)]
