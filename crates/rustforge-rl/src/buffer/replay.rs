@@ -233,6 +233,208 @@ impl ReplayBuffer {
     }
 }
 
+/// A pre-allocated batch of continuous-action transitions for zero-allocation sampling.
+///
+/// Same design as `TransitionBatch` but with `Tensor` actions of shape
+/// `[batch_size, act_dim]` instead of `Vec<usize>`.
+pub struct ContinuousTransitionBatch {
+    /// Observation states, shape `[batch_size, obs_dim]`.
+    pub states: Tensor,
+    /// Continuous actions, shape `[batch_size, act_dim]`.
+    pub actions: Tensor,
+    /// Rewards, shape `[batch_size, 1]`.
+    pub rewards: Tensor,
+    /// Next observation states, shape `[batch_size, obs_dim]`.
+    pub next_states: Tensor,
+    /// Done flags as f32 (1.0 = done, 0.0 = not done), shape `[batch_size, 1]`.
+    pub dones: Tensor,
+    /// The actual number of valid entries (may be < batch_size if buffer not full).
+    pub size: usize,
+}
+
+impl ContinuousTransitionBatch {
+    /// Creates a new pre-allocated batch with the given dimensions.
+    ///
+    /// All tensors are initialized to zeros and will be overwritten by `sample()`.
+    pub fn new(batch_size: usize, obs_dim: usize, act_dim: usize) -> Self {
+        ContinuousTransitionBatch {
+            states: Tensor::zeros(&[batch_size, obs_dim]),
+            actions: Tensor::zeros(&[batch_size, act_dim]),
+            rewards: Tensor::zeros(&[batch_size, 1]),
+            next_states: Tensor::zeros(&[batch_size, obs_dim]),
+            dones: Tensor::zeros(&[batch_size, 1]),
+            size: 0,
+        }
+    }
+}
+
+/// Uniform-sampling experience replay buffer for continuous action spaces.
+///
+/// Same design as `ReplayBuffer` but stores continuous action vectors
+/// (`&[f32]` of length `act_dim`) instead of discrete action indices.
+///
+/// ## Memory Layout
+///
+/// ```text
+/// states:      [f32; capacity * obs_dim]    — contiguous row-major
+/// actions:     [f32; capacity * act_dim]    — contiguous row-major
+/// rewards:     [f32; capacity]
+/// next_states: [f32; capacity * obs_dim]    — contiguous row-major
+/// dones:       [bool; capacity]
+/// ```
+pub struct ContinuousReplayBuffer {
+    /// Flattened states storage, length = capacity * obs_dim.
+    states: Vec<f32>,
+    /// Flattened continuous actions, length = capacity * act_dim.
+    actions: Vec<f32>,
+    /// Rewards, length = capacity.
+    rewards: Vec<f32>,
+    /// Flattened next-states storage, length = capacity * obs_dim.
+    next_states: Vec<f32>,
+    /// Done flags, length = capacity.
+    dones: Vec<bool>,
+
+    /// Maximum number of transitions stored.
+    capacity: usize,
+    /// Observation dimensionality.
+    obs_dim: usize,
+    /// Action dimensionality.
+    act_dim: usize,
+    /// Current write position (circular).
+    cursor: usize,
+    /// Number of transitions currently stored (min(total_pushed, capacity)).
+    len: usize,
+}
+
+impl ContinuousReplayBuffer {
+    /// Creates a new continuous replay buffer with pre-allocated storage.
+    ///
+    /// ## Arguments
+    /// - `capacity`: Maximum number of transitions to store.
+    /// - `obs_dim`: Dimensionality of a single observation.
+    /// - `act_dim`: Dimensionality of the continuous action vector.
+    pub fn new(capacity: usize, obs_dim: usize, act_dim: usize) -> Self {
+        ContinuousReplayBuffer {
+            states: vec![0.0; capacity * obs_dim],
+            actions: vec![0.0; capacity * act_dim],
+            rewards: vec![0.0; capacity],
+            next_states: vec![0.0; capacity * obs_dim],
+            dones: vec![false; capacity],
+            capacity,
+            obs_dim,
+            act_dim,
+            cursor: 0,
+            len: 0,
+        }
+    }
+
+    /// Pushes a single transition into the buffer.
+    ///
+    /// Uses circular addressing: when full, overwrites the oldest transition.
+    ///
+    /// ## Arguments
+    /// - `state`: Observation, length must be `obs_dim`.
+    /// - `action`: Continuous action vector, length must be `act_dim`.
+    /// - `reward`: Scalar reward.
+    /// - `next_state`: Next observation, length must be `obs_dim`.
+    /// - `done`: Whether the episode terminated after this transition.
+    pub fn push(
+        &mut self,
+        state: &[f32],
+        action: &[f32],
+        reward: f32,
+        next_state: &[f32],
+        done: bool,
+    ) {
+        debug_assert_eq!(state.len(), self.obs_dim);
+        debug_assert_eq!(action.len(), self.act_dim);
+        debug_assert_eq!(next_state.len(), self.obs_dim);
+
+        let s_offset = self.cursor * self.obs_dim;
+        self.states[s_offset..s_offset + self.obs_dim].copy_from_slice(state);
+        self.next_states[s_offset..s_offset + self.obs_dim].copy_from_slice(next_state);
+
+        let a_offset = self.cursor * self.act_dim;
+        self.actions[a_offset..a_offset + self.act_dim].copy_from_slice(action);
+
+        self.rewards[self.cursor] = reward;
+        self.dones[self.cursor] = done;
+
+        self.cursor = (self.cursor + 1) % self.capacity;
+        if self.len < self.capacity {
+            self.len += 1;
+        }
+    }
+
+    /// Returns the number of transitions stored.
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Returns whether the buffer is empty.
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Samples a random batch of transitions and writes into the provided batch.
+    ///
+    /// **Zero allocation on the hot path**: writes directly into the pre-allocated
+    /// `ContinuousTransitionBatch` fields.
+    ///
+    /// ## Arguments
+    /// - `batch_size`: Number of transitions to sample. Clamped to `self.len()`.
+    /// - `batch`: Pre-allocated batch to fill.
+    ///
+    /// ## Panics
+    /// If the buffer is empty.
+    pub fn sample(&self, batch_size: usize, batch: &mut ContinuousTransitionBatch) {
+        assert!(
+            !self.is_empty(),
+            "Cannot sample from empty ContinuousReplayBuffer"
+        );
+
+        let actual_batch = batch_size.min(self.len);
+        let mut rng = rand::thread_rng();
+
+        let states_flat = batch.states.data_mut();
+        let next_states_flat = batch.next_states.data_mut();
+        let rewards_flat = batch.rewards.data_mut();
+        let dones_flat = batch.dones.data_mut();
+        let actions_flat = batch.actions.data_mut();
+
+        for b in 0..actual_batch {
+            let idx = rng.gen_range(0..self.len);
+
+            // Copy state and next_state
+            let src_s_offset = idx * self.obs_dim;
+            let dst_s_offset = b * self.obs_dim;
+            let src_state = &self.states[src_s_offset..src_s_offset + self.obs_dim];
+            let dst_state =
+                &mut states_flat.as_slice_mut().unwrap()[dst_s_offset..dst_s_offset + self.obs_dim];
+            dst_state.copy_from_slice(src_state);
+
+            let src_ns = &self.next_states[src_s_offset..src_s_offset + self.obs_dim];
+            let dst_ns = &mut next_states_flat.as_slice_mut().unwrap()
+                [dst_s_offset..dst_s_offset + self.obs_dim];
+            dst_ns.copy_from_slice(src_ns);
+
+            // Copy continuous action
+            let src_a_offset = idx * self.act_dim;
+            let dst_a_offset = b * self.act_dim;
+            let src_action = &self.actions[src_a_offset..src_a_offset + self.act_dim];
+            let dst_action = &mut actions_flat.as_slice_mut().unwrap()
+                [dst_a_offset..dst_a_offset + self.act_dim];
+            dst_action.copy_from_slice(src_action);
+
+            // Rewards and dones
+            rewards_flat.as_slice_mut().unwrap()[b] = self.rewards[idx];
+            dones_flat.as_slice_mut().unwrap()[b] = if self.dones[idx] { 1.0 } else { 0.0 };
+        }
+
+        batch.size = actual_batch;
+    }
+}
+
 // Unit Tests
 
 #[cfg(test)]
@@ -331,6 +533,97 @@ mod tests {
     fn test_sample_empty_panics() {
         let buf = ReplayBuffer::new(100, 4);
         let mut batch = TransitionBatch::new(8, 4);
+        buf.sample(8, &mut batch);
+    }
+
+    // --- Continuous replay buffer tests ---
+
+    #[test]
+    fn continuous_replay_push_and_sample() {
+        let obs_dim = 3;
+        let act_dim = 2;
+        let mut buf = ContinuousReplayBuffer::new(100, obs_dim, act_dim);
+        assert!(buf.is_empty());
+
+        buf.push(&[1.0, 2.0, 3.0], &[0.5, -0.5], 1.0, &[4.0, 5.0, 6.0], false);
+        assert_eq!(buf.len(), 1);
+
+        buf.push(
+            &[7.0, 8.0, 9.0],
+            &[0.1, 0.9],
+            -1.0,
+            &[10.0, 11.0, 12.0],
+            true,
+        );
+        assert_eq!(buf.len(), 2);
+
+        let mut batch = ContinuousTransitionBatch::new(4, obs_dim, act_dim);
+        buf.sample(4, &mut batch);
+        // Clamped to buffer size
+        assert_eq!(batch.size, 2);
+        assert_eq!(batch.states.shape(), &[4, obs_dim]);
+        assert_eq!(batch.actions.shape(), &[4, act_dim]);
+    }
+
+    #[test]
+    fn continuous_replay_circular_overwrite() {
+        let obs_dim = 2;
+        let act_dim = 1;
+        let mut buf = ContinuousReplayBuffer::new(3, obs_dim, act_dim);
+
+        buf.push(&[1.0, 1.0], &[0.1], 1.0, &[2.0, 2.0], false);
+        buf.push(&[3.0, 3.0], &[0.2], 2.0, &[4.0, 4.0], false);
+        buf.push(&[5.0, 5.0], &[0.3], 3.0, &[6.0, 6.0], false);
+        assert_eq!(buf.len(), 3);
+
+        // Overwrite oldest
+        buf.push(&[7.0, 7.0], &[0.4], 4.0, &[8.0, 8.0], true);
+        assert_eq!(buf.len(), 3); // capacity-limited
+
+        // States[0] should now be [7.0, 7.0] (overwritten)
+        assert_eq!(buf.states[0], 7.0);
+        assert_eq!(buf.states[1], 7.0);
+        assert_eq!(buf.actions[0], 0.4);
+    }
+
+    #[test]
+    fn continuous_replay_batch_shapes() {
+        let obs_dim = 4;
+        let act_dim = 3;
+        let mut buf = ContinuousReplayBuffer::new(100, obs_dim, act_dim);
+
+        for i in 0..20 {
+            let v = i as f32;
+            buf.push(
+                &[v, v, v, v],
+                &[v * 0.1, v * 0.2, v * 0.3],
+                v,
+                &[v + 1.0, v + 1.0, v + 1.0, v + 1.0],
+                i % 5 == 0,
+            );
+        }
+
+        let mut batch = ContinuousTransitionBatch::new(8, obs_dim, act_dim);
+        buf.sample(8, &mut batch);
+        assert_eq!(batch.size, 8);
+        assert_eq!(batch.states.shape(), &[8, obs_dim]);
+        assert_eq!(batch.actions.shape(), &[8, act_dim]);
+        assert_eq!(batch.rewards.shape(), &[8, 1]);
+        assert_eq!(batch.next_states.shape(), &[8, obs_dim]);
+        assert_eq!(batch.dones.shape(), &[8, 1]);
+
+        // Verify dones are valid 0.0/1.0
+        let dones = batch.dones.to_vec();
+        for d in &dones[..batch.size] {
+            assert!(*d == 0.0 || *d == 1.0);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "Cannot sample from empty ContinuousReplayBuffer")]
+    fn continuous_replay_sample_empty_panics() {
+        let buf = ContinuousReplayBuffer::new(100, 4, 2);
+        let mut batch = ContinuousTransitionBatch::new(8, 4, 2);
         buf.sample(8, &mut batch);
     }
 }
