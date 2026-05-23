@@ -15,8 +15,8 @@
 <p align="center">
   <img src="https://img.shields.io/badge/language-Rust-orange?style=flat-square&logo=rust" alt="Rust">
   <img src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue?style=flat-square" alt="License">
-  <img src="https://img.shields.io/badge/status-Phase%203%20In%20Progress-blue?style=flat-square" alt="Status">
-  <img src="https://img.shields.io/badge/tests-215%20passing-brightgreen?style=flat-square" alt="Tests">
+  <img src="https://img.shields.io/badge/status-Phase%204%20Complete-brightgreen?style=flat-square" alt="Status">
+  <img src="https://img.shields.io/badge/tests-734%20passing-brightgreen?style=flat-square" alt="Tests">
 </p>
 
 ---
@@ -70,13 +70,15 @@ A PyTorch-style tensor library built on top of [`ndarray`](https://github.com/ru
 - Loss functions: MSE, CrossEntropy, Huber
 - Model serialization and checkpointing
 
-### 🎮 RL Algorithms (`rustforge-rl`) — 🚧 In Progress
+### 🎮 RL Algorithms (`rustforge-rl`) — ✅ Phase 4 Complete
 
-- **Value-Based**: DQN, Double DQN, Dueling DQN, Prioritized Experience Replay
-- **Policy Gradient**: REINFORCE, A2C, PPO (clip & penalty variants)
-- **Off-Policy**: SAC, TD3, DDPG
-- **Environment Interface**: Gymnasium-compatible traits, zero-cost wrappers, and vectorized environments (`SyncVectorEnv`) ✅ Complete
-- **Replay Buffers**: Uniform, Prioritized (SumTree), HER
+- **Value-Based**: DQN and Double DQN with target networks
+- **Policy Gradient**: REINFORCE, A2C, PPO Discrete, PPO Continuous
+- **Off-Policy Continuous Control**: TD3 and SAC with target critics and soft updates
+- **Continuous Policies**: Tanh-squashed Gaussian policy with action scaling and log-prob correction
+- **Environment Interface**: Gymnasium-compatible traits, zero-cost wrappers, vectorized environments (`SyncVectorEnv`)
+- **Built-in Environments**: CartPole, GridWorld, MountainCarContinuous
+- **Buffers**: Uniform replay, on-policy rollout, continuous replay, continuous rollout
 
 ### 🐍 Python Bindings (`rustforge-python`) — 📋 Planned
 
@@ -150,8 +152,8 @@ cd rustforge-rl
 # Build the entire workspace
 cargo build
 
-# Run all tests (51 unit tests + 9 doc tests)
-cargo test -p rustforge-tensor
+# Run the full workspace test suite
+cargo test --workspace
 
 # Run with optimizations for benchmarking
 cargo build --release
@@ -214,10 +216,11 @@ let weights = (& attention / 8.0_f32.sqrt()).softmax(1).unwrap();
 | **Phase 1** | Autograd Engine | ✅ Complete (49 tests passing) |
 | **Phase 2** | Neural Network Modules | ✅ Complete (74 tests passing) |
 | **Phase 2** | Optimizers (SGD, Adam) | ✅ Complete |
-| **Phase 3** | Environment Infra & Vectorization | ✅ Complete (32 tests passing) |
-| **Phase 3** | DQN + CartPole | 📋 Planned |
-| **Phase 3** | PPO + Continuous Control | 📋 Planned |
-| **Phase 4** | SAC, TD3, DDPG | 📋 Planned |
+| **Phase 3** | Environment Infra & Vectorization | ✅ Complete |
+| **Phase 3** | DQN + CartPole | ✅ Complete |
+| **Phase 3** | REINFORCE + A2C | ✅ Complete |
+| **Phase 4** | PPO + Continuous Control | ✅ Complete |
+| **Phase 4** | SAC + TD3 | ✅ Complete |
 | **Phase 4** | Python Bindings (PyO3) | 📋 Planned |
 | **Phase 5** | Training Dashboard | 📋 Planned |
 | **Phase 5** | GPU Support (wgpu) | 📋 Planned |
