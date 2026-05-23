@@ -16,12 +16,13 @@
 //! let f = a + b;     // val + val
 //! ```
 
+use rustforge_tensor::Tensor;
 use std::ops::{Add, Div, Mul, Neg, Sub};
 
 use crate::graph::{
-    AddGrad, DivGrad, ExpGrad, GatherAxisGrad, GradFn, LogGrad, MatmulGrad, MeanGrad, MulGrad,
-    NegGrad, PowGrad, ReluGrad, ScalarAddGrad, ScalarMulGrad, SigmoidGrad, SqrtGrad, SubGrad,
-    SumAxisGrad, SumGrad, TanhGrad, TransposeGrad,
+    AddGrad, ConcatGrad, DivGrad, ExpGrad, GatherAxisGrad, GradFn, LogGrad, MatmulGrad, MeanGrad,
+    MulGrad, NegGrad, PowGrad, ReluGrad, ScalarAddGrad, ScalarMulGrad, SigmoidGrad, SqrtGrad,
+    SubGrad, SumAxisGrad, SumGrad, TanhGrad, TransposeGrad,
 };
 use crate::variable::Variable;
 
@@ -557,6 +558,25 @@ pub fn var_gather(input: &Variable, axis: usize, indices: &[usize]) -> Variable 
     Variable::from_grad_fn(result_data, requires_grad, grad_fn)
 }
 
+/// Concatenates two variables along a specified axis.
+pub fn var_concat(lhs: &Variable, rhs: &Variable, axis: usize) -> Variable {
+    let lhs_data = lhs.data();
+    let rhs_data = rhs.data();
+    let result_data =
+        Tensor::cat(&[&lhs_data, &rhs_data], axis).expect("cat forward failed in var_concat");
+    let requires_grad = needs_grad(&[lhs, rhs]);
+    let grad_fn: Option<Box<dyn GradFn>> = if requires_grad {
+        Some(Box::new(ConcatGrad {
+            lhs: lhs.clone(),
+            rhs: rhs.clone(),
+            axis,
+        }))
+    } else {
+        None
+    };
+    Variable::from_grad_fn(result_data, requires_grad, grad_fn)
+}
+
 // Unit Tests
 
 #[cfg(test)]
@@ -749,5 +769,20 @@ mod tests {
         let a = Variable::new(Tensor::from_vec(vec![1.0, -2.0, 3.0], &[3]), false);
         let b = -a.clone();
         assert_eq!(b.data().to_vec(), vec![-1.0, 2.0, -3.0]);
+    }
+
+    #[test]
+    fn test_var_concat_forward_and_backward() {
+        let a = Variable::new(Tensor::from_vec(vec![1.0, 2.0], &[1, 2]), true);
+        let b = Variable::new(Tensor::from_vec(vec![3.0, 4.0], &[1, 2]), true);
+        let c = var_concat(&a, &b, 1);
+        assert_eq!(c.shape(), vec![1, 4]);
+        assert_eq!(c.data().to_vec(), vec![1.0, 2.0, 3.0, 4.0]);
+
+        let sum = c.sum();
+        sum.backward();
+
+        assert_eq!(a.grad().unwrap().to_vec(), vec![1.0, 1.0]);
+        assert_eq!(b.grad().unwrap().to_vec(), vec![1.0, 1.0]);
     }
 }
