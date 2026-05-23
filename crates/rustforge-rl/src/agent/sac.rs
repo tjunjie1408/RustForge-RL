@@ -393,10 +393,7 @@ mod tests {
         // Alpha should have changed from initial value
         // (We can't predict direction, just that it moves)
         let diff = (final_alpha - initial_alpha).abs();
-        assert!(
-            diff.is_finite(),
-            "Alpha change should be finite"
-        );
+        assert!(diff.is_finite(), "Alpha change should be finite");
         assert!(final_alpha > 0.0, "Alpha must remain positive");
     }
 
