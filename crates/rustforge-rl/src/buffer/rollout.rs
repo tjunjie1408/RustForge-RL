@@ -17,21 +17,22 @@
 //! to produce the correct value. This ensures GAE does not underestimate
 //! truncated episode tails.
 //!
-//! ## REINFORCE vs A2C
+//! ## REINFORCE vs A2C vs PPO
 //!
 //! - **REINFORCE** (no critic): pass `value=0.0` in `push()`, then call
 //!   `compute_returns_and_advantages(gamma, 1.0, 0.0)`. Result: `advantages == returns`.
 //! - **A2C**: pass critic's detached V(s_t) as `value` in `push()`, then call
 //!   `compute_returns_and_advantages(gamma, lambda, last_value)`.
+//! - **PPO**: use `push_with_log_prob()` to store the old policy's log π(a|s)
+//!   alongside each transition. The batch's `old_log_probs` field provides the
+//!   frozen log-probabilities needed for importance ratio computation.
 //!
-//! ## No `log_probs` Storage
+//! ## `old_log_probs` Storage
 //!
-//! This buffer intentionally does **not** store log-probabilities. REINFORCE/A2C
-//! must re-forward through the current policy at training time to obtain
-//! differentiable `log π(a|s)` with a live computation graph. Stored f32 log-probs
-//! would have no gradient path back to policy parameters.
-//!
-//! (PPO will add `old_log_probs` for importance ratio computation in Phase 4.)
+//! The buffer stores `old_log_probs` for PPO importance ratio computation.
+//! REINFORCE/A2C can ignore this field (defaults to 0.0 when using `push()`).
+//! PPO should use `push_with_log_prob()` to store the old policy's detached
+//! log π(a|s) at collection time.
 
 use rustforge_tensor::Tensor;
 
@@ -56,6 +57,9 @@ pub struct RolloutBatch {
     pub returns: Tensor,
     /// Advantages A_t (GAE), shape `[len, 1]`.
     pub advantages: Tensor,
+    /// Old policy log-probabilities log π_old(a|s), shape `[len, 1]`.
+    /// Used by PPO for importance ratio. Zero for REINFORCE/A2C.
+    pub old_log_probs: Tensor,
     /// Number of valid entries.
     pub size: usize,
 }
@@ -78,6 +82,9 @@ pub struct RolloutBuffer {
     values: Vec<f32>,
     /// Done flags (f32: 1.0 = true terminal, 0.0 = not), length = capacity.
     dones: Vec<f32>,
+    /// Old policy log-probabilities log π_old(a|s), length = capacity.
+    /// Used by PPO for importance ratio computation.
+    old_log_probs: Vec<f32>,
 
     /// Computed returns G_t, length = capacity. Filled by `compute_returns_and_advantages`.
     returns: Vec<f32>,
@@ -107,6 +114,7 @@ impl RolloutBuffer {
             rewards: vec![0.0; capacity],
             values: vec![0.0; capacity],
             dones: vec![0.0; capacity],
+            old_log_probs: vec![0.0; capacity],
             returns: vec![0.0; capacity],
             advantages: vec![0.0; capacity],
             capacity,
@@ -128,6 +136,31 @@ impl RolloutBuffer {
     /// ## Panics
     /// If the buffer is already at capacity. On-policy buffers should `clear()` between rollouts.
     pub fn push(&mut self, state: &[f32], action: usize, reward: f32, value: f32, done: f32) {
+        self.push_with_log_prob(state, action, reward, value, done, 0.0);
+    }
+
+    /// Pushes a single transition with an old log-probability (for PPO).
+    ///
+    /// ## Arguments
+    /// - `state`: Observation, length must be `obs_dim`.
+    /// - `action`: Action index.
+    /// - `reward`: Scalar reward.
+    /// - `value`: Critic's V(s_t) estimate (detached f32). Use 0.0 for REINFORCE.
+    /// - `done`: Terminal flag (f32: 1.0 = true terminal only, not time-limit truncation).
+    /// - `old_log_prob`: The old policy's log π(a|s), detached. Used by PPO for
+    ///   importance ratio computation.
+    ///
+    /// ## Panics
+    /// If the buffer is already at capacity.
+    pub fn push_with_log_prob(
+        &mut self,
+        state: &[f32],
+        action: usize,
+        reward: f32,
+        value: f32,
+        done: f32,
+        old_log_prob: f32,
+    ) {
         assert!(
             self.len < self.capacity,
             "RolloutBuffer overflow: len={} >= capacity={}. Call clear() between rollouts.",
@@ -148,6 +181,7 @@ impl RolloutBuffer {
         self.rewards[self.len] = reward;
         self.values[self.len] = value;
         self.dones[self.len] = done;
+        self.old_log_probs[self.len] = old_log_prob;
 
         self.len += 1;
         self.computed = false; // invalidate any previous computation
@@ -197,13 +231,281 @@ impl RolloutBuffer {
         let returns = Tensor::from_vec(self.returns[..self.len].to_vec(), &[self.len, 1]);
         let advantages = Tensor::from_vec(self.advantages[..self.len].to_vec(), &[self.len, 1]);
 
+        let old_log_probs =
+            Tensor::from_vec(self.old_log_probs[..self.len].to_vec(), &[self.len, 1]);
+
         RolloutBatch {
             states,
             actions,
             returns,
             advantages,
+            old_log_probs,
             size: self.len,
         }
+    }
+
+    /// Resets the buffer for the next rollout. Does not deallocate memory.
+    pub fn clear(&mut self) {
+        self.len = 0;
+        self.computed = false;
+    }
+
+    /// Returns the number of transitions currently stored.
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Returns whether the buffer is empty.
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Returns the buffer capacity.
+    pub fn capacity(&self) -> usize {
+        self.capacity
+    }
+}
+
+/// A batch of continuous-action rollout data ready for training.
+///
+/// Produced by `ContinuousRolloutBuffer::fill_batch()` after
+/// `compute_returns_and_advantages()`.
+///
+/// ## Size Contract
+///
+/// Tensor shapes preserve allocation capacity; only rows `[0, size)` are valid after `fill_batch()`.
+/// Consumers must ignore rows `[size, capacity)`.
+///
+/// ## Field Types
+///
+/// - `states`: `Tensor` shape `[capacity, obs_dim]`
+/// - `actions`: `Tensor` shape `[capacity, act_dim]` — continuous action vectors
+/// - `returns`: `Tensor` shape `[capacity, 1]` — value regression targets
+/// - `advantages`: `Tensor` shape `[capacity, 1]` — policy loss weights
+/// - `old_log_probs`: `Tensor` shape `[capacity, 1]` — frozen log π_old(a|s)
+pub struct ContinuousRolloutBatch {
+    /// Observation states, shape `[size, obs_dim]`.
+    pub states: Tensor,
+    /// Continuous actions, shape `[size, act_dim]`.
+    pub actions: Tensor,
+    /// Returns G_t (= advantages + values), shape `[size, 1]`.
+    pub returns: Tensor,
+    /// Advantages A_t (GAE), shape `[size, 1]`.
+    pub advantages: Tensor,
+    /// Old policy log-probabilities log π_old(a|s), shape `[size, 1]`.
+    pub old_log_probs: Tensor,
+    /// Number of valid entries.
+    pub size: usize,
+}
+
+impl ContinuousRolloutBatch {
+    /// Creates a new pre-allocated batch with the given dimensions.
+    ///
+    /// All tensors are initialized to zeros and will be overwritten by `fill_batch()`.
+    pub fn new(capacity: usize, obs_dim: usize, act_dim: usize) -> Self {
+        ContinuousRolloutBatch {
+            states: Tensor::zeros(&[capacity, obs_dim]),
+            actions: Tensor::zeros(&[capacity, act_dim]),
+            returns: Tensor::zeros(&[capacity, 1]),
+            advantages: Tensor::zeros(&[capacity, 1]),
+            old_log_probs: Tensor::zeros(&[capacity, 1]),
+            size: 0,
+        }
+    }
+}
+
+/// On-policy rollout buffer for continuous action spaces with SoA layout.
+///
+/// Same design as `RolloutBuffer` but stores continuous action vectors
+/// (`&[f32]` of length `act_dim`) instead of discrete action indices.
+///
+/// ## Usage with PPO (Continuous)
+///
+/// ```rust,ignore
+/// let mut buf = ContinuousRolloutBuffer::new(2048, 8, 3); // obs=8, act=3
+/// let mut batch = ContinuousRolloutBatch::new(2048, 8, 3);
+///
+/// // Collect
+/// buf.push(&state, &action, reward, value, done, log_prob);
+///
+/// // Compute + consume
+/// buf.compute_returns_and_advantages(0.99, 0.95, last_value);
+/// buf.fill_batch(&mut batch);
+/// ```
+pub struct ContinuousRolloutBuffer {
+    /// Flattened states, length = capacity * obs_dim.
+    states: Vec<f32>,
+    /// Flattened continuous actions, length = capacity * act_dim.
+    actions: Vec<f32>,
+    /// Per-step rewards, length = capacity.
+    rewards: Vec<f32>,
+    /// Per-step value estimates V(s_t), length = capacity.
+    values: Vec<f32>,
+    /// Done flags (f32: 1.0 = true terminal, 0.0 = not), length = capacity.
+    dones: Vec<f32>,
+    /// Old policy log-probabilities log π_old(a|s), length = capacity.
+    old_log_probs: Vec<f32>,
+
+    /// Computed returns G_t, length = capacity.
+    returns: Vec<f32>,
+    /// Computed advantages A_t, length = capacity.
+    advantages: Vec<f32>,
+
+    /// Maximum number of transitions.
+    capacity: usize,
+    /// Observation dimensionality.
+    obs_dim: usize,
+    /// Action dimensionality.
+    act_dim: usize,
+    /// Current number of stored transitions.
+    len: usize,
+    /// Whether `compute_returns_and_advantages` has been called since last `clear`.
+    computed: bool,
+}
+
+impl ContinuousRolloutBuffer {
+    /// Creates a new continuous rollout buffer with pre-allocated storage.
+    ///
+    /// ## Arguments
+    /// - `capacity`: Maximum transitions per rollout.
+    /// - `obs_dim`: Dimensionality of a single observation.
+    /// - `act_dim`: Dimensionality of the continuous action vector.
+    pub fn new(capacity: usize, obs_dim: usize, act_dim: usize) -> Self {
+        ContinuousRolloutBuffer {
+            states: vec![0.0; capacity * obs_dim],
+            actions: vec![0.0; capacity * act_dim],
+            rewards: vec![0.0; capacity],
+            values: vec![0.0; capacity],
+            dones: vec![0.0; capacity],
+            old_log_probs: vec![0.0; capacity],
+            returns: vec![0.0; capacity],
+            advantages: vec![0.0; capacity],
+            capacity,
+            obs_dim,
+            act_dim,
+            len: 0,
+            computed: false,
+        }
+    }
+
+    /// Pushes a single transition into the buffer.
+    ///
+    /// ## Arguments
+    /// - `state`: Observation, length must be `obs_dim`.
+    /// - `action`: Continuous action vector, length must be `act_dim`.
+    /// - `reward`: Scalar reward.
+    /// - `value`: Critic's V(s_t) estimate (detached f32).
+    /// - `done`: Terminal flag (f32: 1.0 = true terminal only).
+    /// - `old_log_prob`: Old policy's log π(a|s), detached.
+    ///
+    /// ## Panics
+    /// If the buffer is already at capacity.
+    pub fn push(
+        &mut self,
+        state: &[f32],
+        action: &[f32],
+        reward: f32,
+        value: f32,
+        done: f32,
+        old_log_prob: f32,
+    ) {
+        assert!(
+            self.len < self.capacity,
+            "ContinuousRolloutBuffer overflow: len={} >= capacity={}. Call clear() between rollouts.",
+            self.len,
+            self.capacity
+        );
+        debug_assert_eq!(
+            state.len(),
+            self.obs_dim,
+            "state.len()={} != obs_dim={}",
+            state.len(),
+            self.obs_dim
+        );
+        debug_assert_eq!(
+            action.len(),
+            self.act_dim,
+            "action.len()={} != act_dim={}",
+            action.len(),
+            self.act_dim
+        );
+
+        let s_offset = self.len * self.obs_dim;
+        self.states[s_offset..s_offset + self.obs_dim].copy_from_slice(state);
+
+        let a_offset = self.len * self.act_dim;
+        self.actions[a_offset..a_offset + self.act_dim].copy_from_slice(action);
+
+        self.rewards[self.len] = reward;
+        self.values[self.len] = value;
+        self.dones[self.len] = done;
+        self.old_log_probs[self.len] = old_log_prob;
+
+        self.len += 1;
+        self.computed = false;
+    }
+
+    /// Computes returns and advantages using GAE.
+    ///
+    /// Same algorithm as `RolloutBuffer::compute_returns_and_advantages()`.
+    pub fn compute_returns_and_advantages(&mut self, gamma: f32, lambda: f32, last_value: f32) {
+        let (advantages, rets) = returns::compute_gae(
+            &self.rewards[..self.len],
+            &self.values[..self.len],
+            &self.dones[..self.len],
+            last_value,
+            gamma,
+            lambda,
+        );
+
+        self.advantages[..self.len].copy_from_slice(&advantages);
+        self.returns[..self.len].copy_from_slice(&rets);
+        self.computed = true;
+    }
+
+    /// Fills a pre-allocated `ContinuousRolloutBatch` with the buffer contents.
+    ///
+    /// `fill_batch` overwrites only active rows and does not clear inactive tail rows.
+    ///
+    /// ## Panics
+    /// If `compute_returns_and_advantages()` has not been called since the last
+    /// `clear()` or `push()`.
+    pub fn fill_batch(&self, batch: &mut ContinuousRolloutBatch) {
+        assert!(
+            self.computed,
+            "must call compute_returns_and_advantages() before fill_batch()"
+        );
+        assert!(
+            self.len > 0,
+            "cannot fill batch from empty ContinuousRolloutBuffer"
+        );
+        assert!(
+            self.len <= batch.states.shape()[0],
+            "batch capacity {} is smaller than rollout length {}",
+            batch.states.shape()[0],
+            self.len
+        );
+
+        let states_flat = batch.states.data_mut();
+        states_flat.as_slice_mut().unwrap()[..self.len * self.obs_dim]
+            .copy_from_slice(&self.states[..self.len * self.obs_dim]);
+
+        let actions_flat = batch.actions.data_mut();
+        actions_flat.as_slice_mut().unwrap()[..self.len * self.act_dim]
+            .copy_from_slice(&self.actions[..self.len * self.act_dim]);
+
+        let returns_flat = batch.returns.data_mut();
+        returns_flat.as_slice_mut().unwrap()[..self.len].copy_from_slice(&self.returns[..self.len]);
+
+        let advantages_flat = batch.advantages.data_mut();
+        advantages_flat.as_slice_mut().unwrap()[..self.len]
+            .copy_from_slice(&self.advantages[..self.len]);
+
+        let old_log_probs_flat = batch.old_log_probs.data_mut();
+        old_log_probs_flat.as_slice_mut().unwrap()[..self.len]
+            .copy_from_slice(&self.old_log_probs[..self.len]);
+
+        batch.size = self.len;
     }
 
     /// Resets the buffer for the next rollout. Does not deallocate memory.
@@ -376,5 +678,114 @@ mod tests {
         buf.compute_returns_and_advantages(0.99, 1.0, 0.0);
         let batch2 = buf.to_batch();
         assert_eq!(batch2.size, 2);
+    }
+
+    // --- PPO old_log_probs tests ---
+
+    #[test]
+    fn push_with_log_prob_stores_value() {
+        let mut buf = RolloutBuffer::new(10, 2);
+        buf.push_with_log_prob(&[1.0, 2.0], 0, 1.0, 0.5, 0.0, -0.693);
+        buf.push_with_log_prob(&[3.0, 4.0], 1, 2.0, 0.3, 0.0, -1.386);
+        buf.compute_returns_and_advantages(0.99, 0.95, 0.0);
+
+        let batch = buf.to_batch();
+        let log_probs = batch.old_log_probs.to_vec();
+        assert_eq!(log_probs.len(), 2);
+        assert_abs_diff_eq!(log_probs[0], -0.693, epsilon = 1e-5);
+        assert_abs_diff_eq!(log_probs[1], -1.386, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn push_delegates_to_push_with_log_prob() {
+        let mut buf = RolloutBuffer::new(10, 2);
+        // push() should store old_log_prob = 0.0
+        buf.push(&[1.0, 2.0], 0, 1.0, 0.5, 0.0);
+        buf.push(&[3.0, 4.0], 1, 2.0, 0.3, 0.0);
+        buf.compute_returns_and_advantages(0.99, 0.95, 0.0);
+
+        let batch = buf.to_batch();
+        let log_probs = batch.old_log_probs.to_vec();
+        assert_eq!(log_probs.len(), 2);
+        assert_abs_diff_eq!(log_probs[0], 0.0, epsilon = 1e-5);
+        assert_abs_diff_eq!(log_probs[1], 0.0, epsilon = 1e-5);
+    }
+
+    // --- Continuous rollout buffer tests ---
+
+    #[test]
+    fn continuous_rollout_push_and_fill() {
+        let obs_dim = 3;
+        let act_dim = 2;
+        let mut buf = ContinuousRolloutBuffer::new(10, obs_dim, act_dim);
+        let mut batch = ContinuousRolloutBatch::new(10, obs_dim, act_dim);
+
+        buf.push(&[1.0, 2.0, 3.0], &[0.5, -0.5], 1.0, 0.8, 0.0, -1.0);
+        buf.push(&[4.0, 5.0, 6.0], &[0.1, 0.9], 2.0, 0.6, 0.0, -0.5);
+        buf.push(&[7.0, 8.0, 9.0], &[-0.3, 0.7], 3.0, 0.4, 1.0, -0.2);
+
+        assert_eq!(buf.len(), 3);
+        assert!(!buf.is_empty());
+        assert_eq!(buf.capacity(), 10);
+
+        buf.compute_returns_and_advantages(0.99, 0.95, 0.0);
+        buf.fill_batch(&mut batch);
+
+        assert_eq!(batch.size, 3);
+        assert_eq!(batch.states.shape(), &[10, obs_dim]);
+        assert_eq!(batch.actions.shape(), &[10, act_dim]);
+        assert_eq!(batch.returns.shape(), &[10, 1]);
+        assert_eq!(batch.advantages.shape(), &[10, 1]);
+        assert_eq!(batch.old_log_probs.shape(), &[10, 1]);
+
+        // Verify action values
+        let actions = batch.actions.to_vec();
+        assert_abs_diff_eq!(actions[0], 0.5, epsilon = 1e-5);
+        assert_abs_diff_eq!(actions[1], -0.5, epsilon = 1e-5);
+        assert_abs_diff_eq!(actions[2], 0.1, epsilon = 1e-5);
+        assert_abs_diff_eq!(actions[3], 0.9, epsilon = 1e-5);
+
+        // Verify old_log_probs
+        let log_probs = batch.old_log_probs.to_vec();
+        assert_abs_diff_eq!(log_probs[0], -1.0, epsilon = 1e-5);
+        assert_abs_diff_eq!(log_probs[1], -0.5, epsilon = 1e-5);
+        assert_abs_diff_eq!(log_probs[2], -0.2, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn continuous_rollout_gae_matches_discrete() {
+        // Same rewards, values, dones → same returns and advantages
+        let rewards = [1.0_f32, 2.0, 3.0];
+        let values = [0.5_f32, 0.3, 0.1];
+        let dones = [0.0_f32, 0.0, 0.0];
+        let gamma = 0.99;
+        let lambda = 0.95;
+        let last_value = 0.5;
+
+        // Discrete buffer
+        let mut discrete = RolloutBuffer::new(10, 1);
+        for i in 0..3 {
+            discrete.push(&[0.0], i, rewards[i], values[i], dones[i]);
+        }
+        discrete.compute_returns_and_advantages(gamma, lambda, last_value);
+        let d_batch = discrete.to_batch();
+        let d_returns = d_batch.returns.to_vec();
+        let d_advantages = d_batch.advantages.to_vec();
+
+        // Continuous buffer (action content doesn't affect GAE)
+        let mut continuous = ContinuousRolloutBuffer::new(10, 1, 2);
+        let mut c_batch = ContinuousRolloutBatch::new(10, 1, 2);
+        for i in 0..3 {
+            continuous.push(&[0.0], &[0.0, 0.0], rewards[i], values[i], dones[i], 0.0);
+        }
+        continuous.compute_returns_and_advantages(gamma, lambda, last_value);
+        continuous.fill_batch(&mut c_batch);
+        let c_returns = c_batch.returns.to_vec();
+        let c_advantages = c_batch.advantages.to_vec();
+
+        for i in 0..3 {
+            assert_abs_diff_eq!(d_returns[i], c_returns[i], epsilon = 1e-5);
+            assert_abs_diff_eq!(d_advantages[i], c_advantages[i], epsilon = 1e-5);
+        }
     }
 }
