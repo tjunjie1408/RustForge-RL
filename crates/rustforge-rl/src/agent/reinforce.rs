@@ -348,7 +348,6 @@ mod tests {
 
         let batch = buf.to_batch();
         let loss = agent.train_on_rollout(&batch);
-
         assert!(loss.is_finite(), "Loss should be finite, got {}", loss);
     }
 
@@ -364,6 +363,15 @@ mod tests {
             gamma: 0.0, // gamma=0 → each step's return is just its reward
             use_baseline: true,
         });
+
+        // Set deterministic weights to avoid entropy initialization differences in CI
+        {
+            let params = agent.policy_net().parameters();
+            params[0].set_data(Tensor::rand_uniform(&[8, 1], -0.1, 0.1, Some(123)));
+            params[1].set_data(Tensor::zeros(&[8]));
+            params[2].set_data(Tensor::rand_uniform(&[2, 8], -0.1, 0.1, Some(456)));
+            params[3].set_data(Tensor::zeros(&[2]));
+        }
 
         let mut rng = rand::rngs::StdRng::seed_from_u64(42);
         let state = [1.0_f32]; // constant state
