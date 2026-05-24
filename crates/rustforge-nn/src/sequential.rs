@@ -82,6 +82,13 @@ impl Module for Sequential {
     fn is_training(&self) -> bool {
         self.training
     }
+
+    /// Propagates noise resetting to all child layers.
+    fn reset_noise(&mut self) {
+        for layer in &mut self.layers {
+            layer.reset_noise();
+        }
+    }
 }
 
 // Unit Tests

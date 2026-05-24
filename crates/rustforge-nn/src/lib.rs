@@ -48,20 +48,24 @@
 //! ```
 
 pub mod activation;
+pub mod conv2d;
 pub mod dropout;
 pub mod linear;
 pub mod loss;
 pub mod module;
+pub mod noisy_linear;
 pub mod normalization;
 pub mod sequential;
 pub mod serialization;
 
 // Re-export core types for user convenience
 pub use activation::{ReLU, SiLU, Sigmoid, Softmax, Tanh};
+pub use conv2d::Conv2d;
 pub use dropout::Dropout;
 pub use linear::Linear;
 pub use loss::{cross_entropy_loss, huber_loss, mse_loss};
 pub use module::Module;
+pub use noisy_linear::NoisyLinear;
 pub use normalization::LayerNorm;
 pub use sequential::Sequential;
 pub use serialization::{load_parameters, save_parameters};
