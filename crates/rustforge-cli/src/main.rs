@@ -29,7 +29,7 @@ enum Commands {
         env: EnvType,
 
         /// Number of episodes to train
-        #[arg(long, default_value_t = 500)]
+        #[arg(long, default_value_t = 100)]
         episodes: usize,
 
         /// Disable logging
@@ -39,6 +39,10 @@ enum Commands {
         /// Custom path for the output CSV log file
         #[arg(long, default_value = "target/cli_train_dqn.csv")]
         output: String,
+
+        /// Enable Prioritized Experience Replay (PER)
+        #[arg(long)]
+        use_per: bool,
     },
     /// Export the computation graph to Graphviz DOT format
     ExportGraph,
@@ -65,6 +69,7 @@ fn main() -> anyhow::Result<()> {
             episodes,
             no_log,
             output,
+            use_per,
         } => {
             let log_path = if no_log { None } else { Some(output.as_str()) };
 
@@ -84,6 +89,8 @@ fn main() -> anyhow::Result<()> {
                         gamma: 0.99,
                         target_update_freq: 100,
                         double_dqn: true,
+                        use_per,
+                        per_beta_annealing_steps: 20000,
                     };
 
                     match env {
@@ -111,6 +118,8 @@ fn main() -> anyhow::Result<()> {
                 gamma: 0.99,
                 target_update_freq: 100,
                 double_dqn: true,
+                use_per: false,
+                per_beta_annealing_steps: 20000,
             };
             let agent = rustforge_rl::agent::DQN::new(config);
             let input = Tensor::from_vec(vec![0.0, 0.0, 0.0, 0.0], &[1, 4]);

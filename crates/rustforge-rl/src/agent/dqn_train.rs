@@ -5,7 +5,7 @@ use rustforge_nn::Module;
 use rustforge_tensor::Tensor;
 
 use crate::agent::{DQNConfig, EpsilonGreedy, DQN};
-use crate::buffer::{ReplayBuffer, TransitionBatch};
+use crate::buffer::{PrioritizedReplayBuffer, ReplayBuffer, TransitionBatch};
 use crate::env::{Environment, IntoTensorBuffer};
 use crate::metrics::{AgentLogger, CsvLogger, EpisodeMetrics};
 use crate::training::{episode_done, replay_done};
@@ -32,8 +32,14 @@ where
 
     let mut agent = DQN::new(config);
     let explorer = EpsilonGreedy::new(1.0, 0.05, 2_000);
+
+    let use_per = agent.config().use_per;
     let mut replay = ReplayBuffer::new(10_000, obs_dim);
     let mut batch = TransitionBatch::new(batch_size, obs_dim);
+
+    let mut per_replay = PrioritizedReplayBuffer::new(10_000, obs_dim, 0.6);
+    let mut per_weights = Tensor::zeros(&[batch_size, 1]);
+    let mut per_tree_indices = vec![0; batch_size];
 
     let mut logger =
         log_path.map(|path| CsvLogger::new(path).expect("Failed to create CSV logger"));
@@ -71,19 +77,54 @@ where
             let mut next_state_buf = vec![0.0f32; obs_dim];
             next_state.write_to_buffer(&mut next_state_buf);
 
-            replay.push(
-                &state_buf,
-                action_idx,
-                reward,
-                &next_state_buf,
-                replay_done(terminated, truncated),
-            );
+            if use_per {
+                per_replay.push(
+                    &state_buf,
+                    action_idx,
+                    reward,
+                    &next_state_buf,
+                    replay_done(terminated, truncated),
+                );
+            } else {
+                replay.push(
+                    &state_buf,
+                    action_idx,
+                    reward,
+                    &next_state_buf,
+                    replay_done(terminated, truncated),
+                );
+            }
 
             state_buf = next_state_buf;
 
-            if replay.len() >= warmup_steps {
-                replay.sample(batch_size, &mut batch);
-                let (loss, _) = agent.train_step(&batch, None);
+            let can_train = if use_per {
+                per_replay.len() >= warmup_steps
+            } else {
+                replay.len() >= warmup_steps
+            };
+
+            if can_train {
+                let (loss, _) = if use_per {
+                    let beta_steps = agent.config().per_beta_annealing_steps as f32;
+                    let beta = (0.4 + (1.0 - 0.4) * (global_step as f32 / beta_steps)).min(1.0);
+                    per_replay.sample(
+                        batch_size,
+                        beta,
+                        &mut batch,
+                        &mut per_weights,
+                        &mut per_tree_indices,
+                    );
+
+                    let (l, td) = agent.train_step(&batch, Some(&per_weights));
+                    if let Some(ref errs) = td {
+                        per_replay.update_priorities(&per_tree_indices[..batch.size], errs);
+                    }
+                    (l, td)
+                } else {
+                    replay.sample(batch_size, &mut batch);
+                    agent.train_step(&batch, None)
+                };
+
                 if loss.is_finite() {
                     loss_sum += loss;
                     loss_count += 1;
