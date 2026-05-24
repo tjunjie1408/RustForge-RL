@@ -8,5 +8,8 @@ rust-version.workspace = true
 
 [dependencies]
 anyhow = "1.0.102"
+clap = { version = "4", features = ["derive"] }
 rustforge-autograd = { path = "../rustforge-autograd" }
 rustforge-tensor = { path = "../rustforge-tensor" }
+rustforge-nn = { path = "../rustforge-nn" }
+rustforge-rl = { path = "../rustforge-rl" }
