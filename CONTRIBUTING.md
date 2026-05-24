@@ -69,6 +69,17 @@ We use [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/). P
 - Open a PR against the `master` branch of the main repository.
 - Fill out the PR template describing *why* and *how* you made the changes.
 
+## 🤖 Agent Interaction Protocol & Planning Workflow
+
+When developing or contributing as an AI agent paired with a human maintainer, the following strict interactive protocol must be followed:
+
+1. **The Open Questions Block**: If the implementation plan contains an "Open Questions" section, the agent **MUST NEVER** auto-proceed to execution. The agent must pause and wait for the human reviewer's explicit answers and approval.
+2. **Architecture Decisions**: Any decided or resolved design choices should be moved out of "Open Questions" and documented in the "Architecture Decisions" section of the plan.
+3. **Walkthrough Integrity**: The walkthrough document summarizing the work must include:
+   - A clear **Deviations from Plan** section documenting any changes or cuts in scope.
+   - An **Issue Resolution Progress** table mapping features to issue IDs.
+   - Precise, verified passing test counts with a detailed delta breakdown showing which tests were added or modified.
+
 ## 🤝 Getting Help
 
 If you are stuck, feel free to ask questions in the issue or PR comments. We are happy to help new contributors get familiar with the codebase!
