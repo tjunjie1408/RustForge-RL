@@ -23,6 +23,9 @@
 use rustforge_tensor::Tensor;
 use std::ops::{Add, Div, Mul, Neg, Sub};
 
+pub mod conv;
+pub use conv::{var_conv2d, Conv2dGrad};
+
 use crate::graph::{
     AddGrad, ConcatGrad, DivGrad, ExpGrad, GatherAxisGrad, GradFn, LogGrad, MatmulGrad, MeanGrad,
     MulGrad, NegGrad, PowGrad, ReluGrad, ScalarAddGrad, ScalarMulGrad, SigmoidGrad, SiluGrad,
