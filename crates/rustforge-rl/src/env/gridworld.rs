@@ -49,6 +49,20 @@ pub enum GridAction {
     Right,
 }
 
+impl std::convert::TryFrom<usize> for GridAction {
+    type Error = &'static str;
+
+    fn try_from(value: usize) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(GridAction::Up),
+            1 => Ok(GridAction::Down),
+            2 => Ok(GridAction::Left),
+            3 => Ok(GridAction::Right),
+            _ => Err("Invalid action index for GridWorld"),
+        }
+    }
+}
+
 /// GridWorld environment with configurable grid layout.
 ///
 /// Default grid (5×5):
