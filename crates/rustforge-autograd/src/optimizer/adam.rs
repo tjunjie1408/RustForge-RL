@@ -22,8 +22,15 @@ use super::Optimizer;
 /// Adam optimizer with bias correction.
 ///
 /// ## Example
-/// ```rust,ignore
-/// let mut adam = Adam::new(vec![weight.clone(), bias.clone()], 1e-3);
+/// ```rust
+/// use rustforge_tensor::Tensor;
+/// use rustforge_autograd::{Variable, optimizer::{Optimizer, adam::Adam}};
+///
+/// let weight = Variable::new(Tensor::zeros(&[2, 2]), true);
+/// let mut adam = Adam::new(vec![weight.clone()], 1e-3);
+///
+/// // Simulate a backward pass
+/// let loss = weight.sum();
 /// loss.backward();
 /// adam.step();
 /// ```

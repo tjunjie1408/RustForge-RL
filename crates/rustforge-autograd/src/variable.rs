@@ -25,7 +25,7 @@ use crate::graph::GradFn;
 /// gradient storage and a link to the computation graph (`grad_fn`).
 ///
 /// ## Example
-/// ```rust,ignore
+/// ```rust
 /// use rustforge_tensor::Tensor;
 /// use rustforge_autograd::Variable;
 ///
@@ -170,7 +170,9 @@ impl Variable {
     /// Panics if this variable is not a scalar (single element).
     ///
     /// ## Example
-    /// ```rust,ignore
+    /// ```rust
+    /// use rustforge_tensor::Tensor;
+    /// use rustforge_autograd::Variable;
     /// let x = Variable::new(Tensor::from_vec(vec![3.0], &[1]), true);
     /// let y = &x * &x;  // y = x²
     /// y.backward();
@@ -228,6 +230,11 @@ impl Variable {
         crate::ops::var_sqrt(self)
     }
 
+    /// SiLU (Swish) activation function.
+    pub fn silu(&self) -> Variable {
+        crate::ops::var_silu(self)
+    }
+
     /// Sum of all elements (returns scalar variable).
     pub fn sum(&self) -> Variable {
         crate::ops::var_sum(self)
@@ -252,7 +259,9 @@ impl Variable {
     /// `Q(s, a_taken) = q_values.gather(1, &actions)`
     ///
     /// ## Example
-    /// ```rust,ignore
+    /// ```rust
+    /// use rustforge_tensor::Tensor;
+    /// use rustforge_autograd::Variable;
     /// let q = Variable::new(Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], &[2, 2]), true);
     /// let gathered = q.gather(1, &[1, 0]); // picks q[0,1]=2.0, q[1,0]=3.0
     /// ```
@@ -260,9 +269,26 @@ impl Variable {
         crate::ops::var_gather(self, axis, indices)
     }
 
-    /// Concatenates this variable with another variable along a specified axis.
+    /// Concatenates two variables along an axis.
     pub fn concat(&self, other: &Variable, axis: usize) -> Variable {
         crate::ops::var_concat(self, other, axis)
+    }
+
+    /// Exports the computation graph backward from this variable to Graphviz DOT format.
+    ///
+    /// ## Example
+    /// ```rust
+    /// use rustforge_tensor::Tensor;
+    /// use rustforge_autograd::Variable;
+    ///
+    /// let x = Variable::new(Tensor::from_vec(vec![2.0], &[1]), true);
+    /// let y = &x * &x;
+    ///
+    /// let dot = y.export_graphviz();
+    /// assert!(dot.contains("digraph"));
+    /// ```
+    pub fn export_graphviz(&self) -> String {
+        crate::graph::export::export_dot(self)
     }
 
     /// Transpose: swaps the last two dimensions (with gradient tracking).
@@ -271,7 +297,9 @@ impl Variable {
     /// For 1D or 0D tensors, returns a clone.
     ///
     /// ## Example
-    /// ```rust,ignore
+    /// ```rust
+    /// use rustforge_tensor::Tensor;
+    /// use rustforge_autograd::Variable;
     /// let w = Variable::new(Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], &[2, 2]), true);
     /// let wt = w.t(); // shape [2, 2] transposed
     /// ```

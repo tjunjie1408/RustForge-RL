@@ -21,10 +21,12 @@
 //! │   ├── a2c.rs             (A2C — Advantage Actor-Critic, shared trunk)
 //! │   ├── returns.rs         (Discounted returns + GAE computation)
 //! │   └── schedule.rs        (LR scheduling: Constant, LinearDecay, CosineAnnealing)
+//! ├── metrics.rs         (AgentLogger trait, CsvLogger, NullLogger)
 //! └── training.rs        (episode_done / replay_done helpers)
 //! ```
 
 pub mod agent;
 pub mod buffer;
 pub mod env;
+pub mod metrics;
 pub mod training;
