@@ -146,7 +146,7 @@ Each layer only depends on the layer below it, ensuring clean separation of conc
 
 ```bash
 # Clone the repository
-git clone https://github.com/YOUR_USERNAME/rustforge-rl.git
+git clone https://github.com/tjunjie1408/RustForge-RL.git
 cd rustforge-rl
 
 # Build the entire workspace
@@ -274,7 +274,7 @@ We welcome contributions of all kinds! RustForge RL is in its early stages, maki
 
 ```bash
 # Fork and clone
-git clone https://github.com/YOUR_USERNAME/rustforge-rl.git
+git clone https://github.com/tjunjie1408/RustForge-RL.git
 cd rustforge-rl
 
 # Create a feature branch
