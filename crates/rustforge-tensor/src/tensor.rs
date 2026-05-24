@@ -352,6 +352,16 @@ impl Tensor {
     /// Selects a specific index along a given axis, returning a sliced sub-tensor with reduced dimensions.
     ///
     /// Similar to NumPy's `a[3]` (along axis 0) or `np.take(a, 3, axis=1)`.
+    ///
+    /// ## Example
+    /// ```rust
+    /// use rustforge_tensor::Tensor;
+    /// let t = Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], &[2, 2]);
+    /// // Select row 1 (index 1) along axis 0
+    /// let row = t.select(0, 1).unwrap();
+    /// assert_eq!(row.shape(), &[2]);
+    /// assert_eq!(row.to_vec(), vec![3.0, 4.0]);
+    /// ```
     pub fn select(&self, axis: usize, index: usize) -> TensorResult<Tensor> {
         if axis >= self.ndim() {
             return Err(TensorError::AxisOutOfBounds {
@@ -364,6 +374,16 @@ impl Tensor {
     }
 
     /// Slices along the specified axis (similar to Python's `a[start:end]`).
+    ///
+    /// ## Example
+    /// ```rust
+    /// use rustforge_tensor::Tensor;
+    /// let t = Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], &[3, 2]);
+    /// // Slice rows 1 to 3 (exclusive) along axis 0
+    /// let sliced = t.slice_axis(0, 1, 3).unwrap();
+    /// assert_eq!(sliced.shape(), &[2, 2]);
+    /// assert_eq!(sliced.to_vec(), vec![3.0, 4.0, 5.0, 6.0]);
+    /// ```
     pub fn slice_axis(&self, axis: usize, start: usize, end: usize) -> TensorResult<Tensor> {
         if axis >= self.ndim() {
             return Err(TensorError::AxisOutOfBounds {
@@ -523,6 +543,14 @@ impl Tensor {
         }))
     }
 
+    /// SiLU (Swish) activation function: x * sigmoid(x)
+    ///
+    /// Smooth, non-monotonic function that consistently matches or outperforms ReLU on deep models.
+    pub fn silu(&self) -> Tensor {
+        let sig_x = self.sigmoid();
+        self * &sig_x
+    }
+
     /// Tanh activation function: (exp(x) - exp(-x)) / (exp(x) + exp(-x))
     ///
     /// Maps the input to the (-1, 1) range.
@@ -602,6 +630,15 @@ impl Tensor {
     ///
     /// Subtracting the maximum value (log-sum-exp trick) ensures numerical stability
     /// by avoiding exp() overflows.
+    ///
+    /// ## Example
+    /// ```rust
+    /// use rustforge_tensor::Tensor;
+    /// let t = Tensor::from_vec(vec![1.0, 1.0, 2.0, 2.0], &[2, 2]);
+    /// let s = t.softmax(1).unwrap();
+    /// assert_eq!(s.shape(), &[2, 2]);
+    /// assert_eq!(s.to_vec(), vec![0.5, 0.5, 0.5, 0.5]);
+    /// ```
     pub fn softmax(&self, axis: usize) -> TensorResult<Tensor> {
         if axis >= self.ndim() {
             return Err(TensorError::AxisOutOfBounds {
@@ -765,6 +802,19 @@ impl Tensor {
     ///
     /// ## Returns
     /// A tensor of given `shape` with values scattered at the indexed positions.
+    ///
+    /// ## Example
+    /// ```rust
+    /// use rustforge_tensor::Tensor;
+    /// let values = Tensor::from_vec(vec![10.0, 20.0], &[2, 1]);
+    /// let indices = vec![1, 0];
+    /// // Scatter values into shape [2, 3] at given indices along axis 1
+    /// let scattered = Tensor::scatter_add(&[2, 3], 1, &indices, &values).unwrap();
+    /// assert_eq!(scattered.to_vec(), vec![
+    ///     0.0, 10.0, 0.0, // batch 0: add 10.0 at index 1
+    ///     20.0, 0.0, 0.0  // batch 1: add 20.0 at index 0
+    /// ]);
+    /// ```
     pub fn scatter_add(
         shape: &[usize],
         axis: usize,

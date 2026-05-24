@@ -9,6 +9,7 @@
 //! | Activation | Range | Typical Use |
 //! |-----------|-------|-------------|
 //! | `ReLU` | [0, ∞) | Hidden layers (most common) |
+//! | `SiLU` | (-0.278, ∞) | Hidden layers, outperforms ReLU |
 //! | `Sigmoid` | (0, 1) | Binary classification output |
 //! | `Tanh` | (-1, 1) | Hidden layers, bounded output |
 //! | `Softmax` | (0, 1), sums to 1 | Multi-class classification output |
@@ -32,6 +33,25 @@ pub struct ReLU;
 impl Module for ReLU {
     fn forward(&self, input: &Variable) -> Variable {
         input.relu()
+    }
+
+    fn parameters(&self) -> Vec<Variable> {
+        vec![]
+    }
+}
+
+// SiLU: x * sigmoid(x)
+
+/// SiLU (Swish) activation function.
+///
+/// `SiLU(x) = x * sigmoid(x)`
+///
+/// Smooth, non-monotonic function that consistently matches or outperforms ReLU on deep models.
+pub struct SiLU;
+
+impl Module for SiLU {
+    fn forward(&self, input: &Variable) -> Variable {
+        input.silu()
     }
 
     fn parameters(&self) -> Vec<Variable> {
@@ -130,6 +150,17 @@ mod tests {
     }
 
     #[test]
+    fn test_silu_forward() {
+        let silu = SiLU;
+        let x = Variable::new(Tensor::from_vec(vec![0.0, 1.0], &[1, 2]), false);
+        let y = silu.forward(&x);
+        let data = y.data().to_vec();
+        assert_abs_diff_eq!(data[0], 0.0, epsilon = 1e-6);
+        // 1.0 * sigmoid(1.0) = 1.0 / (1.0 + exp(-1.0)) ≈ 0.73105858
+        assert_abs_diff_eq!(data[1], 0.731_058_6, epsilon = 1e-6);
+    }
+
+    #[test]
     fn test_sigmoid_forward() {
         let sigmoid = Sigmoid;
         let x = Variable::new(Tensor::from_vec(vec![0.0], &[1, 1]), false);
@@ -187,6 +218,7 @@ mod tests {
     #[test]
     fn test_activations_no_parameters() {
         assert!(ReLU.parameters().is_empty());
+        assert!(SiLU.parameters().is_empty());
         assert!(Sigmoid.parameters().is_empty());
         assert!(Tanh.parameters().is_empty());
         assert!(Softmax.parameters().is_empty());

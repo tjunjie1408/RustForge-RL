@@ -57,7 +57,7 @@ pub mod sequential;
 pub mod serialization;
 
 // Re-export core types for user convenience
-pub use activation::{ReLU, Sigmoid, Softmax, Tanh};
+pub use activation::{ReLU, SiLU, Sigmoid, Softmax, Tanh};
 pub use dropout::Dropout;
 pub use linear::Linear;
 pub use loss::{cross_entropy_loss, huber_loss, mse_loss};
