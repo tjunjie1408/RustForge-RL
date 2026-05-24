@@ -16,6 +16,8 @@ use smallvec::{smallvec, SmallVec};
 
 use crate::variable::Variable;
 
+pub mod export;
+
 /// Stack-allocated small vectors for GradFn results.
 /// Capacity 2 covers all unary and binary ops without heap allocation.
 pub type GradInputs = SmallVec<[Variable; 2]>;
@@ -300,6 +302,27 @@ impl GradFn for ReluGrad {
                     .mapv(|x| if x > 0.0 { 1.0 } else { 0.0 }),
             );
         smallvec![grad_output * &mask]
+    }
+}
+
+// SiLU: y = x * σ(x)
+// y' = σ(x) + x * σ'(x) = σ(x) + x * σ(x) * (1 - σ(x)) = σ(x) + y * (1 - σ(x))
+
+pub struct SiluGrad {
+    pub input: Variable,
+    pub input_data: Tensor,
+}
+
+impl GradFn for SiluGrad {
+    fn inputs(&self) -> GradInputs {
+        smallvec![self.input.clone()]
+    }
+
+    fn backward(&self, grad_output: &Tensor) -> GradOutputs {
+        let sig_x = self.input_data.sigmoid();
+        let f_x = &self.input_data * &sig_x; // This is silu(x)
+        let grad = &sig_x + &(&f_x * &(-&sig_x + 1.0));
+        smallvec![grad_output * &grad]
     }
 }
 

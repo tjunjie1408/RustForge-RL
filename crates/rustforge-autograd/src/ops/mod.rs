@@ -9,10 +9,14 @@
 //! ## Ownership Design
 //!
 //! Operators are implemented for all combinations of `&Variable` and `Variable`:
-//! ```rust,ignore
+//! ```rust
+//! use rustforge_tensor::Tensor;
+//! use rustforge_autograd::Variable;
+//! let a = Variable::new(Tensor::from_vec(vec![1.0], &[1]), true);
+//! let b = Variable::new(Tensor::from_vec(vec![2.0], &[1]), true);
 //! let c = &a + &b;   // ref + ref
-//! let d = a + &b;    // val + ref (a is consumed)
-//! let e = &a + b;    // ref + val (b is consumed)
+//! let d = a.clone() + &b;    // val + ref
+//! let e = &a + b.clone();    // ref + val
 //! let f = a + b;     // val + val
 //! ```
 
@@ -21,8 +25,8 @@ use std::ops::{Add, Div, Mul, Neg, Sub};
 
 use crate::graph::{
     AddGrad, ConcatGrad, DivGrad, ExpGrad, GatherAxisGrad, GradFn, LogGrad, MatmulGrad, MeanGrad,
-    MulGrad, NegGrad, PowGrad, ReluGrad, ScalarAddGrad, ScalarMulGrad, SigmoidGrad, SqrtGrad,
-    SubGrad, SumAxisGrad, SumGrad, TanhGrad, TransposeGrad,
+    MulGrad, NegGrad, PowGrad, ReluGrad, ScalarAddGrad, ScalarMulGrad, SigmoidGrad, SiluGrad,
+    SqrtGrad, SubGrad, SumAxisGrad, SumGrad, TanhGrad, TransposeGrad,
 };
 use crate::variable::Variable;
 
@@ -389,6 +393,22 @@ pub fn var_sigmoid(input: &Variable) -> Variable {
         None
     };
     Variable::from_grad_fn(output_data, requires_grad, grad_fn)
+}
+
+/// SiLU with gradient tracking.
+pub fn var_silu(input: &Variable) -> Variable {
+    let input_data = input.data();
+    let result_data = input_data.silu();
+    let requires_grad = input.requires_grad();
+    let grad_fn: Option<Box<dyn GradFn>> = if requires_grad {
+        Some(Box::new(SiluGrad {
+            input: input.clone(),
+            input_data: input_data.clone(),
+        }))
+    } else {
+        None
+    };
+    Variable::from_grad_fn(result_data, requires_grad, grad_fn)
 }
 
 /// Tanh with gradient tracking.

@@ -9,7 +9,7 @@
 //!
 //! ## Quick Start
 //!
-//! ```rust,ignore
+//! ```rust
 //! use rustforge_tensor::Tensor;
 //! use rustforge_autograd::{Variable, Optimizer};
 //! use rustforge_autograd::optimizer::sgd::SGD;
@@ -22,7 +22,8 @@
 //! let y = x.matmul(&w).relu().sum();
 //!
 //! // Backward pass (gradients are computed for all requires_grad variables)
-//! y.backward();
+//! let loss = y.sum();
+//! loss.backward();
 //!
 //! // Access gradients
 //! println!("dw = {:?}", w.grad());
