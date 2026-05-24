@@ -57,4 +57,9 @@ pub trait Module {
     fn is_training(&self) -> bool {
         true
     }
+
+    /// Resets the internal noise for exploration layers (e.g., NoisyLinear).
+    ///
+    /// Default is a no-op for deterministic layers.
+    fn reset_noise(&mut self) {}
 }
