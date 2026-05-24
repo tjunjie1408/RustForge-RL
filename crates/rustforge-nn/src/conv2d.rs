@@ -14,7 +14,7 @@ pub struct Conv2d {
     /// Weight tensor [out_channels, in_channels, kernel_h, kernel_w]
     pub weight: Variable,
     /// Bias vector [out_channels], None if bias is disabled
-    pub bias: Option<Variable>,
+    bias: Option<Variable>,
 
     pub in_channels: usize,
     pub out_channels: usize,
@@ -51,30 +51,11 @@ impl Module for Conv2d {
 
         let out = var_conv2d(input, &self.weight);
 
-        if let Some(b) = &self.bias {
-            // Need to broadcast bias [out_channels] to [batch, out_channels, out_h, out_w]
-            // We can reshape bias to [1, out_channels, 1, 1] and add
-            // Wait, does our autograd support broadcasting? AddOp does support it partially.
-            // Let's rely on Tensor's broadcast.
-            // Actually `var_add` supports broadcast if ndarray supports it.
-            // But we must reshape the Variable first.
-            let _b_reshaped = Variable::new(
-                b.data()
-                    .clone()
-                    .reshape(&[1, self.out_channels, 1, 1])
-                    .unwrap(),
-                b.requires_grad(),
-            );
-            // We should ideally use a reshape operation in autograd, but since bias grad just sums over batch, h, and w,
-            // we can do it directly. Wait, if we create a new Variable without grad_fn, gradients won't flow back to `b`!
-            // We need a proper bias addition or reshape operation.
-            // Since we don't have reshape grad yet, we can skip bias for now or implement bias grad.
-            // Let's implement it correctly. Actually, let's keep it simple: no bias for Conv2d in Phase C
-            // since we are just laying the foundation. Let's make it `None`.
-            out // TODO: Implement broadcasted bias addition with gradients
-        } else {
-            out
+        if self.bias.is_some() {
+            panic!("Conv2d bias is not supported yet");
         }
+
+        out
     }
 
     fn parameters(&self) -> Vec<Variable> {
@@ -97,5 +78,14 @@ mod tests {
         let y = conv.forward(&x);
 
         assert_eq!(y.shape(), vec![2, 16, 28, 28]);
+    }
+
+    #[test]
+    #[should_panic(expected = "Conv2d bias is not supported yet")]
+    fn test_conv2d_bias_panics() {
+        let mut conv = Conv2d::new(3, 16, (5, 5));
+        conv.bias = Some(Variable::new(Tensor::zeros(&[16]), false));
+        let x = Variable::new(Tensor::ones(&[2, 3, 32, 32]), false);
+        let _y = conv.forward(&x);
     }
 }

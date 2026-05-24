@@ -195,15 +195,33 @@ impl DQN {
         batch: &TransitionBatch,
         weights: Option<&Tensor>,
     ) -> (f32, Option<Vec<f32>>) {
+        let actual_size = batch.size;
+        let states_sliced = batch
+            .states
+            .slice_axis(0, 0, actual_size)
+            .expect("slice states failed");
+        let next_states_sliced = batch
+            .next_states
+            .slice_axis(0, 0, actual_size)
+            .expect("slice next_states failed");
+        let rewards_sliced = batch
+            .rewards
+            .slice_axis(0, 0, actual_size)
+            .expect("slice rewards failed");
+        let dones_sliced = batch
+            .dones
+            .slice_axis(0, 0, actual_size)
+            .expect("slice dones failed");
+
         // ── 1. Forward pass through online Q-network ──
-        let states_var = Variable::new(batch.states.clone(), false);
+        let states_var = Variable::new(states_sliced, false);
         let q_values = self.q_net.forward(&states_var); // [B, num_actions]
 
         // ── 2. Gather Q-values for taken actions ──
-        let q_taken = q_values.gather(1, &batch.actions[..batch.size]); // [B, 1]
+        let q_taken = q_values.gather(1, &batch.actions[..actual_size]); // [B, 1]
 
         // ── 3. Compute TD target (DETACHED — no gradient through target net) ──
-        let next_states_var = Variable::from_tensor(batch.next_states.clone());
+        let next_states_var = Variable::from_tensor(next_states_sliced);
         let td_target = if self.config.double_dqn {
             // Double DQN: online net selects action, target net evaluates
             // a* = argmax_a Q(s', a; θ)  (online network, but detached)
@@ -221,10 +239,10 @@ impl DQN {
                 .expect("gather failed in double DQN");
 
             // y = r + γ * Q_target(s', a*) * (1 - done)
-            let ones = Tensor::ones(batch.dones.shape());
-            let not_done = &ones - &batch.dones;
+            let ones = Tensor::ones(dones_sliced.shape());
+            let not_done = &ones - &dones_sliced;
             let discounted = &(&next_q_selected * self.config.gamma) * &not_done;
-            let target = &batch.rewards + &discounted;
+            let target = &rewards_sliced + &discounted;
             Variable::from_tensor(target) // DETACHED — from_tensor = no grad
         } else {
             // Vanilla DQN: target = r + γ * max_a' Q_target(s', a') * (1 - done)
@@ -234,10 +252,10 @@ impl DQN {
                 .max_axis(1, true)
                 .expect("max_axis failed in DQN");
 
-            let ones = Tensor::ones(batch.dones.shape());
-            let not_done = &ones - &batch.dones;
+            let ones = Tensor::ones(dones_sliced.shape());
+            let not_done = &ones - &dones_sliced;
             let discounted = &(&max_next_q * self.config.gamma) * &not_done;
-            let target = &batch.rewards + &discounted;
+            let target = &rewards_sliced + &discounted;
             Variable::from_tensor(target) // DETACHED — from_tensor = no grad
         };
 
@@ -250,7 +268,10 @@ impl DQN {
 
             // Weighted MSE: mean(weights * (q_taken - td_target)^2)
             let sq_error = &diff * &diff;
-            let weighted_sq = &sq_error * &Variable::from_tensor(w.clone());
+            let w_sliced = w
+                .slice_axis(0, 0, actual_size)
+                .expect("slice weights failed");
+            let weighted_sq = &sq_error * &Variable::from_tensor(w_sliced);
             let loss = weighted_sq.mean();
             (loss, Some(td_errors_vec))
         } else {
@@ -526,5 +547,33 @@ mod tests {
             assert!(err >= 0.0);
             assert!(err > 1e-5, "TD error should be non-zero, but got {}", err);
         }
+    }
+
+    #[test]
+    fn test_train_step_per_small_buffer() {
+        use crate::buffer::{PrioritizedReplayBuffer, TransitionBatch};
+
+        let mut dqn = make_dqn();
+
+        // Buffer has only 2 items
+        let mut per_buffer = PrioritizedReplayBuffer::new(100, 4, 0.6);
+        per_buffer.push(&[0.1, 0.2, 0.3, 0.4], 0, 1.0, &[0.5, 0.6, 0.7, 0.8], false);
+        per_buffer.push(&[0.2, 0.3, 0.4, 0.5], 1, 0.5, &[0.6, 0.7, 0.8, 0.9], true);
+
+        // Requested batch size is 10
+        let mut batch = TransitionBatch::new(10, 4);
+        let mut per_weights = Tensor::zeros(&[10, 1]);
+        let mut per_tree_indices = vec![0; 10];
+        per_buffer.sample(10, 0.4, &mut batch, &mut per_weights, &mut per_tree_indices);
+
+        assert_eq!(batch.size, 2);
+
+        // Train step with importance-sampling weights (shape [10, 1]) where batch size is 2
+        let (_loss, td_errors) = dqn.train_step(&batch, Some(&per_weights));
+        assert!(td_errors.is_some());
+        let errs = td_errors.unwrap();
+
+        // Check that returned errors matches the actual batch size
+        assert_eq!(errs.len(), 2);
     }
 }
