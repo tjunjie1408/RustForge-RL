@@ -5,9 +5,12 @@
 //! - `ContinuousReplayBuffer`: Off-policy for continuous actions (TD3, SAC).
 //! - `ContinuousRolloutBuffer`: On-policy for continuous actions (PPO Continuous).
 
+pub mod per;
 pub mod replay;
 pub mod rollout;
+pub mod sum_tree;
 
+pub use per::PrioritizedReplayBuffer;
 pub use replay::{
     ContinuousReplayBuffer, ContinuousTransitionBatch, ReplayBuffer, TransitionBatch,
 };
