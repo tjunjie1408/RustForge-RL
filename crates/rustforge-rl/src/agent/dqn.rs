@@ -67,6 +67,10 @@ pub struct DQNConfig {
     pub target_update_freq: usize,
     /// Whether to use Double DQN (decoupled action selection/evaluation).
     pub double_dqn: bool,
+    /// Whether to use Prioritized Experience Replay (PER).
+    pub use_per: bool,
+    /// Number of steps over which to anneal beta from 0.4 to 1.0.
+    pub per_beta_annealing_steps: usize,
 }
 
 impl Default for DQNConfig {
@@ -79,6 +83,8 @@ impl Default for DQNConfig {
             gamma: 0.99,
             target_update_freq: 100,
             double_dqn: false,
+            use_per: false,
+            per_beta_annealing_steps: 20000,
         }
     }
 }
@@ -299,6 +305,11 @@ impl DQN {
     pub fn target_net(&self) -> &Sequential {
         &self.target_net
     }
+
+    /// Returns a reference to the configuration.
+    pub fn config(&self) -> &DQNConfig {
+        &self.config
+    }
 }
 
 // Unit Tests
@@ -318,6 +329,8 @@ mod tests {
             gamma: 0.99,
             target_update_freq: 10,
             double_dqn: false,
+            use_per: false,
+            per_beta_annealing_steps: 20000,
         })
     }
 
@@ -401,6 +414,8 @@ mod tests {
             gamma: 0.0, // gamma=0 → target = reward (simplest case)
             target_update_freq: 1000,
             double_dqn: false,
+            use_per: false,
+            per_beta_annealing_steps: 20000,
         });
 
         // Single transition: state=[1,0], action=0, reward=1.0, done=true
@@ -480,6 +495,36 @@ mod tests {
             for (qv, tv) in qd.iter().zip(td.iter()) {
                 assert_abs_diff_eq!(qv, tv, epsilon = 1e-8);
             }
+        }
+    }
+
+    #[test]
+    fn test_train_step_with_per() {
+        use crate::buffer::{PrioritizedReplayBuffer, TransitionBatch};
+
+        let mut dqn = make_dqn();
+
+        let mut per_buffer = PrioritizedReplayBuffer::new(100, 4, 0.6);
+        per_buffer.push(&[0.1, 0.2, 0.3, 0.4], 0, 1.0, &[0.5, 0.6, 0.7, 0.8], false);
+        per_buffer.push(&[0.2, 0.3, 0.4, 0.5], 1, 0.5, &[0.6, 0.7, 0.8, 0.9], true);
+
+        let mut batch = TransitionBatch::new(2, 4);
+        let mut per_weights = Tensor::zeros(&[2, 1]);
+        let mut per_tree_indices = vec![0; 2];
+        per_buffer.sample(2, 0.4, &mut batch, &mut per_weights, &mut per_tree_indices);
+
+        // Train step with importance-sampling weights
+        let (_loss, td_errors) = dqn.train_step(&batch, Some(&per_weights));
+        assert!(td_errors.is_some());
+        let errs = td_errors.unwrap();
+
+        // CRITICAL VERIFICATION: returned td_errors length matches batch size
+        assert_eq!(errs.len(), 2);
+
+        // CRITICAL VERIFICATION: returned td_errors are positive and non-zero
+        for &err in errs.iter() {
+            assert!(err >= 0.0);
+            assert!(err > 1e-5, "TD error should be non-zero, but got {}", err);
         }
     }
 }
