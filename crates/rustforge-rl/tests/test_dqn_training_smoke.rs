@@ -107,7 +107,7 @@ fn dqn_cartpole_training_smoke_runs_and_produces_finite_loss() {
 
             if buffer.len() >= warmup_steps {
                 buffer.sample(8, &mut batch);
-                let loss = agent.train_step(&batch);
+                let (loss, _) = agent.train_step(&batch, None);
                 assert!(loss.is_finite());
                 last_loss = Some(loss);
                 train_steps += 1;

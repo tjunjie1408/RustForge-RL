@@ -194,6 +194,165 @@ impl Environment for MountainCarContinuous {
     }
 }
 
+// ─── Discrete MountainCar ───────────────────────────────────────────────────
+
+/// Discrete action for the MountainCar environment.
+///
+/// Maps directly to Gymnasium's MountainCar-v0 action space:
+/// - `Left` (0): Push left
+/// - `Idle` (1): No push
+/// - `Right` (2): Push right
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DiscreteMountainCarAction {
+    Left = 0,
+    #[default]
+    Idle = 1,
+    Right = 2,
+}
+
+impl TryFrom<usize> for DiscreteMountainCarAction {
+    type Error = &'static str;
+
+    fn try_from(value: usize) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(DiscreteMountainCarAction::Left),
+            1 => Ok(DiscreteMountainCarAction::Idle),
+            2 => Ok(DiscreteMountainCarAction::Right),
+            _ => Err("Invalid MountainCar action index (expected 0, 1, or 2)"),
+        }
+    }
+}
+
+impl From<DiscreteMountainCarAction> for usize {
+    fn from(action: DiscreteMountainCarAction) -> usize {
+        action as usize
+    }
+}
+
+/// Discrete MountainCar environment following Gymnasium MountainCar-v0.
+///
+/// Unlike [`MountainCarContinuous`], this version uses a discrete action space
+/// with three actions: push left, no push, push right.
+///
+/// # Physics
+///
+/// The physics update matches Gymnasium's MountainCar-v0:
+/// ```text
+/// velocity_{t+1} = velocity_t + (action - 1) * force - cos(3 * position_t) * gravity
+/// position_{t+1} = position_t + velocity_{t+1}
+/// ```
+/// Where `force = 0.001` and `gravity = 0.0025`.
+///
+/// # Reward
+///
+/// - `-1.0` per step (encourages reaching the goal quickly).
+///
+/// # Termination
+///
+/// The episode terminates when `position >= 0.5`.
+pub struct MountainCar {
+    /// Current state: [position, velocity]
+    state: [f32; 2],
+    /// Internal PRNG for reproducibility
+    rng: StdRng,
+    /// Current step count within the episode
+    steps: usize,
+    /// Maximum steps before truncation
+    max_steps: usize,
+}
+
+// Discrete MountainCar physics constants (Gymnasium MountainCar-v0)
+const DISCRETE_FORCE: f32 = 0.001;
+const DISCRETE_GRAVITY: f32 = 0.0025;
+const DISCRETE_GOAL_POS: f32 = 0.5;
+
+impl MountainCar {
+    /// Create a new discrete MountainCar environment.
+    ///
+    /// Default `max_steps` is 200 (matching Gymnasium).
+    pub fn new() -> Self {
+        MountainCar {
+            state: [0.0; 2],
+            rng: StdRng::from_entropy(),
+            steps: 0,
+            max_steps: 200,
+        }
+    }
+
+    /// Create a discrete MountainCar with a custom maximum step limit.
+    pub fn with_max_steps(max_steps: usize) -> Self {
+        MountainCar {
+            state: [0.0; 2],
+            rng: StdRng::from_entropy(),
+            steps: 0,
+            max_steps,
+        }
+    }
+
+    /// Get mutable reference to internal state for testing.
+    pub fn state_mut(&mut self) -> &mut [f32; 2] {
+        &mut self.state
+    }
+}
+
+impl Default for MountainCar {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Environment for MountainCar {
+    type Obs = [f32; 2];
+    type Act = DiscreteMountainCarAction;
+    type Info = ();
+
+    fn reset(&mut self, seed: Option<u64>) -> (Self::Obs, Self::Info) {
+        if let Some(s) = seed {
+            self.rng = StdRng::seed_from_u64(s);
+        }
+        // Position uniformly sampled from [-0.6, -0.4], velocity = 0.0
+        let position = self.rng.gen_range(-0.6f32..=-0.4f32);
+        self.state = [position, 0.0];
+        self.steps = 0;
+        (self.state, ())
+    }
+
+    fn step(&mut self, action: Self::Act) -> (Self::Obs, f32, bool, bool, Self::Info) {
+        let [position, velocity] = self.state;
+        let action_val = action as i32 - 1; // Left=-1, Idle=0, Right=1
+
+        // Physics update (Gymnasium MountainCar-v0)
+        let new_velocity = (velocity + action_val as f32 * DISCRETE_FORCE
+            - (3.0 * position).cos() * DISCRETE_GRAVITY)
+            .clamp(-MAX_SPEED, MAX_SPEED);
+        let new_position = (position + new_velocity).clamp(MIN_POS, MAX_POS);
+
+        // Left wall: reset velocity to zero
+        let new_velocity = if new_position == MIN_POS {
+            0.0
+        } else {
+            new_velocity
+        };
+
+        self.state = [new_position, new_velocity];
+        self.steps += 1;
+
+        let terminated = new_position >= DISCRETE_GOAL_POS;
+        let truncated = !terminated && self.steps >= self.max_steps;
+        let reward = -1.0; // Constant negative reward per step
+
+        (self.state, reward, terminated, truncated, ())
+    }
+
+    fn action_space(&self) -> Space {
+        Space::Discrete(3)
+    }
+
+    fn observation_space(&self) -> Space {
+        Space::continuous(vec![MIN_POS, -MAX_SPEED], vec![MAX_POS, MAX_SPEED])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -333,5 +492,109 @@ mod tests {
             reward_large,
             reward_small
         );
+    }
+
+    // ─── Discrete MountainCar tests ───
+
+    #[test]
+    fn discrete_action_conversion() {
+        assert_eq!(
+            DiscreteMountainCarAction::try_from(0),
+            Ok(DiscreteMountainCarAction::Left)
+        );
+        assert_eq!(
+            DiscreteMountainCarAction::try_from(1),
+            Ok(DiscreteMountainCarAction::Idle)
+        );
+        assert_eq!(
+            DiscreteMountainCarAction::try_from(2),
+            Ok(DiscreteMountainCarAction::Right)
+        );
+        assert!(DiscreteMountainCarAction::try_from(3).is_err());
+
+        assert_eq!(usize::from(DiscreteMountainCarAction::Left), 0);
+        assert_eq!(usize::from(DiscreteMountainCarAction::Idle), 1);
+        assert_eq!(usize::from(DiscreteMountainCarAction::Right), 2);
+    }
+
+    #[test]
+    fn discrete_default_is_idle() {
+        assert_eq!(
+            DiscreteMountainCarAction::default(),
+            DiscreteMountainCarAction::Idle
+        );
+    }
+
+    #[test]
+    fn discrete_reset_position_range() {
+        let mut env = MountainCar::new();
+        for seed in 0..50 {
+            let (obs, _) = env.reset(Some(seed));
+            assert!(
+                obs[0] >= -0.6 && obs[0] <= -0.4,
+                "seed {}: position {} not in [-0.6, -0.4]",
+                seed,
+                obs[0]
+            );
+            assert_abs_diff_eq!(obs[1], 0.0, epsilon = 1e-9);
+        }
+    }
+
+    #[test]
+    fn discrete_right_action_increases_velocity() {
+        let mut env = MountainCar::new();
+        env.reset(Some(42));
+        *env.state_mut() = [-0.5, 0.0];
+
+        // Step with Right action
+        let (obs_right, _, _, _, _) = env.step(DiscreteMountainCarAction::Right);
+
+        // Step with Left action from same state
+        env.reset(Some(42));
+        *env.state_mut() = [-0.5, 0.0];
+        let (obs_left, _, _, _, _) = env.step(DiscreteMountainCarAction::Left);
+
+        // Right should produce higher velocity than Left
+        assert!(
+            obs_right[1] > obs_left[1],
+            "Right action should give higher velocity: right={}, left={}",
+            obs_right[1],
+            obs_left[1]
+        );
+    }
+
+    #[test]
+    fn discrete_goal_terminates() {
+        let mut env = MountainCar::new();
+        env.reset(Some(0));
+        // Place car just below discrete goal with positive velocity
+        *env.state_mut() = [0.49, 0.05];
+        let (_, reward, terminated, _, _) = env.step(DiscreteMountainCarAction::Right);
+        assert!(terminated, "should terminate when position >= 0.5");
+        assert_abs_diff_eq!(reward, -1.0, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn discrete_truncation_at_max_steps() {
+        let mut env = MountainCar::with_max_steps(5);
+        env.reset(Some(0));
+        let mut truncated = false;
+        for _ in 0..5 {
+            let result = env.step(DiscreteMountainCarAction::Idle);
+            truncated = result.3;
+        }
+        assert!(truncated, "should be truncated after max_steps");
+    }
+
+    #[test]
+    fn discrete_reward_is_constant_negative() {
+        let mut env = MountainCar::new();
+        env.reset(Some(42));
+        for _ in 0..10 {
+            let (_, reward, terminated, _, _) = env.step(DiscreteMountainCarAction::Idle);
+            if !terminated {
+                assert_abs_diff_eq!(reward, -1.0, epsilon = 1e-9);
+            }
+        }
     }
 }

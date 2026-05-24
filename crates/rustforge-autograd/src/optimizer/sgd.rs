@@ -24,8 +24,15 @@ use super::Optimizer;
 /// SGD optimizer with optional momentum.
 ///
 /// ## Example
-/// ```rust,ignore
-/// let mut sgd = SGD::new(vec![weight.clone(), bias.clone()], 0.01, 0.9);
+/// ```rust
+/// use rustforge_tensor::Tensor;
+/// use rustforge_autograd::{Variable, optimizer::{Optimizer, sgd::SGD}};
+///
+/// let weight = Variable::new(Tensor::zeros(&[2, 2]), true);
+/// let mut sgd = SGD::new(vec![weight.clone()], 0.01, 0.9);
+///
+/// // Simulate a backward pass
+/// let loss = weight.sum();
 /// loss.backward();
 /// sgd.step();
 /// ```

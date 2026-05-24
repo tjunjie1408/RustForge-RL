@@ -2,9 +2,10 @@
 //!
 //! Optimizers adjust model parameters using computed gradients to minimize
 //! a loss function. This module provides the `Optimizer` trait and concrete
-//! implementations: SGD (with optional momentum) and Adam.
+//! implementations: SGD (with optional momentum), Adam, and RMSprop.
 
 pub mod adam;
+pub mod rmsprop;
 pub mod sgd;
 
 /// Trait for parameter optimizers.
@@ -13,12 +14,16 @@ pub mod sgd;
 /// them based on their accumulated gradients.
 ///
 /// ## Typical Usage
-/// ```rust,ignore
-/// let mut optimizer = SGD::new(vec![w.clone(), b.clone()], 0.01, 0.0);
+/// ```rust
+/// use rustforge_tensor::Tensor;
+/// use rustforge_autograd::{Variable, optimizer::{Optimizer, sgd::SGD}};
 ///
-/// for epoch in 0..100 {
+/// let w = Variable::new(Tensor::zeros(&[2, 2]), true);
+/// let mut optimizer = SGD::new(vec![w.clone()], 0.01, 0.0);
+///
+/// for epoch in 0..2 {
 ///     optimizer.zero_grad();
-///     let loss = compute_loss(&w, &b, &data);
+///     let loss = w.sum();
 ///     loss.backward();
 ///     optimizer.step();
 /// }

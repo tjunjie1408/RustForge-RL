@@ -168,13 +168,27 @@ impl DQN {
     /// 3. Compute TD target (no grad):
     ///    - Vanilla DQN: `y = r + γ · max_a' Q_target(s', a') · (1 - done)`
     ///    - Double DQN:  `a* = argmax Q(s', ·; θ)`, `y = r + γ · Q_target(s', a*; θ⁻) · (1 - done)`
-    /// 4. Loss = MSE(q_taken, y)
+    /// 4. Loss = MSE(q_taken, y), optionally weighted per-sample for prioritized replay
     /// 5. Backward + optimizer step
     /// 6. Periodically hard-copy online → target
     ///
+    /// ## Arguments
+    /// - `batch`: A sampled batch of transitions from the replay buffer.
+    /// - `weights`: Optional importance-sampling weights for prioritized replay.
+    ///   Shape should be `[B, 1]` matching the batch size. When `None`, uniform
+    ///   (standard MSE) loss is used.
+    ///
     /// ## Returns
-    /// The scalar loss value for logging.
-    pub fn train_step(&mut self, batch: &TransitionBatch) -> f32 {
+    /// A tuple of `(loss, td_errors)` where:
+    /// - `loss`: The scalar loss value for logging.
+    /// - `td_errors`: When `weights` is `Some`, returns `Some(Vec<f32>)` of absolute
+    ///   TD errors (one per sample) for updating replay priorities. When `weights`
+    ///   is `None`, returns `None`.
+    pub fn train_step(
+        &mut self,
+        batch: &TransitionBatch,
+        weights: Option<&Tensor>,
+    ) -> (f32, Option<Vec<f32>>) {
         // ── 1. Forward pass through online Q-network ──
         let states_var = Variable::new(batch.states.clone(), false);
         let q_values = self.q_net.forward(&states_var); // [B, num_actions]
@@ -221,8 +235,23 @@ impl DQN {
             Variable::from_tensor(target) // DETACHED — from_tensor = no grad
         };
 
-        // ── 4. Compute MSE loss ──
-        let loss = mse_loss(&q_taken, &td_target);
+        // ── 4. Compute loss (optionally weighted) and TD errors ──
+        let diff = &q_taken - &td_target;
+        let (loss, td_errors) = if let Some(w) = weights {
+            // Compute absolute TD errors from raw tensor data for priority updates
+            let diff_data = diff.data();
+            let td_errors_vec: Vec<f32> = diff_data.to_vec().iter().map(|x| x.abs()).collect();
+
+            // Weighted MSE: mean(weights * (q_taken - td_target)^2)
+            let sq_error = &diff * &diff;
+            let weighted_sq = &sq_error * &Variable::from_tensor(w.clone());
+            let loss = weighted_sq.mean();
+            (loss, Some(td_errors_vec))
+        } else {
+            // Standard (uniform) MSE loss
+            let loss = mse_loss(&q_taken, &td_target);
+            (loss, None)
+        };
         let loss_val = loss.data().item();
 
         // ── 5. Backward pass + optimizer step ──
@@ -239,7 +268,7 @@ impl DQN {
             self.update_target();
         }
 
-        loss_val
+        (loss_val, td_errors)
     }
 
     /// Hard-copies all parameters from online → target network.
@@ -337,7 +366,8 @@ mod tests {
         buffer.sample(1, &mut batch);
 
         // Train one step
-        let _loss = dqn.train_step(&batch);
+        let (_loss, td_errors) = dqn.train_step(&batch, None);
+        assert!(td_errors.is_none()); // uniform replay returns None
 
         // CRITICAL: online network params should have gradients
         for (i, p) in dqn.q_net.parameters().iter().enumerate() {
@@ -380,12 +410,13 @@ mod tests {
         let mut batch = crate::buffer::TransitionBatch::new(1, 2);
         buffer.sample(1, &mut batch);
 
-        let first_loss = dqn.train_step(&batch);
+        let (first_loss, _) = dqn.train_step(&batch, None);
         let mut last_loss = first_loss;
         for _ in 0..100 {
             // Re-sample same transition (buffer has only 1)
             buffer.sample(1, &mut batch);
-            last_loss = dqn.train_step(&batch);
+            let (l, _) = dqn.train_step(&batch, None);
+            last_loss = l;
         }
 
         assert!(
@@ -419,7 +450,7 @@ mod tests {
         // Train a few steps (without hitting target_update_freq)
         for _ in 0..5 {
             buffer.sample(4, &mut batch);
-            dqn.train_step(&batch);
+            dqn.train_step(&batch, None);
         }
 
         // After training, online params should differ from target
