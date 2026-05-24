@@ -255,7 +255,27 @@ mod classification {
             Box::new(Linear::new(8, 1)),
             Box::new(Sigmoid),
         ]);
-        let mut opt = Adam::new(model.parameters(), 0.01);
+        let params = model.parameters();
+        params[0].set_data(Tensor::from_vec(
+            vec![
+                1.0, 1.0, //
+                1.0, 0.0, //
+                0.0, 1.0, //
+                -1.0, -1.0, //
+                -1.0, 0.0, //
+                0.0, -1.0, //
+                0.5, -0.5, //
+                -0.5, 0.5,
+            ],
+            &[8, 2],
+        ));
+        params[1].set_data(Tensor::from_vec(
+            vec![-1.5, 0.1, 0.1, 1.5, 1.0, 1.0, 0.0, 0.0],
+            &[8],
+        ));
+        params[2].set_data(Tensor::zeros(&[1, 8]));
+        params[3].set_data(Tensor::zeros(&[1]));
+        let mut opt = Adam::new(params, 0.01);
 
         // AND gate
         let inputs = Variable::new(
@@ -284,7 +304,24 @@ mod classification {
             Box::new(ReLU),
             Box::new(Linear::new(8, 2)),
         ]);
-        let mut opt = Adam::new(model.parameters(), 0.01);
+        let params = model.parameters();
+        params[0].set_data(Tensor::from_vec(
+            vec![
+                1.0, 1.0, //
+                1.0, 0.0, //
+                0.0, 1.0, //
+                -1.0, -1.0, //
+                -1.0, 0.0, //
+                0.0, -1.0, //
+                0.5, -0.5, //
+                -0.5, 0.5,
+            ],
+            &[8, 2],
+        ));
+        params[1].set_data(Tensor::from_vec(vec![0.1; 8], &[8]));
+        params[2].set_data(Tensor::zeros(&[2, 8]));
+        params[3].set_data(Tensor::zeros(&[2]));
+        let mut opt = Adam::new(params, 0.01);
 
         let inputs = Variable::new(
             Tensor::from_vec(vec![0.0, 0.0, 0.1, 0.1, 0.9, 0.9, 1.0, 1.0], &[4, 2]),
