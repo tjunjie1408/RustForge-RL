@@ -23,6 +23,8 @@ fn main() {
         gamma: 0.99,
         target_update_freq: 100,
         double_dqn: true,
+        use_per: false,
+        per_beta_annealing_steps: 20000,
     };
 
     train_dqn(env, config, 50, 500, Some("dqn_cartpole_metrics.csv"));

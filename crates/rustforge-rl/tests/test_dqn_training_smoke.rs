@@ -74,6 +74,8 @@ fn dqn_cartpole_training_smoke_runs_and_produces_finite_loss() {
         gamma: 0.99,
         target_update_freq: 10,
         double_dqn: false,
+        use_per: false,
+        per_beta_annealing_steps: 20000,
     });
     let explorer = EpsilonGreedy::new(0.2, 0.05, 100);
     let mut buffer = ReplayBuffer::new(256, 4);
@@ -125,4 +127,25 @@ fn dqn_cartpole_training_smoke_runs_and_produces_finite_loss() {
     assert!(train_steps > 0);
     assert!(last_loss.is_some());
     assert!(total_reward.is_finite());
+}
+
+#[test]
+fn dqn_cartpole_training_smoke_runs_with_per() {
+    use rustforge_rl::agent::train_dqn;
+
+    let env = CartPole::with_max_steps(25);
+    let config = DQNConfig {
+        obs_dim: 4,
+        num_actions: 2,
+        hidden_dim: 16,
+        lr: 1e-3,
+        gamma: 0.99,
+        target_update_freq: 10,
+        double_dqn: true,
+        use_per: true,
+        per_beta_annealing_steps: 20000,
+    };
+
+    let agent = train_dqn(env, config, 2, 25, None);
+    assert!(agent.config().use_per);
 }
