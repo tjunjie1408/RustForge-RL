@@ -211,3 +211,136 @@ where
         &self.obs_buffer
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::env::spaces::Space;
+
+    #[derive(Clone, Copy)]
+    struct MockAction;
+
+    struct MockEnv {
+        step_count: usize,
+        max_steps: usize,
+        reset_count: usize,
+    }
+
+    impl MockEnv {
+        fn new(max_steps: usize) -> Self {
+            Self {
+                step_count: 0,
+                max_steps,
+                reset_count: 0,
+            }
+        }
+    }
+
+    impl Environment for MockEnv {
+        type Obs = [f32; 1];
+        type Act = MockAction;
+        type Info = ();
+
+        fn reset(&mut self, _seed: Option<u64>) -> (Self::Obs, Self::Info) {
+            self.reset_count += 1;
+            self.step_count = 0;
+            ([1.0], ())
+        }
+
+        fn step(&mut self, _action: Self::Act) -> (Self::Obs, f32, bool, bool, Self::Info) {
+            self.step_count += 1;
+            let terminated = self.step_count >= self.max_steps;
+
+            ([2.0], 1.5, terminated, false, ())
+        }
+
+        fn action_space(&self) -> Space {
+            Space::discrete(1)
+        }
+
+        fn observation_space(&self) -> Space {
+            Space::continuous(vec![0.0], vec![10.0])
+        }
+    }
+
+    #[test]
+    fn test_sync_vector_env_new() {
+        let envs = vec![MockEnv::new(2), MockEnv::new(2), MockEnv::new(2)];
+        let vec_env = SyncVectorEnv::new(envs);
+
+        assert_eq!(vec_env.num_envs(), 3);
+        assert_eq!(vec_env.obs_dim(), 1);
+        assert_eq!(vec_env.obs_buffer.len(), 3); // 3 envs * 1 dim
+        assert_eq!(vec_env.reward_buffer.len(), 3);
+        assert_eq!(vec_env.terminated_buffer.len(), 3);
+        assert_eq!(vec_env.truncated_buffer.len(), 3);
+        assert_eq!(vec_env.terminal_obs_buffer.len(), 3);
+    }
+
+    #[test]
+    fn test_sync_vector_env_reset_all() {
+        let envs = vec![MockEnv::new(2), MockEnv::new(2)];
+        let mut vec_env = SyncVectorEnv::new(envs);
+
+        let obs = vec_env.reset_all(Some(&[42, 43]));
+
+        // Check if observations are correctly written to the buffer
+        // MockEnv returns [1.0] on reset
+        assert_eq!(obs, &[1.0, 1.0]);
+        assert_eq!(vec_env.obs_buffer, &[1.0, 1.0]);
+
+        // Verify reset_count incremented in inner envs
+        assert_eq!(vec_env.envs[0].reset_count, 1);
+        assert_eq!(vec_env.envs[1].reset_count, 1);
+    }
+
+    #[test]
+    fn test_sync_vector_env_step_batch() {
+        // Create 2 mock envs: Env 0 terminates at step 1, Env 1 terminates at step 2
+        let envs = vec![MockEnv::new(1), MockEnv::new(2)];
+        let mut vec_env = SyncVectorEnv::new(envs);
+
+        vec_env.reset_all(None);
+
+        let actions = vec![MockAction, MockAction];
+
+        // Step 1
+        let result = vec_env.step_batch(&actions);
+
+        // Env 0: step_count=1 (max=1) -> terminated
+        // Env 1: step_count=1 (max=2) -> not terminated
+        assert_eq!(result.terminated, &[true, false]);
+        assert_eq!(result.rewards, &[1.5, 1.5]);
+
+        // Since Env 0 terminated, its terminal obs should be Some([2.0])
+        // It then auto-resets, so the active obs buffer should have the new reset obs ([1.0])
+        assert_eq!(result.terminal_obs[0], Some([2.0]));
+        assert_eq!(result.obs[0], 1.0); // Env 0 reset obs
+
+        // Env 1 didn't terminate, so it gets None and the stepped obs ([2.0])
+        assert_eq!(result.terminal_obs[1], None);
+        assert_eq!(result.obs[1], 2.0); // Env 1 step obs
+
+        // Verify env reset counts
+        assert_eq!(vec_env.envs[0].reset_count, 2); // Initial reset + Auto-reset
+        assert_eq!(vec_env.envs[1].reset_count, 1); // Initial reset only
+
+        // Step 2
+        let result = vec_env.step_batch(&actions);
+
+        // Env 0: step_count=1 (since it was reset) -> terminated (max=1)
+        // Env 1: step_count=2 -> terminated (max=2)
+        assert_eq!(result.terminated, &[true, true]);
+
+        // Both terminated, both should have terminal obs [2.0]
+        assert_eq!(result.terminal_obs[0], Some([2.0]));
+        assert_eq!(result.terminal_obs[1], Some([2.0]));
+
+        // Both should auto-reset and show [1.0] in the active buffer
+        assert_eq!(result.obs, &[1.0, 1.0]);
+
+        // Verify env reset counts
+        assert_eq!(vec_env.envs[0].reset_count, 3);
+        assert_eq!(vec_env.envs[1].reset_count, 2);
+    }
+}
