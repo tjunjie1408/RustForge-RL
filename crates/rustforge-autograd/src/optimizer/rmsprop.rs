@@ -213,4 +213,57 @@ mod tests {
         assert!((a_final - true_a).abs() < 1e-3, "a: {}", a_final);
         assert!((b_final - true_b).abs() < 1e-3, "b: {}", b_final);
     }
+
+    #[test]
+    fn test_rmsprop_set_lr() {
+        let w = Variable::new(Tensor::from_vec(vec![1.0], &[1]), true);
+        w.accumulate_grad(&Tensor::from_vec(vec![2.0], &[1]));
+
+        let mut opt = RMSprop::new(vec![w.clone()], 0.1, 0.5, 0.0, None);
+        assert_eq!(opt.lr(), 0.1, "Initial learning rate should be 0.1");
+
+        opt.set_lr(0.2);
+        assert_eq!(opt.lr(), 0.2, "Updated learning rate should be 0.2");
+
+        // With lr=0.2, alpha=0.5, grad=2.0
+        // v = 0.5 * 0 + 0.5 * 4 = 2.0
+        // step = grad / sqrt(v) = 2.0 / sqrt(2.0) = sqrt(2.0) = 1.4142135
+        // w = 1.0 - 0.2 * 1.4142135 = 0.7171573
+        opt.step();
+
+        let new_w = w.data().to_vec()[0];
+        assert!((new_w - 0.7171573).abs() < 1e-5, "Expected parameter value after step to be 0.7171573, got {}", new_w);
+    }
+
+    #[test]
+    fn test_rmsprop_zero_grad() {
+        let w1 = Variable::new(Tensor::from_vec(vec![1.0], &[1]), true);
+        let w2 = Variable::new(Tensor::from_vec(vec![2.0], &[1]), true);
+        w1.accumulate_grad(&Tensor::from_vec(vec![2.0], &[1]));
+        w2.accumulate_grad(&Tensor::from_vec(vec![3.0], &[1]));
+
+        let mut opt = RMSprop::new(vec![w1.clone(), w2.clone()], 0.1, 0.5, 0.0, None);
+
+        assert!(w1.grad().is_some(), "w1 should have a gradient before zero_grad");
+        assert!(w2.grad().is_some(), "w2 should have a gradient before zero_grad");
+
+        opt.zero_grad();
+
+        assert!(w1.grad().is_none(), "w1 gradient should be cleared after zero_grad");
+        assert!(w2.grad().is_none(), "w2 gradient should be cleared after zero_grad");
+    }
+
+    #[test]
+    fn test_rmsprop_no_grad_safety() {
+        let w = Variable::new(Tensor::from_vec(vec![1.5], &[1]), true);
+        let mut opt = RMSprop::new(vec![w.clone()], 0.1, 0.5, 0.0, None);
+
+        assert!(w.grad().is_none(), "w should not have any gradient initially");
+
+        // Step should be a no-op for w
+        opt.step();
+
+        let w_val = w.data().to_vec()[0];
+        assert_eq!(w_val, 1.5, "w data should remain unchanged when there is no gradient");
+    }
 }
