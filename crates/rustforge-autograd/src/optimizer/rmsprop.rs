@@ -232,7 +232,11 @@ mod tests {
         opt.step();
 
         let new_w = w.data().to_vec()[0];
-        assert!((new_w - 0.7171573).abs() < 1e-5, "Expected parameter value after step to be 0.7171573, got {}", new_w);
+        assert!(
+            (new_w - 0.7171573).abs() < 1e-5,
+            "Expected parameter value after step to be 0.7171573, got {}",
+            new_w
+        );
     }
 
     #[test]
@@ -244,13 +248,25 @@ mod tests {
 
         let mut opt = RMSprop::new(vec![w1.clone(), w2.clone()], 0.1, 0.5, 0.0, None);
 
-        assert!(w1.grad().is_some(), "w1 should have a gradient before zero_grad");
-        assert!(w2.grad().is_some(), "w2 should have a gradient before zero_grad");
+        assert!(
+            w1.grad().is_some(),
+            "w1 should have a gradient before zero_grad"
+        );
+        assert!(
+            w2.grad().is_some(),
+            "w2 should have a gradient before zero_grad"
+        );
 
         opt.zero_grad();
 
-        assert!(w1.grad().is_none(), "w1 gradient should be cleared after zero_grad");
-        assert!(w2.grad().is_none(), "w2 gradient should be cleared after zero_grad");
+        assert!(
+            w1.grad().is_none(),
+            "w1 gradient should be cleared after zero_grad"
+        );
+        assert!(
+            w2.grad().is_none(),
+            "w2 gradient should be cleared after zero_grad"
+        );
     }
 
     #[test]
@@ -258,12 +274,18 @@ mod tests {
         let w = Variable::new(Tensor::from_vec(vec![1.5], &[1]), true);
         let mut opt = RMSprop::new(vec![w.clone()], 0.1, 0.5, 0.0, None);
 
-        assert!(w.grad().is_none(), "w should not have any gradient initially");
+        assert!(
+            w.grad().is_none(),
+            "w should not have any gradient initially"
+        );
 
         // Step should be a no-op for w
         opt.step();
 
         let w_val = w.data().to_vec()[0];
-        assert_eq!(w_val, 1.5, "w data should remain unchanged when there is no gradient");
+        assert_eq!(
+            w_val, 1.5,
+            "w data should remain unchanged when there is no gradient"
+        );
     }
 }
