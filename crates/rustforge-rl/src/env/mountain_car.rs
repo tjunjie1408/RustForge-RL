@@ -597,4 +597,58 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn test_discrete_action_try_from_invalid_usize() {
+        assert!(
+            DiscreteMountainCarAction::try_from(3).is_err(),
+            "Expected 3 to be an invalid action index"
+        );
+        assert!(
+            DiscreteMountainCarAction::try_from(4).is_err(),
+            "Expected 4 to be an invalid action index"
+        );
+        assert!(
+            DiscreteMountainCarAction::try_from(100).is_err(),
+            "Expected 100 to be an invalid action index"
+        );
+        assert!(
+            DiscreteMountainCarAction::try_from(usize::MAX).is_err(),
+            "Expected usize::MAX to be an invalid action index"
+        );
+        assert_eq!(
+            DiscreteMountainCarAction::try_from(0),
+            Ok(DiscreteMountainCarAction::Left),
+            "Expected 0 to map to DiscreteMountainCarAction::Left"
+        );
+        assert_eq!(
+            DiscreteMountainCarAction::try_from(1),
+            Ok(DiscreteMountainCarAction::Idle),
+            "Expected 1 to map to DiscreteMountainCarAction::Idle"
+        );
+        assert_eq!(
+            DiscreteMountainCarAction::try_from(2),
+            Ok(DiscreteMountainCarAction::Right),
+            "Expected 2 to map to DiscreteMountainCarAction::Right"
+        );
+    }
+
+    #[test]
+    fn test_discrete_action_roundtrip() {
+        let variants = [
+            DiscreteMountainCarAction::Left,
+            DiscreteMountainCarAction::Idle,
+            DiscreteMountainCarAction::Right,
+        ];
+        for action in variants {
+            let val = usize::from(action);
+            let roundtripped = DiscreteMountainCarAction::try_from(val);
+            assert_eq!(
+                roundtripped,
+                Ok(action),
+                "Roundtrip failed for variant {:?}",
+                action
+            );
+        }
+    }
 }
