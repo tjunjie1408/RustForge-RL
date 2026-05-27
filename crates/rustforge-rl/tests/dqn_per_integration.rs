@@ -172,11 +172,16 @@ fn test_dqn_per_vs_uniform_replay_smoke() {
 
         // Use average of first 5 and last 5 episodes to reduce variance in flaky exploration
         let first_uniform_reward = uniform_rewards[..5].iter().sum::<f32>() / 5.0;
-        let final_uniform_reward = uniform_rewards[uniform_rewards.len() - 5..].iter().sum::<f32>() / 5.0;
+        let final_uniform_reward = uniform_rewards[uniform_rewards.len() - 5..]
+            .iter()
+            .sum::<f32>()
+            / 5.0;
         let first_per_reward = per_rewards[..5].iter().sum::<f32>() / 5.0;
         let final_per_reward = per_rewards[per_rewards.len() - 5..].iter().sum::<f32>() / 5.0;
 
-        if final_uniform_reward >= first_uniform_reward * 0.9 && final_per_reward >= first_per_reward * 0.9 {
+        if final_uniform_reward >= first_uniform_reward * 0.9
+            && final_per_reward >= first_per_reward * 0.9
+        {
             // Assert both runs completed successfully
             assert_eq!(
                 uniform_rewards.len(),
