@@ -1,28 +1,40 @@
-use rustforge_rl::env::{Environment, Pendulum, PendulumAction};
-use rustforge_rl::env::pendulum::{angle_normalize, compute_reward};
 use approx::assert_relative_eq;
+use rustforge_rl::env::pendulum::{angle_normalize, compute_reward};
+use rustforge_rl::env::{Environment, Pendulum, PendulumAction};
 
 #[test]
 fn pendulum_reset_returns_valid_obs() {
     let mut env = Pendulum::new();
     let (obs, _) = env.reset(Some(42));
-    
+
     // [cos(θ), sin(θ), θ̇]
-    assert!(obs[0].abs() <= 1.0 + 1e-5, "cos(θ) out of range: {}", obs[0]);
-    assert!(obs[1].abs() <= 1.0 + 1e-5, "sin(θ) out of range: {}", obs[1]);
-    assert!(obs[2].abs() <= 1.0 + 1e-5, "initial θ̇ out of range: {}", obs[2]);
+    assert!(
+        obs[0].abs() <= 1.0 + 1e-5,
+        "cos(θ) out of range: {}",
+        obs[0]
+    );
+    assert!(
+        obs[1].abs() <= 1.0 + 1e-5,
+        "sin(θ) out of range: {}",
+        obs[1]
+    );
+    assert!(
+        obs[2].abs() <= 1.0 + 1e-5,
+        "initial θ̇ out of range: {}",
+        obs[2]
+    );
 }
 
 #[test]
 fn pendulum_obs_unit_circle_invariant() {
     let mut env = Pendulum::new();
-    
+
     // Test for multiple resets and steps
     for seed in 0..10 {
         let (obs, _) = env.reset(Some(seed));
         let norm_sq = obs[0] * obs[0] + obs[1] * obs[1];
         assert_relative_eq!(norm_sq, 1.0, epsilon = 1e-4);
-        
+
         for _ in 0..50 {
             let (obs, _, _, _, _) = env.step(PendulumAction(0.5));
             let norm_sq = obs[0] * obs[0] + obs[1] * obs[1];
@@ -35,13 +47,13 @@ fn pendulum_obs_unit_circle_invariant() {
 fn pendulum_theta_dot_bounded() {
     let mut env = Pendulum::new();
     env.reset(Some(123));
-    
+
     // Apply large torque to push speed limits
     for _ in 0..100 {
         let (obs, _, _, _, _) = env.step(PendulumAction(10.0));
         assert!(obs[2].abs() <= 8.0 + 1e-5, "θ̇ exceeded limit: {}", obs[2]);
     }
-    
+
     for _ in 0..100 {
         let (obs, _, _, _, _) = env.step(PendulumAction(-10.0));
         assert!(obs[2].abs() <= 8.0 + 1e-5, "θ̇ exceeded limit: {}", obs[2]);
@@ -52,7 +64,7 @@ fn pendulum_theta_dot_bounded() {
 fn pendulum_action_clamped() {
     let mut env = Pendulum::new();
     env.reset(Some(0));
-    
+
     // Check extreme positive torque
     let (obs, reward, _, _, _) = env.step(PendulumAction(100.0));
     assert!(obs[0].is_finite());
@@ -94,11 +106,11 @@ fn pendulum_action_clamped() {
 fn pendulum_deterministic_with_same_seed() {
     let mut env1 = Pendulum::new();
     let mut env2 = Pendulum::new();
-    
+
     let (obs1, _) = env1.reset(Some(999));
     let (obs2, _) = env2.reset(Some(999));
     assert_eq!(obs1, obs2, "Same seed must give same obs");
-    
+
     for _ in 0..50 {
         let (next1, r1, t1, tr1, _) = env1.step(PendulumAction(1.5));
         let (next2, r2, t2, tr2, _) = env2.step(PendulumAction(1.5));
@@ -140,47 +152,57 @@ fn pendulum_reward_lower_bound() {
     // theta=pi, theta_dot=8, u=2
     // reward = -(pi^2 + 0.1 * 64 + 0.001 * 4) = -(9.8696044 + 6.4 + 0.004) = -16.2736044
     let r = compute_reward(std::f32::consts::PI, 8.0, 2.0);
-    assert_relative_eq!(r, -16.2736044, epsilon = 1e-6);
+    assert_relative_eq!(r, -16.273_605, epsilon = 1e-6);
 }
 
 #[test]
 fn pendulum_unstable_equilibrium_at_theta_zero() {
     let mut env = Pendulum::new();
     env.reset(Some(42));
-    
+
     // Set near unstable equilibrium (top, theta = 0)
     env.set_state(0.1, 0.0);
-    
+
     // Let it fall under zero torque
     for _ in 0..25 {
         env.step(PendulumAction(0.0));
     }
-    
+
     // The pendulum should swing away from the top
     let state = env.get_state();
     let theta = state[0];
-    assert!(theta.abs() > 0.5, "Pendulum did not swing away from unstable top, theta: {}", theta);
+    assert!(
+        theta.abs() > 0.5,
+        "Pendulum did not swing away from unstable top, theta: {}",
+        theta
+    );
 }
 
 #[test]
 fn pendulum_stable_equilibrium_at_theta_pi() {
     let mut env = Pendulum::new();
     env.reset(Some(42));
-    
+
     // Set near stable equilibrium (bottom, theta = pi)
     let pi = std::f32::consts::PI;
     env.set_state(pi, 0.0);
-    
+
     // Let it stay under zero torque
     for _ in 0..200 {
         env.step(PendulumAction(0.0));
     }
-    
+
     // The pendulum should stay close to the bottom (stable equilibrium)
     let state = env.get_state();
     let theta = state[0];
     let diff = (angle_normalize(theta).abs() - pi).abs();
-    assert!(diff < 0.05, "Pendulum deviated from stable bottom, theta: {}, normalized: {}, diff: {}", theta, angle_normalize(theta), diff);
+    assert!(
+        diff < 0.05,
+        "Pendulum deviated from stable bottom, theta: {}, normalized: {}, diff: {}",
+        theta,
+        angle_normalize(theta),
+        diff
+    );
 }
 
 #[test]
@@ -191,11 +213,11 @@ fn pendulum_gymnasium_numerical_alignment() {
 
     let actions = [0.5, -0.5, 1.0, -1.0, 0.0];
     let expected = [
-        (1.06030516, 1.20610324, -1.02525000),
-        (1.14957925, 1.78548171, -1.26996554),
-        (1.28057553, 2.61992570, -1.64132694),
-        (1.44000359, 3.18856124, -2.32727476),
-        (1.63661136, 3.93215535, -3.09030263),
+        (1.060_305_1, 1.206_103_2, -1.025_25),
+        (1.149_579_3, 1.785_481_7, -1.269_965_5),
+        (1.280_575_5, 2.619_925_7, -1.641_326_9),
+        (1.440_003_6, 3.188_561_2, -2.327_274_8),
+        (1.636_611_3, 3.932_155_4, -3.090_302_7),
     ];
 
     for (i, &u) in actions.iter().enumerate() {

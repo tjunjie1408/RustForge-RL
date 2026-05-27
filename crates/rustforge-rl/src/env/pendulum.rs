@@ -164,7 +164,8 @@ impl Environment for Pendulum {
         // theta_dot ~ Uniform(-1, 1)
         self.state = [
             self.rng.gen_range(-RESET_THETA_BOUND..RESET_THETA_BOUND),
-            self.rng.gen_range(-RESET_THETA_DOT_BOUND..RESET_THETA_DOT_BOUND),
+            self.rng
+                .gen_range(-RESET_THETA_DOT_BOUND..RESET_THETA_DOT_BOUND),
         ];
         self.steps = 0;
 
@@ -187,7 +188,8 @@ impl Environment for Pendulum {
         let reward = compute_reward(theta, theta_dot, u);
 
         // Physics update (Gymnasium v1 semi-implicit Euler integration)
-        let new_theta_dot = theta_dot + (3.0 * G / (2.0 * L) * theta.sin() + 3.0 / (M * L * L) * u) * DT;
+        let new_theta_dot =
+            theta_dot + (3.0 * G / (2.0 * L) * theta.sin() + 3.0 / (M * L * L) * u) * DT;
         let new_theta_dot = new_theta_dot.clamp(-MAX_SPEED, MAX_SPEED);
         let new_theta = theta + new_theta_dot * DT;
 
@@ -211,9 +213,6 @@ impl Environment for Pendulum {
     }
 
     fn observation_space(&self) -> Space {
-        Space::continuous(
-            vec![-1.0, -1.0, -MAX_SPEED],
-            vec![1.0, 1.0, MAX_SPEED],
-        )
+        Space::continuous(vec![-1.0, -1.0, -MAX_SPEED], vec![1.0, 1.0, MAX_SPEED])
     }
 }
