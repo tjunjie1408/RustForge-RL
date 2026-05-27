@@ -13,7 +13,9 @@
 //! - At `t=decay_steps`: `ε = ε_end` (mostly exploitation)
 //! - After `t > decay_steps`: `ε = ε_end` (clamped)
 
+use rand::rngs::StdRng;
 use rand::Rng;
+use rand::SeedableRng;
 use rustforge_tensor::Tensor;
 
 /// Linear-decay epsilon-greedy exploration strategy.
@@ -35,10 +37,12 @@ pub struct EpsilonGreedy {
     epsilon_end: f32,
     /// Number of steps over which epsilon decays linearly.
     decay_steps: usize,
+    /// Seedable PRNG for exploration action selection
+    rng: StdRng,
 }
 
 impl EpsilonGreedy {
-    /// Creates a new epsilon-greedy strategy.
+    /// Creates a new epsilon-greedy strategy with entropy-based seeding.
     ///
     /// ## Arguments
     /// - `epsilon_start`: Initial epsilon (typically 1.0 = fully random).
@@ -49,6 +53,17 @@ impl EpsilonGreedy {
             epsilon_start,
             epsilon_end,
             decay_steps,
+            rng: StdRng::from_entropy(),
+        }
+    }
+
+    /// Creates a new epsilon-greedy strategy with a specific seed.
+    pub fn with_seed(epsilon_start: f32, epsilon_end: f32, decay_steps: usize, seed: u64) -> Self {
+        EpsilonGreedy {
+            epsilon_start,
+            epsilon_end,
+            decay_steps,
+            rng: StdRng::seed_from_u64(seed),
         }
     }
 
@@ -75,13 +90,12 @@ impl EpsilonGreedy {
     ///
     /// ## Returns
     /// The selected action index.
-    pub fn select_action(&self, q_values: &Tensor, step: usize, num_actions: usize) -> usize {
+    pub fn select_action(&mut self, q_values: &Tensor, step: usize, num_actions: usize) -> usize {
         let eps = self.epsilon(step);
-        let mut rng = rand::thread_rng();
 
-        if rng.gen::<f32>() < eps {
+        if self.rng.gen::<f32>() < eps {
             // Explore: random action
-            rng.gen_range(0..num_actions)
+            self.rng.gen_range(0..num_actions)
         } else {
             // Exploit: argmax of Q-values
             let flat = q_values.to_vec();
@@ -119,7 +133,7 @@ mod tests {
 
     #[test]
     fn test_greedy_action() {
-        let eps = EpsilonGreedy::new(0.0, 0.0, 1); // zero epsilon = always greedy
+        let mut eps = EpsilonGreedy::new(0.0, 0.0, 1); // zero epsilon = always greedy
 
         let q = Tensor::from_vec(vec![1.0, 5.0, 3.0], &[3]);
         let action = eps.select_action(&q, 100, 3);
@@ -128,7 +142,7 @@ mod tests {
 
     #[test]
     fn test_random_action_distribution() {
-        let eps = EpsilonGreedy::new(1.0, 1.0, 1); // epsilon=1.0 = always random
+        let mut eps = EpsilonGreedy::new(1.0, 1.0, 1); // epsilon=1.0 = always random
 
         let q = Tensor::from_vec(vec![100.0, 0.0, 0.0], &[3]); // would be greedy=0
         let mut counts = [0u32; 3];

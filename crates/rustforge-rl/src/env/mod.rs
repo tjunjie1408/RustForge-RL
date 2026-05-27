@@ -16,6 +16,7 @@
 pub mod cartpole;
 pub mod gridworld;
 pub mod mountain_car;
+pub mod pendulum;
 pub mod spaces;
 pub mod traits;
 pub mod vector;
@@ -27,6 +28,7 @@ pub use gridworld::{GridAction, GridWorld};
 pub use mountain_car::{
     DiscreteMountainCarAction, MountainCar, MountainCarAction, MountainCarContinuous,
 };
+pub use pendulum::{Pendulum, PendulumAction};
 pub use spaces::Space;
 pub use traits::{Environment, IntoTensorBuffer};
 pub use vector::{BatchStepResult, SyncVectorEnv};
