@@ -31,7 +31,7 @@ where
     let warmup_steps = 128usize;
 
     let mut agent = DQN::new(config);
-    let explorer = EpsilonGreedy::new(1.0, 0.05, 2_000);
+    let mut explorer = EpsilonGreedy::new(1.0, 0.05, 2_000);
 
     let use_per = agent.config().use_per;
     let mut replay = ReplayBuffer::new(10_000, obs_dim);

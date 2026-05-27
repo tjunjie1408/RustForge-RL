@@ -65,7 +65,7 @@ fn dqn_converges_on_cartpole() {
         use_per: false,
         per_beta_annealing_steps: 20000,
     });
-    let explorer = EpsilonGreedy::new(1.0, 0.02, 5_000);
+    let mut explorer = EpsilonGreedy::new(1.0, 0.02, 5_000);
     let mut replay = ReplayBuffer::new(BUFFER_SIZE, OBS_DIM);
     let mut batch = TransitionBatch::new(BATCH_SIZE, OBS_DIM);
 
@@ -190,7 +190,7 @@ fn dqn_per_converges_on_cartpole() {
         use_per: true,
         per_beta_annealing_steps: 20000,
     });
-    let explorer = EpsilonGreedy::new(1.0, 0.02, 5_000);
+    let mut explorer = EpsilonGreedy::new(1.0, 0.02, 5_000);
     let mut replay = PrioritizedReplayBuffer::new(BUFFER_SIZE, OBS_DIM, 0.6);
     let mut batch = TransitionBatch::new(BATCH_SIZE, OBS_DIM);
     let mut per_weights = Tensor::zeros(&[BATCH_SIZE, 1]);

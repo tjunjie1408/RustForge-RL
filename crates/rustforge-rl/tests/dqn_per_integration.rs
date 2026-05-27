@@ -43,7 +43,7 @@ fn run_training(
     agent.update_target();
 
     // Fast decay explorer
-    let explorer = EpsilonGreedy::new(0.5, 0.01, 100);
+    let mut explorer = EpsilonGreedy::with_seed(0.5, 0.01, 100, seed);
 
     let mut replay = ReplayBuffer::new(10_000, obs_dim);
     let mut per_replay = PrioritizedReplayBuffer::new(10_000, obs_dim, 0.6);
@@ -242,7 +242,7 @@ fn run_training_and_return_buffer(
 
     let mut env = CartPole::with_max_steps(max_steps);
     let mut agent = DQN::new(config);
-    let explorer = EpsilonGreedy::new(1.0, 0.05, 500);
+    let mut explorer = EpsilonGreedy::with_seed(1.0, 0.05, 500, seed);
     let mut per_replay = PrioritizedReplayBuffer::new(10_000, obs_dim, 0.6);
     let mut batch = TransitionBatch::new(batch_size, obs_dim);
     let mut per_weights = Tensor::zeros(&[batch_size, 1]);

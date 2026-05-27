@@ -25,7 +25,7 @@ fn cartpole_action_index_mapping_is_explicit() {
     let action = dqn.select_greedy_action(&[0.0, 0.0, 0.0, 0.0]);
     assert!(action < 2);
 
-    let explorer = EpsilonGreedy::new(0.0, 0.0, 1);
+    let mut explorer = EpsilonGreedy::new(0.0, 0.0, 1);
     let q_values = Tensor::from_vec(vec![0.1, 0.2], &[1, 2]);
     let action = explorer.select_action(&q_values, 0, 2);
     assert!(action < 2);
@@ -77,7 +77,7 @@ fn dqn_cartpole_training_smoke_runs_and_produces_finite_loss() {
         use_per: false,
         per_beta_annealing_steps: 20000,
     });
-    let explorer = EpsilonGreedy::new(0.2, 0.05, 100);
+    let mut explorer = EpsilonGreedy::new(0.2, 0.05, 100);
     let mut buffer = ReplayBuffer::new(256, 4);
     let mut batch = TransitionBatch::new(8, 4);
 
