@@ -190,8 +190,8 @@ fn dqn_per_converges_on_cartpole() {
         use_per: true,
         per_beta_annealing_steps: 20000,
     });
-    let mut explorer = EpsilonGreedy::new(1.0, 0.02, 5_000);
-    let mut replay = PrioritizedReplayBuffer::new(BUFFER_SIZE, OBS_DIM, 0.6);
+    let mut explorer = EpsilonGreedy::with_seed(1.0, 0.02, 5_000, SEED);
+    let mut replay = PrioritizedReplayBuffer::with_seed(BUFFER_SIZE, OBS_DIM, 0.6, SEED);
     let mut batch = TransitionBatch::new(BATCH_SIZE, OBS_DIM);
     let mut per_weights = Tensor::zeros(&[BATCH_SIZE, 1]);
     let mut per_tree_indices = vec![0; BATCH_SIZE];
