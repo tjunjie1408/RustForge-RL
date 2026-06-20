@@ -2,7 +2,8 @@
 
 use crate::buffer::sum_tree::SumTree;
 use crate::buffer::TransitionBatch;
-use rand::Rng;
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 use rustforge_tensor::Tensor;
 
 /// Prioritized Experience Replay Buffer.
@@ -20,6 +21,9 @@ pub struct PrioritizedReplayBuffer {
 
     /// The maximum priority seen so far, assigned to new transitions.
     max_priority: f32,
+
+    /// Seedable PRNG for stratified sampling, enabling reproducible runs.
+    rng: StdRng,
 }
 
 impl PrioritizedReplayBuffer {
@@ -29,6 +33,18 @@ impl PrioritizedReplayBuffer {
     /// - `obs_dim`: Dimension of states.
     /// - `alpha`: Determines how much prioritization is used (0.0 = uniform, 1.0 = full prioritization).
     pub fn new(capacity: usize, obs_dim: usize, alpha: f32) -> Self {
+        Self::with_rng(capacity, obs_dim, alpha, StdRng::from_entropy())
+    }
+
+    /// Creates a new Prioritized Replay Buffer with a fixed seed for reproducible sampling.
+    ///
+    /// Same parameters as [`new`](Self::new), plus `seed` to make stratified sampling
+    /// deterministic across runs (useful for tests and reproducible experiments).
+    pub fn with_seed(capacity: usize, obs_dim: usize, alpha: f32, seed: u64) -> Self {
+        Self::with_rng(capacity, obs_dim, alpha, StdRng::seed_from_u64(seed))
+    }
+
+    fn with_rng(capacity: usize, obs_dim: usize, alpha: f32, rng: StdRng) -> Self {
         PrioritizedReplayBuffer {
             states: vec![0.0; capacity * obs_dim],
             actions: vec![0; capacity],
@@ -39,6 +55,7 @@ impl PrioritizedReplayBuffer {
             obs_dim,
             alpha,
             max_priority: 1.0,
+            rng,
         }
     }
 
@@ -87,7 +104,7 @@ impl PrioritizedReplayBuffer {
     /// - `weights`: The pre-allocated Tensor to write Importance Sampling weights into (shape `[batch_size, 1]`).
     /// - `tree_indices`: Slice to store tree indices for updating priorities.
     pub fn sample(
-        &self,
+        &mut self,
         batch_size: usize,
         beta: f32,
         batch: &mut TransitionBatch,
@@ -97,7 +114,6 @@ impl PrioritizedReplayBuffer {
         assert!(!self.is_empty(), "Cannot sample from empty buffer");
 
         let actual_batch = batch_size.min(self.len());
-        let mut rng = rand::thread_rng();
 
         let total_p = self.tree.total_priority();
         let segment = total_p / actual_batch as f32;
@@ -110,7 +126,7 @@ impl PrioritizedReplayBuffer {
         for b in 0..actual_batch {
             let lower = segment * (b as f32);
             let upper = segment * ((b + 1) as f32);
-            let s = rng.gen_range(lower..upper);
+            let s = self.rng.gen_range(lower..upper);
 
             let (tree_idx, p, data_idx) = self.tree.get(s);
             let prob = p / total_p;

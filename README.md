@@ -16,7 +16,7 @@
   <img src="https://img.shields.io/badge/language-Rust-orange?style=flat-square&logo=rust" alt="Rust">
   <img src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue?style=flat-square" alt="License">
   <img src="https://img.shields.io/badge/status-Phase%204%20Complete-brightgreen?style=flat-square" alt="Status">
-  <img src="https://img.shields.io/badge/tests-734%20passing-brightgreen?style=flat-square" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-804%20passing-brightgreen?style=flat-square" alt="Tests">
 </p>
 
 ---
@@ -221,8 +221,9 @@ let weights = (& attention / 8.0_f32.sqrt()).softmax(1).unwrap();
 | **Phase 3** | REINFORCE + A2C | ✅ Complete |
 | **Phase 4** | PPO + Continuous Control | ✅ Complete |
 | **Phase 4** | SAC + TD3 | ✅ Complete |
-| **Phase 4** | Python Bindings (PyO3) | 📋 Planned |
+| **Phase 5** | Python Bindings (PyO3) | 📋 Planned (next) |
 | **Phase 5** | Training Dashboard | 📋 Planned |
+| **Phase 5** | Benchmarks vs SB3 | 📋 Planned |
 | **Phase 5** | GPU Support (wgpu) | 📋 Planned |
 
 ---
