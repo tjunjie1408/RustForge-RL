@@ -30,3 +30,17 @@ action = agent.predict([float(x) for x in obs])
 
 Available env ids: `CartPole`, `GridWorld`, `MountainCar`, `MountainCarContinuous`, `Pendulum`.
 `DQN.train` supports the discrete envs: `"cartpole"`, `"gridworld"`, `"mountaincar"`.
+
+## Error handling
+
+Discrete environments (`CartPole`, `GridWorld`, `MountainCar`) validate the
+`action` passed to `step`:
+
+- An **out-of-range** action (e.g. `5` when only `0`, `1` are valid) raises
+  `ValueError`.
+- A **negative** action (e.g. `-1`) raises `OverflowError`, *not* `ValueError`.
+  The action is a Rust `usize`, so PyO3 rejects negative integers during
+  argument conversion, before the range check runs.
+
+Continuous environments (`Pendulum`, `MountainCarContinuous`) raise
+`ValueError` when the action list has the wrong length (they expect length 1).
