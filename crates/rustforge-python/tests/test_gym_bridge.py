@@ -42,3 +42,11 @@ def test_pendulum_continuous_step():
 def test_unknown_env_id_raises():
     with pytest.raises(ValueError):
         rustforge.make("Breakout")
+
+
+def test_gym_obs_is_float32():
+    env = rustforge.make("CartPole")
+    obs, _ = env.reset(seed=0)
+    assert obs.dtype == np.float32
+    obs, _, _, _, _ = env.step(env.action_space.sample())
+    assert obs.dtype == np.float32
