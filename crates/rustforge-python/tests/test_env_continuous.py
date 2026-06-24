@@ -33,3 +33,10 @@ def test_mountaincar_continuous_step():
     assert len(obs) == 2
     obs, reward, terminated, truncated = env.step([1.0])
     assert len(obs) == 2
+
+
+def test_mountaincar_continuous_wrong_action_len_raises():
+    env = _core.MountainCarContinuous()
+    env.reset(seed=3)
+    with pytest.raises(ValueError):
+        env.step([0.1, 0.2])

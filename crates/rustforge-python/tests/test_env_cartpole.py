@@ -43,3 +43,12 @@ def test_cartpole_spaces():
     assert o.kind == "box"
     assert len(o.low) == 4
     assert len(o.high) == 4
+
+
+def test_cartpole_negative_action_raises_overflow():
+    # Discrete actions are a Rust usize; PyO3 rejects negative ints during
+    # argument conversion, so a negative action is OverflowError, not ValueError.
+    env = _core.CartPole()
+    env.reset(seed=0)
+    with pytest.raises(OverflowError):
+        env.step(-1)
