@@ -25,3 +25,9 @@ def test_dqn_predict_wrong_obs_len_raises():
     agent = _core.DQN.train("cartpole", episodes=1, max_steps=10)
     with pytest.raises(ValueError):
         agent.predict([0.0, 0.0])
+
+
+def test_dqn_train_mountaincar():
+    agent = _core.DQN.train("mountaincar", episodes=2, max_steps=30)
+    action = agent.predict([0.0, 0.0])
+    assert action in (0, 1, 2)
