@@ -7,7 +7,7 @@ use pyo3::prelude::*;
 mod env;
 mod space;
 
-use env::{PyCartPole, PyGridWorld, PyMountainCar};
+use env::{PyCartPole, PyGridWorld, PyMountainCar, PyMountainCarContinuous, PyPendulum};
 use space::PySpace;
 
 /// The `rustforge._core` extension module.
@@ -17,5 +17,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCartPole>()?;
     m.add_class::<PyGridWorld>()?;
     m.add_class::<PyMountainCar>()?;
+    m.add_class::<PyPendulum>()?;
+    m.add_class::<PyMountainCarContinuous>()?;
     Ok(())
 }
