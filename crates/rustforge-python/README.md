@@ -9,7 +9,7 @@ plus a Gymnasium-compatible adapter.
 cd crates/rustforge-python
 python -m venv .venv
 # Windows: .venv\Scripts\Activate.ps1   |   Unix: source .venv/bin/activate
-pip install "maturin>=1.7,<2.0" "gymnasium>=0.29" "numpy>=1.21"
+pip install "maturin>=1.7,<2.0" pytest "gymnasium>=0.29" "numpy>=1.21"
 maturin develop
 ```
 

@@ -7,3 +7,4 @@ target/
 *.so
 crates/rustforge-python/python/rustforge/_core*.so
 crates/rustforge-python/python/rustforge/_core*.pyd
+*.pdb
