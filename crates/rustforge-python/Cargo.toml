@@ -1,0 +1,24 @@
+[package]
+name = "rustforge-python"
+description = "PyO3 Python bindings for RustForge RL"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+# The Python import name; the compiled artifact is renamed to `_core` by maturin.
+name = "_core"
+# cdylib: the importable extension (.so/.pyd). rlib: lets the workspace check/build this crate normally.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+rustforge-rl = { path = "../rustforge-rl" }
+rustforge-tensor = { path = "../rustforge-tensor" }
+pyo3 = { version = "0.25" }
+
+[features]
+# Enabled ONLY by maturin (see pyproject.toml). Left off during `cargo test`/`cargo clippy`
+# so those builds link libpython and succeed.
+extension-module = ["pyo3/extension-module"]

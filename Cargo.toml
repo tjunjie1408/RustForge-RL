@@ -5,6 +5,14 @@ members = [
     "crates/rustforge-nn",
     "crates/rustforge-rl",
     "crates/rustforge-cli",
+    "crates/rustforge-python",
+]
+default-members = [
+    "crates/rustforge-tensor",
+    "crates/rustforge-autograd",
+    "crates/rustforge-nn",
+    "crates/rustforge-rl",
+    "crates/rustforge-cli",
 ]
 resolver = "2"
 

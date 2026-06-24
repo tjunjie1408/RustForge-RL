@@ -31,7 +31,35 @@ jobs:
       run: cargo fmt --all -- --check
 
     - name: Run Clippy
-      run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      run: cargo clippy --workspace --all-targets --all-features --exclude rustforge-python -- -D warnings
 
     - name: Run tests
-      run: cargo test --workspace --all-features
+      run: cargo test --workspace --all-features --exclude rustforge-python
+
+  python-bindings:
+    name: Python bindings
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Clippy (bindings)
+        run: cargo clippy -p rustforge-python --features extension-module -- -D warnings
+
+      - name: Build, install & test
+        working-directory: crates/rustforge-python
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install "maturin>=1.7,<2.0" pytest "gymnasium>=0.29" "numpy>=1.21"
+          maturin develop
+          pytest -v
