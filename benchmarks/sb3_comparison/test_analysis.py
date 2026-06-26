@@ -53,3 +53,43 @@ def test_truncate_curve_keeps_points_within_budget():
 
 def test_truncate_curve_empty_when_all_beyond():
     assert analysis.truncate_curve([(100, 1.0)], 50) == []
+
+
+def test_steps_to_solved_returns_step_at_first_window_crossing():
+    # window=3, threshold=2.0; first index where the trailing 3 avg >= 2.0
+    curve = [(10, 1.0), (20, 2.0), (30, 3.0), (40, 3.0)]  # avg@idx3 = (2+3+3)/3=2.67
+    assert analysis.steps_to_solved(curve, threshold=2.0, window=3) == 40
+
+
+def test_steps_to_solved_none_when_never_reached():
+    curve = [(10, 1.0), (20, 1.0), (30, 1.0)]
+    assert analysis.steps_to_solved(curve, threshold=2.0, window=3) is None
+
+
+def test_make_step_grid_spans_zero_to_max():
+    grid = analysis.make_step_grid(100, n=5)
+    assert grid[0] == 0 and grid[-1] == 100 and len(grid) == 5
+
+
+def test_aggregate_means_and_stds_on_grid():
+    grid = [0, 10, 20]
+    c1 = [(0, 0.0), (20, 20.0)]   # interp -> [0, 10, 20]
+    c2 = [(0, 0.0), (20, 40.0)]   # interp -> [0, 20, 40]
+    mean, std = analysis.aggregate([c1, c2], grid)
+    assert mean == [0.0, 15.0, 30.0]
+    assert std[0] == 0.0 and std[2] == 10.0
+
+
+def test_format_summary_is_markdown_with_both_frameworks():
+    speed = {
+        "rustforge": {"time_mean": 1.0, "time_std": 0.1, "thru_mean": 50000.0, "thru_std": 100.0},
+        "sb3": {"time_mean": 10.0, "time_std": 0.5, "thru_mean": 5000.0, "thru_std": 50.0},
+    }
+    solved = {
+        "rustforge": {"mean_steps": 20000.0, "n_solved": 9, "n": 10},
+        "sb3": {"mean_steps": 25000.0, "n_solved": 8, "n": 10},
+    }
+    md = analysis.format_summary(speed, solved, step_budget=50_000, n_runs=10)
+    assert "rustforge" in md and "sb3" in md
+    assert "steps/sec" in md
+    assert "|" in md  # a markdown table
