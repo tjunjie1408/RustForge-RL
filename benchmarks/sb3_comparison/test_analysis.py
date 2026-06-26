@@ -1,4 +1,5 @@
 import csv
+import json as _json
 
 from benchmarks.sb3_comparison import config, analysis
 
@@ -101,3 +102,24 @@ def test_format_summary_is_markdown_with_both_frameworks():
     assert "rustforge" in md and "sb3" in md
     assert "steps/sec" in md
     assert "|" in md  # a markdown table
+
+
+def test_plot_from_results_writes_nonempty_png(tmp_path):
+    import pytest
+    pytest.importorskip("matplotlib")
+
+    from benchmarks.sb3_comparison import plot
+
+    results = {
+        "step_budget": 100,
+        "step_grid": [0, 50, 100],
+        "aggregate": {
+            "rustforge": {"mean": [0.0, 10.0, 20.0], "std": [0.0, 1.0, 2.0]},
+            "sb3": {"mean": [0.0, 8.0, 16.0], "std": [0.0, 1.0, 2.0]},
+        },
+    }
+    rj = tmp_path / "results.json"
+    rj.write_text(_json.dumps(results))
+    out = tmp_path / "curve.png"
+    plot.plot_from_results(str(rj), str(out))
+    assert out.exists() and out.stat().st_size > 0
