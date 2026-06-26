@@ -15,8 +15,9 @@
 <p align="center">
   <img src="https://img.shields.io/badge/language-Rust-orange?style=flat-square&logo=rust" alt="Rust">
   <img src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue?style=flat-square" alt="License">
-  <img src="https://img.shields.io/badge/status-Phase%204%20Complete-brightgreen?style=flat-square" alt="Status">
-  <img src="https://img.shields.io/badge/tests-804%20passing-brightgreen?style=flat-square" alt="Tests">
+  <img src="https://img.shields.io/badge/status-Phase%205%20Python%20Bindings%20Live-brightgreen?style=flat-square" alt="Status">
+  <img src="https://img.shields.io/badge/Rust%20tests-804%20passing-brightgreen?style=flat-square" alt="Rust Tests">
+  <img src="https://img.shields.io/badge/Python%20tests-31%20passing-brightgreen?style=flat-square" alt="Python Tests">
 </p>
 
 ---
@@ -77,14 +78,16 @@ A PyTorch-style tensor library built on top of [`ndarray`](https://github.com/ru
 - **Off-Policy Continuous Control**: TD3 and SAC with target critics and soft updates
 - **Continuous Policies**: Tanh-squashed Gaussian policy with action scaling and log-prob correction
 - **Environment Interface**: Gymnasium-compatible traits, zero-cost wrappers, vectorized environments (`SyncVectorEnv`)
-- **Built-in Environments**: CartPole, GridWorld, MountainCarContinuous
+- **Built-in Environments**: CartPole, GridWorld, MountainCar (discrete), MountainCarContinuous, Pendulum
 - **Buffers**: Uniform replay, on-policy rollout, continuous replay, continuous rollout
 
-### 🐍 Python Bindings (`rustforge-python`) — 📋 Planned
+### 🐍 Python Bindings (`rustforge-python`) — ✅ Complete
 
-- PyO3-powered Python API for seamless integration
-- NumPy array interop (zero-copy where possible)
-- Drop-in replacement for select PyTorch/SB3 workflows
+- **PyO3 0.25** native extension module, built with [`maturin`](https://www.maturin.rs/)
+- **Native environments** exposed to Python: CartPole, GridWorld, MountainCar, MountainCarContinuous, Pendulum
+- **DQN agent**: `DQN.train(...)` natively, then `predict(obs)` from Python
+- **Gymnasium bridge**: `rustforge.make("CartPole")` returns a `gymnasium.Env` whose `reset`/`step` yield `float32` NumPy observations
+- **Typed**: ships `_core.pyi` type stubs + a `py.typed` marker; covered by a dedicated CI job (31 pytest)
 
 ### 📊 Training Dashboard (`rustforge-dashboard`) — 📋 Planned
 
@@ -114,9 +117,13 @@ rustforge-rl/
 │   │
 │   ├── rustforge-autograd/    # 🔄 Automatic differentiation
 │   ├── rustforge-nn/          # 🧠 Neural network layers
-│   └── rustforge-rl/          # 🎮 RL algorithms
-│       └── src/
-│           └── env/           # 🌍 Zero-cost Gymnasium environments & wrappers
+│   ├── rustforge-rl/          # 🎮 RL algorithms
+│   │   └── src/
+│   │       └── env/           # 🌍 Zero-cost Gymnasium environments & wrappers
+│   ├── rustforge-cli/         # ⌨️  Command-line training tool
+│   └── rustforge-python/      # 🐍 PyO3 Python bindings (built with maturin)
+│       ├── src/               # Rust: env.rs, agent.rs, space.rs, lib.rs
+│       └── python/rustforge/  # Python package + Gymnasium bridge (gym.py)
 │
 ├── examples/                  # Runnable examples (coming soon)
 └── benches/                   # Performance benchmarks (coming soon)
@@ -127,8 +134,8 @@ rustforge-rl/
 ```
 tensor ← autograd ← nn ← rl
                           ↓
-                      dashboard
-                      python bindings
+                     cli, python bindings
+                     dashboard (planned)
 ```
 
 Each layer only depends on the layer below it, ensuring clean separation of concerns and independent testability.
@@ -206,6 +213,29 @@ let attention = q.matmul(&k.t());           // [8, 8] attention scores
 let weights = (& attention / 8.0_f32.sqrt()).softmax(1).unwrap();
 ```
 
+### Python (via PyO3 bindings)
+
+```bash
+cd crates/rustforge-python
+python -m venv .venv
+# Windows: .venv\Scripts\Activate.ps1   |   Unix: source .venv/bin/activate
+pip install "maturin>=1.7,<2.0" pytest "gymnasium>=0.29" "numpy>=1.21"
+maturin develop
+```
+
+```python
+import rustforge
+
+# Gymnasium-style env (reset/step return float32 NumPy observations)
+env = rustforge.make("CartPole")
+obs, info = env.reset(seed=0)
+obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
+
+# Train a DQN natively, then act from Python
+agent = rustforge.DQN.train("cartpole", episodes=200)
+action = agent.predict([float(x) for x in obs])
+```
+
 ---
 
 ## Roadmap
@@ -221,8 +251,8 @@ let weights = (& attention / 8.0_f32.sqrt()).softmax(1).unwrap();
 | **Phase 3** | REINFORCE + A2C | ✅ Complete |
 | **Phase 4** | PPO + Continuous Control | ✅ Complete |
 | **Phase 4** | SAC + TD3 | ✅ Complete |
-| **Phase 5** | Python Bindings (PyO3) | 📋 Planned (next) |
-| **Phase 5** | Training Dashboard | 📋 Planned |
+| **Phase 5** | Python Bindings (PyO3) | ✅ Complete |
+| **Phase 5** | Training Dashboard | 📋 Planned (next) |
 | **Phase 5** | Benchmarks vs SB3 | 📋 Planned |
 | **Phase 5** | GPU Support (wgpu) | 📋 Planned |
 
@@ -308,7 +338,7 @@ cargo clippy --workspace
 | Serialization | [serde](https://serde.rs/) + bincode |
 | Logging | [tracing](https://github.com/tokio-rs/tracing) |
 | Testing | Built-in + [approx](https://github.com/brendanzab/approx) |
-| Future: Python Bindings | [PyO3](https://pyo3.rs/) |
+| Python Bindings | [PyO3](https://pyo3.rs/) 0.25 + [maturin](https://www.maturin.rs/) |
 | Future: Web Dashboard | [Axum](https://github.com/tokio-rs/axum) + WebSocket |
 | Future: GPU | [wgpu](https://wgpu.rs/) |
 
