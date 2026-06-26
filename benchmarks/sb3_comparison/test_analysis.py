@@ -56,9 +56,17 @@ def test_truncate_curve_empty_when_all_beyond():
 
 
 def test_steps_to_solved_returns_step_at_first_window_crossing():
-    # window=3, threshold=2.0; first index where the trailing 3 avg >= 2.0
-    curve = [(10, 1.0), (20, 2.0), (30, 3.0), (40, 3.0)]  # avg@idx3 = (2+3+3)/3=2.67
+    # window=3, threshold=2.0. First full window (idx2: 1,1,3 -> avg 1.67) fails;
+    # the window ending at idx3 (1,3,3 -> avg 2.33) is the first to reach 2.0.
+    curve = [(10, 1.0), (20, 1.0), (30, 3.0), (40, 3.0)]
     assert analysis.steps_to_solved(curve, threshold=2.0, window=3) == 40
+
+
+def test_steps_to_solved_solves_at_first_full_window():
+    # A run already at threshold across its first `window` episodes is solved at
+    # that window's last step (index window-1); it must NOT be skipped.
+    curve = [(10, 3.0), (20, 3.0), (30, 3.0)]
+    assert analysis.steps_to_solved(curve, threshold=2.0, window=3) == 30
 
 
 def test_steps_to_solved_none_when_never_reached():

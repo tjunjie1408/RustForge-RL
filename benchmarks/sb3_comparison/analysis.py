@@ -28,7 +28,7 @@ def steps_to_solved(curve: Curve, threshold: float, window: int):
     rewards = [r for _, r in curve]
     steps = [s for s, _ in curve]
     for i in range(len(rewards)):
-        if i < window:
+        if i + 1 < window:
             continue
         if sum(rewards[i - window + 1 : i + 1]) / window >= threshold:
             return steps[i]
