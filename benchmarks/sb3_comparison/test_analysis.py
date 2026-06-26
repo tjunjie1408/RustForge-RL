@@ -1,4 +1,6 @@
-from benchmarks.sb3_comparison import config
+import csv
+
+from benchmarks.sb3_comparison import config, analysis
 
 
 def test_matched_config_values():
@@ -32,3 +34,22 @@ def test_sb3_kwargs_match_rustforge():
     assert kw["exploration_initial_eps"] == 1.0
     assert kw["exploration_final_eps"] == 0.05
     assert abs(kw["exploration_fraction"] - 2_000 / 50_000) < 1e-12
+
+
+def test_parse_rustforge_csv(tmp_path):
+    p = tmp_path / "log.csv"
+    with open(p, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["episode", "reward", "avg_loss", "epsilon", "global_step"])
+        w.writerow([0, 12.0, 0.5, 0.9, 12])
+        w.writerow([1, 30.0, 0.4, 0.8, 42])
+    assert analysis.parse_rustforge_csv(str(p)) == [(12, 12.0), (42, 30.0)]
+
+
+def test_truncate_curve_keeps_points_within_budget():
+    curve = [(10, 1.0), (50, 2.0), (90, 3.0)]
+    assert analysis.truncate_curve(curve, 60) == [(10, 1.0), (50, 2.0)]
+
+
+def test_truncate_curve_empty_when_all_beyond():
+    assert analysis.truncate_curve([(100, 1.0)], 50) == []
