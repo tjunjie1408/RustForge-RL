@@ -123,3 +123,19 @@ def test_plot_from_results_writes_nonempty_png(tmp_path):
     out = tmp_path / "curve.png"
     plot.plot_from_results(str(rj), str(out))
     assert out.exists() and out.stat().st_size > 0
+
+
+def test_solved_stats_truncates_to_budget(monkeypatch):
+    from benchmarks.sb3_comparison import benchmark, config
+    from benchmarks.sb3_comparison.runners import RunResult
+
+    monkeypatch.setattr(config, "SOLVED_THRESHOLD", 2.0)
+    monkeypatch.setattr(config, "SOLVED_WINDOW", 2)
+    # Crosses the (window=2) threshold only at step 60/80 — beyond a 50-step budget.
+    curve = [(10, 1.0), (40, 1.0), (60, 3.0), (80, 3.0)]
+    rs = [RunResult("rustforge", 0, 1.0, 80, curve),
+          RunResult("sb3", 0, 1.0, 50, [(10, 1.0), (40, 1.0)])]
+    out = benchmark._solved_stats(rs, step_budget=50)
+    # Truncated to 50 steps, the trailing-2 mean never reaches 2.0 -> unsolved.
+    assert out["rustforge"]["n_solved"] == 0
+    assert out["rustforge"]["mean_steps"] is None

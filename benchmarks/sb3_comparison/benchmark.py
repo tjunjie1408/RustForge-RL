@@ -24,12 +24,16 @@ def _speed_stats(results: list) -> dict:
     return out
 
 
-def _solved_stats(results: list) -> dict:
+def _solved_stats(results: list, step_budget: int) -> dict:
     out = {}
     for fw in ("rustforge", "sb3"):
         rs = [r for r in results if r.framework == fw]
         hits = [
-            analysis.steps_to_solved(r.curve, config.SOLVED_THRESHOLD, config.SOLVED_WINDOW)
+            analysis.steps_to_solved(
+                analysis.truncate_curve(r.curve, step_budget),
+                config.SOLVED_THRESHOLD,
+                config.SOLVED_WINDOW,
+            )
             for r in rs
         ]
         solved = [h for h in hits if h is not None]
@@ -68,7 +72,7 @@ def run_benchmark(seeds=None, step_budget=None, results_json=None, summary_md=No
         aggregate[fw] = {"mean": mean, "std": std}
 
     speed = _speed_stats(results)
-    solved = _solved_stats(results)
+    solved = _solved_stats(results, step_budget)
 
     payload = {
         "step_budget": step_budget,
@@ -89,9 +93,9 @@ def run_benchmark(seeds=None, step_budget=None, results_json=None, summary_md=No
         _parent = os.path.dirname(_path)
         if _parent:
             os.makedirs(_parent, exist_ok=True)
-    with open(results_json, "w") as f:
+    with open(results_json, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)
-    with open(summary_md, "w") as f:
+    with open(summary_md, "w", encoding="utf-8") as f:
         f.write(analysis.format_summary(speed, solved, step_budget, len(seeds)))
 
     # Plot is best-effort here; Task 6 owns plot.py. Import lazily so this module
