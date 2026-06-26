@@ -6,7 +6,38 @@ on:
   pull_request:
     branches: [ "main", "master" ]
 
+# Least-privilege: CI only needs to read the repository.
+permissions:
+  contents: read
+
+# Cancel superseded runs on the same ref (e.g. rapid pushes to a PR).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  # Formatting and lints are platform-independent — run them once on Linux
+  # instead of repeating across the test matrix.
+  lint:
+    name: Lint (fmt + clippy)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v5
+
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+
+    - name: Cache cargo registry
+      uses: Swatinem/rust-cache@v2
+
+    - name: Check formatting
+      run: cargo fmt --all -- --check
+
+    - name: Run Clippy
+      run: cargo clippy --workspace --all-targets --all-features --exclude rustforge-python -- -D warnings
+
   test:
     name: Test on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -19,19 +50,11 @@ jobs:
 
     - name: Set up Rust
       uses: dtolnay/rust-toolchain@stable
-      with:
-        components: rustfmt, clippy
 
     - name: Cache cargo registry
       uses: Swatinem/rust-cache@v2
       with:
         shared-key: "v2-arm64-fix"
-
-    - name: Check formatting
-      run: cargo fmt --all -- --check
-
-    - name: Run Clippy
-      run: cargo clippy --workspace --all-targets --all-features --exclude rustforge-python -- -D warnings
 
     - name: Run tests
       run: cargo test --workspace --all-features --exclude rustforge-python

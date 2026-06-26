@@ -10,11 +10,23 @@ permissions:
 
 jobs:
   build-and-release:
-    name: Build and Release
+    name: Build and Release (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
+      # Don't cancel the other platforms if one fails — avoids a partial release.
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            artifact: rustforge-cli-linux-x86_64
+            bin: target/release/rustforge-cli
+          - os: macos-latest
+            # macos-latest runners are arm64 (macos-14+).
+            artifact: rustforge-cli-macos-arm64
+            bin: target/release/rustforge-cli
+          - os: windows-latest
+            artifact: rustforge-cli-windows-x86_64.exe
+            bin: target/release/rustforge-cli.exe
 
     steps:
     - uses: actions/checkout@v5
@@ -22,12 +34,19 @@ jobs:
     - name: Set up Rust
       uses: dtolnay/rust-toolchain@stable
 
-    - name: Build release
-      run: cargo build --release
+    - name: Cache cargo registry
+      uses: Swatinem/rust-cache@v2
 
-    - name: Create Release
-      uses: softprops/action-gh-release@v1
+    - name: Build CLI (release)
+      run: cargo build --release -p rustforge-cli --bin rustforge-cli
+
+    # Give each platform's binary a distinct, descriptive name so the three
+    # matrix jobs don't overwrite each other's asset on the release.
+    - name: Rename artifact
+      shell: bash
+      run: cp "${{ matrix.bin }}" "${{ matrix.artifact }}"
+
+    - name: Create / update release
+      uses: softprops/action-gh-release@v2
       with:
-        files: |
-          target/release/rustforge-cli
-          target/release/rustforge-cli.exe
+        files: ${{ matrix.artifact }}
