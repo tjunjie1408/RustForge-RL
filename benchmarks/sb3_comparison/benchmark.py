@@ -16,9 +16,9 @@ def _speed_stats(results: list) -> dict:
         times = [r.train_seconds for r in rs]
         thru = [r.total_steps / r.train_seconds for r in rs if r.train_seconds > 0]
         out[fw] = {
-            "time_mean": statistics.fmean(times),
+            "time_mean": statistics.fmean(times) if times else 0.0,
             "time_std": statistics.pstdev(times) if len(times) > 1 else 0.0,
-            "thru_mean": statistics.fmean(thru),
+            "thru_mean": statistics.fmean(thru) if thru else 0.0,
             "thru_std": statistics.pstdev(thru) if len(thru) > 1 else 0.0,
         }
     return out
@@ -85,7 +85,10 @@ def run_benchmark(seeds=None, step_budget=None, results_json=None, summary_md=No
         "solved": solved,
     }
 
-    os.makedirs(os.path.dirname(results_json), exist_ok=True)
+    for _path in (results_json, summary_md):
+        _parent = os.path.dirname(_path)
+        if _parent:
+            os.makedirs(_parent, exist_ok=True)
     with open(results_json, "w") as f:
         json.dump(payload, f, indent=2)
     with open(summary_md, "w") as f:
