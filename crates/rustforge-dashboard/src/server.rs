@@ -49,9 +49,12 @@ async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl
 async fn handle_socket(mut socket: WebSocket, state: AppState) {
     let (snapshot, mut rx) = state.snapshot_and_subscribe();
 
-    if send_json(&mut socket, &serde_json::json!({ "type": "snapshot", "rows": snapshot }))
-        .await
-        .is_err()
+    if send_json(
+        &mut socket,
+        &serde_json::json!({ "type": "snapshot", "rows": snapshot }),
+    )
+    .await
+    .is_err()
     {
         return;
     }
@@ -114,7 +117,12 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
 
         let resp = app
-            .oneshot(Request::builder().uri("/static/app.js").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/static/app.js")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
@@ -127,12 +135,20 @@ mod tests {
         use tokio_tungstenite::tungstenite::Message as TMsg;
 
         let state = AppState::new(64);
-        state.push(MetricRow { episode: 0, reward: 1.0, avg_loss: Some(0.5), epsilon: 0.9, global_step: 10 });
+        state.push(MetricRow {
+            episode: 0,
+            reward: 1.0,
+            avg_loss: Some(0.5),
+            epsilon: 0.9,
+            global_step: 10,
+        });
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let app = router(state.clone());
-        tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
 
         let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws"))
             .await
@@ -140,16 +156,27 @@ mod tests {
 
         // First message: snapshot containing the pre-existing row.
         let first = ws.next().await.unwrap().unwrap();
-        let text = match first { TMsg::Text(t) => t, other => panic!("expected text, got {other:?}") };
+        let text = match first {
+            TMsg::Text(t) => t,
+            other => panic!("expected text, got {other:?}"),
+        };
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["type"], "snapshot");
         assert_eq!(v["rows"].as_array().unwrap().len(), 1);
 
         // Push a new row; expect an append.
-        state.push(MetricRow { episode: 1, reward: 2.0, avg_loss: None, epsilon: 0.8, global_step: 20 });
+        state.push(MetricRow {
+            episode: 1,
+            reward: 2.0,
+            avg_loss: None,
+            epsilon: 0.8,
+            global_step: 20,
+        });
         let second = loop {
             let m = ws.next().await.unwrap().unwrap();
-            if let TMsg::Text(t) = m { break t; }
+            if let TMsg::Text(t) = m {
+                break t;
+            }
         };
         let v2: serde_json::Value = serde_json::from_str(&second).unwrap();
         assert_eq!(v2["type"], "append");

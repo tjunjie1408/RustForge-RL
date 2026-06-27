@@ -30,7 +30,13 @@ pub fn parse_line(line: &str) -> Option<MetricRow> {
     };
     let epsilon = f.next()?.trim().parse::<f32>().ok()?;
     let global_step = f.next()?.trim().parse::<u64>().ok()?;
-    Some(MetricRow { episode, reward, avg_loss, epsilon, global_step })
+    Some(MetricRow {
+        episode,
+        reward,
+        avg_loss,
+        epsilon,
+        global_step,
+    })
 }
 
 #[cfg(test)]
@@ -42,7 +48,13 @@ mod tests {
         let r = parse_line("5,12.5,0.3,0.8,140").unwrap();
         assert_eq!(
             r,
-            MetricRow { episode: 5, reward: 12.5, avg_loss: Some(0.3), epsilon: 0.8, global_step: 140 }
+            MetricRow {
+                episode: 5,
+                reward: 12.5,
+                avg_loss: Some(0.3),
+                epsilon: 0.8,
+                global_step: 140
+            }
         );
     }
 

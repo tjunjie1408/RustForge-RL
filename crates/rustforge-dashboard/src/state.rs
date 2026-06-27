@@ -18,7 +18,10 @@ pub struct AppState {
 impl AppState {
     pub fn new(capacity: usize) -> Self {
         let (tx, _rx) = broadcast::channel(capacity);
-        Self { history: Arc::new(RwLock::new(Vec::new())), tx }
+        Self {
+            history: Arc::new(RwLock::new(Vec::new())),
+            tx,
+        }
     }
 
     /// Append to history AND broadcast while holding the write lock, so a
@@ -66,7 +69,13 @@ mod tests {
     use super::*;
 
     fn row(ep: u64) -> MetricRow {
-        MetricRow { episode: ep, reward: ep as f32, avg_loss: Some(0.1), epsilon: 0.5, global_step: ep * 10 }
+        MetricRow {
+            episode: ep,
+            reward: ep as f32,
+            avg_loss: Some(0.1),
+            epsilon: 0.5,
+            global_step: ep * 10,
+        }
     }
 
     #[tokio::test]

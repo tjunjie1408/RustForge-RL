@@ -20,7 +20,11 @@ pub struct PollResult {
 
 impl CsvTailer {
     pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into(), offset: 0, pending: String::new() }
+        Self {
+            path: path.into(),
+            offset: 0,
+            pending: String::new(),
+        }
     }
 
     /// Read newly appended bytes (read-only, shared access), return complete rows.
@@ -30,7 +34,12 @@ impl CsvTailer {
 
         let size = match fs::metadata(&self.path) {
             Ok(m) => m.len(),
-            Err(_) => return PollResult { rows: Vec::new(), reset: false }, // file absent
+            Err(_) => {
+                return PollResult {
+                    rows: Vec::new(),
+                    reset: false,
+                }
+            } // file absent
         };
 
         if size < self.offset {
@@ -39,15 +48,26 @@ impl CsvTailer {
             reset = true;
         }
         if size == self.offset {
-            return PollResult { rows: Vec::new(), reset };
+            return PollResult {
+                rows: Vec::new(),
+                reset,
+            };
         }
 
         let mut file = match fs::File::open(&self.path) {
             Ok(f) => f,
-            Err(_) => return PollResult { rows: Vec::new(), reset },
+            Err(_) => {
+                return PollResult {
+                    rows: Vec::new(),
+                    reset,
+                }
+            }
         };
         if file.seek(SeekFrom::Start(self.offset)).is_err() {
-            return PollResult { rows: Vec::new(), reset };
+            return PollResult {
+                rows: Vec::new(),
+                reset,
+            };
         }
 
         let mut chunk = String::new();
@@ -87,7 +107,11 @@ mod tests {
     }
 
     fn append(path: &PathBuf, s: &str) {
-        let mut f = fs::OpenOptions::new().create(true).append(true).open(path).unwrap();
+        let mut f = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .unwrap();
         f.write_all(s.as_bytes()).unwrap();
     }
 
@@ -97,7 +121,10 @@ mod tests {
         let _ = fs::remove_file(&p);
         let mut t = CsvTailer::new(&p);
 
-        append(&p, "episode,reward,avg_loss,epsilon,global_step\n0,1.0,0.5,0.9,10\n");
+        append(
+            &p,
+            "episode,reward,avg_loss,epsilon,global_step\n0,1.0,0.5,0.9,10\n",
+        );
         let r1 = t.poll();
         assert_eq!(r1.rows.len(), 1);
         assert_eq!(r1.rows[0].episode, 0);

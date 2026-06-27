@@ -7,7 +7,10 @@ use rustforge_dashboard::server::router;
 use rustforge_dashboard::state::{spawn_tail_task, AppState};
 
 #[derive(Parser)]
-#[command(name = "rustforge-dashboard", about = "Live web dashboard for RustForge training runs")]
+#[command(
+    name = "rustforge-dashboard",
+    about = "Live web dashboard for RustForge training runs"
+)]
 struct Args {
     /// Path to the training CSV log (episode,reward,avg_loss,epsilon,global_step).
     #[arg(long)]
@@ -31,7 +34,10 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .map_err(|e| anyhow::anyhow!("failed to bind {addr}: {e}"))?;
-    println!("RustForge dashboard: http://{addr}  (watching {})", args.log.display());
+    println!(
+        "RustForge dashboard: http://{addr}  (watching {})",
+        args.log.display()
+    );
 
     axum::serve(listener, router(state)).await?;
     Ok(())
