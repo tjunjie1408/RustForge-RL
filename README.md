@@ -253,7 +253,7 @@ action = agent.predict([float(x) for x in obs])
 | **Phase 4** | SAC + TD3 | ✅ Complete |
 | **Phase 5** | Python Bindings (PyO3) | ✅ Complete |
 | **Phase 5** | Training Dashboard | 📋 Planned (next) |
-| **Phase 5** | Benchmarks vs SB3 | 📋 Planned |
+| **Phase 5** | Benchmarks vs SB3 | ✅ Complete (DQN/CartPole; ~22× faster) |
 | **Phase 5** | GPU Support (wgpu) | 📋 Planned |
 
 ---
@@ -286,6 +286,36 @@ RustForge RL is built on `ndarray` which leverages BLAS for matrix operations. P
 | Broadcasting Add | [1000, 1] + [1, 1000] | ~0.5ms | Native ndarray |
 
 > **Note**: Benchmarks are from development builds. Release builds (`--release`) are typically 10-30× faster.
+
+### RL Training Benchmark: RustForge vs Stable-Baselines3
+
+A head-to-head comparison trains **the same DQN** (matched architecture and
+hyperparameters) on **CartPole**, on **CPU**, for a **50,000 environment-step
+budget**, averaged over **10 runs** — RustForge driven through its Python
+bindings, [Stable-Baselines3](https://github.com/DLR-RM/stable-baselines3)
+through Gymnasium + PyTorch.
+
+**RustForge trains ~22× faster** in end-to-end throughput. Under this
+deliberately parity-matched config (single 64-unit hidden layer, vanilla DQN,
+ε decaying to 0.05), neither framework reaches the strict CartPole-v1 "solved"
+bar (mean reward ≥ 475 over 100 episodes) within the 50k-step budget — the
+learning curves below show comparable reward trajectories for both.
+
+![Training throughput: RustForge vs Stable-Baselines3](benchmarks/sb3_comparison/results/speed_comparison.png)
+
+| Framework | Train time (s) | Throughput (steps/sec) | Solved ≤ 50k steps |
+|-----------|----------------|------------------------|--------------------|
+| **RustForge** (native Rust) | 6.3 ± 2.7 | **13,680 ± 5,949** | 0 / 10 |
+| Stable-Baselines3 (Python + PyTorch) | 96.9 ± 35.9 | 616 ± 280 | 0 / 10 |
+
+![Learning curves — reward vs environment steps](benchmarks/sb3_comparison/results/learning_curve.png)
+
+This is an **end-to-end system comparison** (native Rust environment + training
+loop vs Python/Gymnasium + PyTorch), measured on CPU — the right regime for a
+small MLP policy. Full methodology, fairness caveats, and reproduction steps:
+[`benchmarks/sb3_comparison/`](benchmarks/sb3_comparison/README.md).
+
+> Measured on Windows 11, AMD Ryzen (16 cores), CPU-only, Python 3.14 + PyTorch CPU build.
 
 ---
 
