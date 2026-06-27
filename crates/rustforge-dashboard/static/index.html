@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>RustForge Dashboard</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <h1>🔥 RustForge Dashboard</h1>
+    <span id="status" class="pill waiting">waiting for data</span>
+  </header>
+
+  <section id="cards">
+    <div class="card"><div class="label">Episode</div><div id="stat-episode" class="value">–</div></div>
+    <div class="card"><div class="label">Reward</div><div id="stat-reward" class="value">–</div></div>
+    <div class="card"><div class="label">Best reward</div><div id="stat-best" class="value">–</div></div>
+    <div class="card"><div class="label">Rolling avg (100)</div><div id="stat-avg" class="value">–</div></div>
+    <div class="card"><div class="label">Env steps</div><div id="stat-steps" class="value">–</div></div>
+  </section>
+
+  <section class="charts">
+    <canvas id="chart-reward"></canvas>
+    <canvas id="chart-loss"></canvas>
+    <canvas id="chart-epsilon"></canvas>
+  </section>
+
+  <script src="/static/chart.min.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
