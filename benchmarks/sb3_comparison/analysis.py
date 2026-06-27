@@ -79,6 +79,12 @@ def format_summary(speed: dict, solved: dict, step_budget: int, n_runs: int) -> 
         lines += ["", f"**RustForge throughput speedup:** {rf / sb:.1f}x"]
     lines += [
         "",
+        f"> Throughput (steps/sec) is the apples-to-apples metric: RustForge is "
+        f"episode-budgeted and trains more env steps than SB3's fixed {step_budget:,}, "
+        f"so the raw train-time column covers different step counts.",
+    ]
+    lines += [
+        "",
         "## Learning (steps to reach CartPole-v1 solved threshold = 475)",
         "",
         "| Framework | Mean steps to solved | Runs solved |",

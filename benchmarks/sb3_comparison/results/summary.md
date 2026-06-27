@@ -9,6 +9,8 @@
 
 **RustForge throughput speedup:** 22.2x
 
+> Throughput (steps/sec) is the apples-to-apples metric: RustForge is episode-budgeted and trains more env steps than SB3's fixed 50,000, so the raw train-time column covers different step counts.
+
 ## Learning (steps to reach CartPole-v1 solved threshold = 475)
 
 | Framework | Mean steps to solved | Runs solved |

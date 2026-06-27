@@ -139,3 +139,4 @@ def test_solved_stats_truncates_to_budget(monkeypatch):
     # Truncated to 50 steps, the trailing-2 mean never reaches 2.0 -> unsolved.
     assert out["rustforge"]["n_solved"] == 0
     assert out["rustforge"]["mean_steps"] is None
+    assert out["sb3"]["n_solved"] == 0

@@ -308,6 +308,12 @@ learning curves below show comparable reward trajectories for both.
 | **RustForge** (native Rust) | 6.3 ± 2.7 | **13,680 ± 5,949** | 0 / 10 |
 | Stable-Baselines3 (Python + PyTorch) | 96.9 ± 35.9 | 616 ± 280 | 0 / 10 |
 
+> **On the time column:** RustForge's `DQN.train` is *episode*-budgeted (a fixed
+> 300 episodes ≈ 70k env steps on average), while SB3 trains exactly 50k steps.
+> The raw train-time column therefore covers *different step counts* —
+> **throughput (steps/sec) is the apples-to-apples metric**, since it divides each
+> framework's own steps by its own wall-clock time.
+
 ![Learning curves — reward vs environment steps](benchmarks/sb3_comparison/results/learning_curve.png)
 
 This is an **end-to-end system comparison** (native Rust environment + training

@@ -17,7 +17,7 @@ class RunResult:
     seed: int
     train_seconds: float
     total_steps: int
-    curve: list  # list[tuple[int, float]]
+    curve: list[tuple[int, float]]
 
 
 def _ramdisk_tmp_csv() -> str:

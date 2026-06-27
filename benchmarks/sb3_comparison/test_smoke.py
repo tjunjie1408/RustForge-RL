@@ -26,6 +26,7 @@ def test_run_sb3_tiny(monkeypatch):
     assert r.train_seconds > 0.0
     assert r.total_steps >= 400
     assert len(r.curve) >= 1
+    assert all(isinstance(s, int) and isinstance(rw, float) for s, rw in r.curve)
 
 
 def test_run_benchmark_quick_writes_artifacts(tmp_path, monkeypatch):

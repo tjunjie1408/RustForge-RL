@@ -119,7 +119,7 @@ def main() -> None:
     ap.add_argument("--quick", action="store_true",
                     help="1 seed, tiny budget — smoke run, not for reporting")
     ap.add_argument("--seeds", type=int, default=None, help="number of seeds/runs")
-    ap.add_argument("--budget", type=int, default=None, help="env-step budget")
+    ap.add_argument("--budget", type=int, default=None, help="env-step budget (RustForge's episode count is fixed/calibrated for 50k; large budgets may not be reached)")
     args = ap.parse_args()
 
     if args.quick:
