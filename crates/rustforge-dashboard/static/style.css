@@ -1,1 +1,13 @@
-body { font-family: system-ui, sans-serif; margin: 1.5rem; }
+body { font-family: system-ui, sans-serif; margin: 1.5rem; color: #1a1a1a; }
+header { display: flex; align-items: center; gap: 1rem; }
+h1 { font-size: 1.4rem; margin: 0; }
+.pill { font-size: .8rem; padding: .2rem .6rem; border-radius: 999px; color: #fff; }
+.pill.waiting { background: #888; }
+.pill.live { background: #2e7d32; }
+.pill.disconnected { background: #c62828; }
+#cards { display: flex; flex-wrap: wrap; gap: 1rem; margin: 1.2rem 0; }
+.card { border: 1px solid #ddd; border-radius: 8px; padding: .7rem 1rem; min-width: 8rem; }
+.card .label { font-size: .75rem; color: #666; }
+.card .value { font-size: 1.3rem; font-weight: 600; }
+.charts { display: grid; gap: 1.5rem; max-width: 900px; }
+canvas { border: 1px solid #eee; border-radius: 8px; padding: .5rem; }
