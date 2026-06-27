@@ -12,7 +12,6 @@ function makeChart(id, label, color) {
     data: { labels: [], datasets: [{ label, data: [], borderColor: color, pointRadius: 0, borderWidth: 1.5 }] },
     options: {
       animation: false,
-      parsing: false,
       scales: { x: { title: { display: true, text: "episode" } } },
       plugins: { legend: { display: true } },
     },
