@@ -92,7 +92,7 @@ function updateCards() {
   const fmt = (v) => (v === null || v === undefined ? "–" : (+v).toFixed(2));
   document.getElementById("stat-episode").textContent = data.episode[n - 1];
   document.getElementById("stat-reward").textContent = fmt(data.reward[n - 1]);
-  document.getElementById("stat-best").textContent = fmt(Math.max(...data.reward));
+  document.getElementById("stat-best").textContent = fmt(data.reward.reduce((a, b) => (b > a ? b : a), -Infinity));
   const recent = data.reward.slice(-ROLL_WINDOW);
   document.getElementById("stat-avg").textContent = fmt(recent.reduce((a, b) => a + b, 0) / recent.length);
   document.getElementById("stat-steps").textContent = data.steps_last ?? "–";
@@ -117,7 +117,8 @@ function setStatus(cls, text) {
 }
 
 function connect() {
-  const ws = new WebSocket(`ws://${location.host}/ws`);
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  const ws = new WebSocket(`${proto}//${location.host}/ws`);
   ws.onopen = () => setStatus("live", "live");
   ws.onclose = () => { setStatus("disconnected", "disconnected"); setTimeout(connect, 1500); };
   ws.onerror = () => ws.close();
