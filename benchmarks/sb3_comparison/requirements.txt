@@ -1,0 +1,9 @@
+# Benchmark-only deps — NOT part of the crate's core/test deps and NOT used in CI.
+# Install into a venv that ALSO has rustforge built in RELEASE mode:
+#   maturin develop --release   (run from crates/rustforge-python)
+stable-baselines3>=2.3
+torch>=2.2
+gymnasium>=0.29
+numpy>=1.21
+matplotlib>=3.7
+pytest>=7
