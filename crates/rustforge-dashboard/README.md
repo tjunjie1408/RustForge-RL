@@ -8,8 +8,8 @@ dashboard only reads the CSV it already writes.
 ## Run
 
 ```bash
-# produce a (growing) CSV, e.g. via the CLI:
-cargo run -p rustforge-cli --release -- train --algo dqn --env cartpole --episodes 200 --log target/run.csv
+# produce a (growing) CSV, e.g. via the CLI (algo is positional; CSV path is --output):
+cargo run -p rustforge-cli --release -- train dqn --env cartpole --episodes 200 --output target/run.csv
 
 # watch it live:
 cargo run -p rustforge-dashboard -- --log target/run.csv
