@@ -43,7 +43,21 @@ struct Args {
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
-    // Optionally spawn the trainer (writing to the same CSV we watch) before serving.
+    let state = AppState::new(1024);
+    spawn_tail_task(state.clone(), args.log.clone());
+
+    // Bind FIRST: a bind failure (e.g. port already in use) must error out
+    // BEFORE we spawn a trainer that would otherwise be orphaned.
+    let addr = format!("{}:{}", args.host, args.port);
+    let listener = tokio::net::TcpListener::bind(&addr)
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to bind {addr}: {e}"))?;
+    println!(
+        "RustForge dashboard: http://{addr}  (watching {})",
+        args.log.display()
+    );
+
+    // Port is secured — now optionally spawn the trainer.
     let mut trainer = match args.train {
         Some(algo) => {
             println!(
@@ -61,32 +75,20 @@ async fn main() -> anyhow::Result<()> {
         None => None,
     };
 
-    let state = AppState::new(1024);
-    spawn_tail_task(state.clone(), args.log.clone());
-
-    let addr = format!("{}:{}", args.host, args.port);
-    let listener = tokio::net::TcpListener::bind(&addr)
-        .await
-        .map_err(|e| anyhow::anyhow!("failed to bind {addr}: {e}"))?;
-    println!(
-        "RustForge dashboard: http://{addr}  (watching {})",
-        args.log.display()
-    );
-
     if !args.no_open {
         open_browser(&browser_url(&args.host, args.port));
     }
 
-    // Serve until Ctrl+C; then reap the trainer if it is still running.
+    // Serve until Ctrl+C; reap the trainer on EVERY exit path (success or error).
     let shutdown = async {
         let _ = tokio::signal::ctrl_c().await;
     };
-    axum::serve(listener, router(state))
+    let serve_result = axum::serve(listener, router(state))
         .with_graceful_shutdown(shutdown)
-        .await?;
-
+        .await;
     if let Some(child) = trainer.as_mut() {
-        let _ = child.kill(); // already-exited child -> Err, which we ignore
+        let _ = child.kill();
     }
+    serve_result?;
     Ok(())
 }
