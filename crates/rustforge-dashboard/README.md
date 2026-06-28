@@ -8,15 +8,18 @@ dashboard only reads the CSV it already writes.
 ## Run
 
 ```bash
-# produce a (growing) CSV, e.g. via the CLI (algo is positional; CSV path is --output):
-cargo run -p rustforge-cli --release -- train dqn --env cartpole --episodes 200 --output target/run.csv
+# one command: train, serve, and open the browser
+cargo run -p rustforge-dashboard -- --train dqn --episodes 200
 
-# watch it live:
+# or just watch a CSV (default: target/cli_train_dqn.csv) — browser opens automatically
+cargo run -p rustforge-dashboard
 cargo run -p rustforge-dashboard -- --log target/run.csv
-# open http://127.0.0.1:8080
+
+# watch a run produced by the CLI directly (algo positional; CSV path is --output):
+cargo run -p rustforge-cli --release -- train dqn --env cartpole --episodes 200 --output target/run.csv
 ```
 
-Flags: `--log <PATH>` (required), `--port` (default 8080), `--host` (default 127.0.0.1).
+Flags: `--train [<ALGO>]` (spawn the trainer first; bare `--train` ⇒ `dqn`), `--episodes` (default 200), `--env` (default `cartpole`), `--log <PATH>` (default `target/cli_train_dqn.csv`), `--no-open` (don't open a browser), `--port` (default 8080), `--host` (default 127.0.0.1).
 
 ## How it works
 
