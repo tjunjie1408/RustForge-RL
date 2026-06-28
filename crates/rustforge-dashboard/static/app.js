@@ -3,18 +3,55 @@
 const MAX_POINTS = 2000;   // render cap per chart
 const ROLL_WINDOW = 100;   // rolling-average window (episodes)
 
+// Series colors are theme-independent (chosen to read on both surfaces). Area
+// fills use an 8-digit hex at ~20% alpha (color + "33"), which looks right over
+// both the dark (#161b22) and light (#ffffff) surfaces — no per-theme fill logic.
+const COLOR = { reward: "#f97316", avg: "#3b82f6", loss: "#a855f7", epsilon: "#22c55e" };
+
+// Per-theme chart "chrome" (gridlines + axis ticks + legend text). Series colors
+// above stay fixed across themes; only these change.
+const THEME = {
+  dark: { grid: "#2b3340", tick: "#8b949e" },
+  light: { grid: "#e4e8ee", tick: "#5b6573" },
+};
+
 // Full series kept in memory; charts render a downsampled view.
 const data = { episode: [], reward: [], loss: [], epsilon: [] };
+
+// Shared chart options so all three charts share the same chrome (colored by
+// applyChartTheme). maintainAspectRatio:false makes the chart fill its
+// fixed-height wrapper instead of imposing its own aspect ratio.
+function baseOptions(showLegend) {
+  return {
+    animation: false,
+    responsive: true,
+    maintainAspectRatio: false,
+    scales: {
+      x: { title: { display: true, text: "episode" }, grid: {}, ticks: {} },
+      y: { grid: {}, ticks: {} },
+    },
+    plugins: { legend: { display: showLegend, labels: {} } },
+  };
+}
 
 function makeChart(id, label, color) {
   return new Chart(document.getElementById(id).getContext("2d"), {
     type: "line",
-    data: { labels: [], datasets: [{ label, data: [], borderColor: color, pointRadius: 0, borderWidth: 1.5 }] },
-    options: {
-      animation: false,
-      scales: { x: { title: { display: true, text: "episode" } } },
-      plugins: { legend: { display: true } },
+    data: {
+      labels: [],
+      datasets: [
+        {
+          label,
+          data: [],
+          borderColor: color,
+          backgroundColor: color + "33",
+          fill: true,
+          pointRadius: 0,
+          borderWidth: 1.6,
+        },
+      ],
     },
+    options: baseOptions(false),
   });
 }
 
@@ -23,14 +60,45 @@ const rewardChart = new Chart(document.getElementById("chart-reward").getContext
   data: {
     labels: [],
     datasets: [
-      { label: "reward", data: [], borderColor: "#1565c0", pointRadius: 0, borderWidth: 1 },
-      { label: "rolling avg (100)", data: [], borderColor: "#d84315", pointRadius: 0, borderWidth: 2 },
+      {
+        label: "reward",
+        data: [],
+        borderColor: COLOR.reward,
+        backgroundColor: COLOR.reward + "33",
+        fill: true,
+        pointRadius: 0,
+        borderWidth: 1.4,
+      },
+      {
+        label: "rolling avg (100)",
+        data: [],
+        borderColor: COLOR.avg,
+        fill: false,
+        pointRadius: 0,
+        borderWidth: 2.4,
+      },
     ],
   },
-  options: { animation: false, scales: { x: { title: { display: true, text: "episode" } } } },
+  options: baseOptions(true),
 });
-const lossChart = makeChart("chart-loss", "avg_loss", "#6a1b9a");
-const epsilonChart = makeChart("chart-epsilon", "epsilon", "#2e7d32");
+const lossChart = makeChart("chart-loss", "avg_loss", COLOR.loss);
+const epsilonChart = makeChart("chart-epsilon", "epsilon", COLOR.epsilon);
+const allCharts = [rewardChart, lossChart, epsilonChart];
+
+// Re-theme already-instantiated charts. Chart.defaults.color only affects FUTURE
+// charts, so reassign each live instance's chrome colors, then update.
+function applyChartTheme(theme) {
+  const c = THEME[theme] || THEME.dark;
+  for (const chart of allCharts) {
+    chart.options.scales.x.grid.color = c.grid;
+    chart.options.scales.y.grid.color = c.grid;
+    chart.options.scales.x.ticks.color = c.tick;
+    chart.options.scales.y.ticks.color = c.tick;
+    chart.options.scales.x.title.color = c.tick;
+    chart.options.plugins.legend.labels.color = c.tick;
+    chart.update("none");
+  }
+}
 
 // Downsample y[] to <= MAX_POINTS, preserving per-bucket min & max so spikes/
 // crashes are never smoothed away. Returns parallel {labels, values}.
@@ -136,4 +204,21 @@ function connect() {
   };
 }
 
+// Theme toggle: flip <html data-theme>, persist, re-theme the charts.
+function currentTheme() {
+  return document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
+}
+function setTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  try { localStorage.setItem("rf-theme", theme); } catch (e) { /* private mode: keep session theme */ }
+  applyChartTheme(theme);
+}
+const toggleBtn = document.getElementById("theme-toggle");
+if (toggleBtn) {
+  toggleBtn.addEventListener("click", () => {
+    setTheme(currentTheme() === "dark" ? "light" : "dark");
+  });
+}
+
+applyChartTheme(currentTheme());
 connect();
