@@ -1,6 +1,7 @@
 //! Renderer-independent dashboard calculations.
 
 use crate::metrics::MetricRow;
+use std::time::Duration;
 
 /// KPI values shown by both the Web dashboard and its terminal replacement.
 #[derive(Clone, Debug, PartialEq)]
@@ -106,4 +107,103 @@ pub fn downsample_min_max(
 
     sampled.truncate(max_points);
     sampled
+}
+
+/// Rates observed after attaching to a source.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ObservedRates {
+    pub steps_per_second: f64,
+    pub episodes_per_minute: f64,
+}
+
+pub fn observed_rates(
+    start_step: u64,
+    end_step: u64,
+    start_episode: u64,
+    end_episode: u64,
+    elapsed: Duration,
+) -> Option<ObservedRates> {
+    let seconds = elapsed.as_secs_f64();
+    if !seconds.is_finite() || seconds <= 0.0 {
+        return None;
+    }
+    Some(ObservedRates {
+        steps_per_second: end_step.saturating_sub(start_step) as f64 / seconds,
+        episodes_per_minute: end_episode.saturating_sub(start_episode) as f64 * 60.0 / seconds,
+    })
+}
+
+pub fn estimate_eta(completed: u64, target: Option<u64>, rate: f64) -> Option<Duration> {
+    let target = target?;
+    if completed >= target {
+        return Some(Duration::ZERO);
+    }
+    if !rate.is_finite() || rate <= 0.0 {
+        return None;
+    }
+    Some(Duration::from_secs_f64((target - completed) as f64 / rate))
+}
+
+pub fn is_stalled(running: bool, since_last_progress: Duration, threshold: Duration) -> bool {
+    running && since_last_progress >= threshold
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RewardAlertKind {
+    TargetReached,
+    Divergence,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RewardAlert {
+    pub kind: RewardAlertKind,
+    pub value: f64,
+}
+
+pub fn reward_alerts(
+    rewards: &[f64],
+    target: Option<f64>,
+    minimum_samples: usize,
+    divergence_fraction: f64,
+) -> Vec<RewardAlert> {
+    if minimum_samples == 0 || rewards.len() < minimum_samples {
+        return Vec::new();
+    }
+
+    let finite: Vec<f64> = rewards
+        .iter()
+        .copied()
+        .filter(|value| value.is_finite())
+        .collect();
+    if finite.len() < minimum_samples {
+        return Vec::new();
+    }
+
+    let mut alerts = Vec::with_capacity(2);
+    if let Some(target) = target.filter(|target| target.is_finite()) {
+        if let Some(value) = finite.iter().copied().find(|value| *value >= target) {
+            alerts.push(RewardAlert {
+                kind: RewardAlertKind::TargetReached,
+                value,
+            });
+        }
+    }
+
+    if (0.0..1.0).contains(&divergence_fraction) && finite.len() > minimum_samples {
+        let recent = &finite[finite.len() - minimum_samples..];
+        let recent_average = recent.iter().sum::<f64>() / recent.len() as f64;
+        let earlier_best = finite[..finite.len() - minimum_samples]
+            .iter()
+            .copied()
+            .fold(f64::NEG_INFINITY, f64::max);
+        if earlier_best.is_finite() && recent_average <= earlier_best * (1.0 - divergence_fraction)
+        {
+            alerts.push(RewardAlert {
+                kind: RewardAlertKind::Divergence,
+                value: recent_average,
+            });
+        }
+    }
+
+    alerts
 }
