@@ -3,7 +3,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use rustforge_dashboard::source::csv::{CsvDiagnosticKind, CsvSource, MonitorSourceState};
+use rustforge_tui::source::csv::{CsvDiagnosticKind, CsvSource, MonitorSourceState};
 
 fn unique_path(tag: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -25,7 +25,7 @@ fn append(path: &PathBuf, bytes: &[u8]) {
 }
 
 fn has_diagnostic(
-    poll: &rustforge_dashboard::source::csv::CsvSourcePoll,
+    poll: &rustforge_tui::source::csv::CsvSourcePoll,
     kind: CsvDiagnosticKind,
 ) -> bool {
     poll.diagnostics.iter().any(|item| item.kind == kind)

@@ -13,7 +13,7 @@ rustforge-autograd = { path = "../rustforge-autograd" }
 rustforge-tensor = { path = "../rustforge-tensor" }
 rustforge-nn = { path = "../rustforge-nn" }
 rustforge-rl = { path = "../rustforge-rl" }
-rustforge-dashboard = { path = "../rustforge-dashboard" }
+rustforge-tui = { path = "../rustforge-tui" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
 [[bin]]

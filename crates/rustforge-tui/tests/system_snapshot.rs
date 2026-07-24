@@ -1,4 +1,4 @@
-use rustforge_dashboard::system::{format_bytes, SystemSampler};
+use rustforge_tui::system::{format_bytes, SystemSampler};
 
 #[test]
 fn byte_formatting_is_stable_for_terminal_display() {

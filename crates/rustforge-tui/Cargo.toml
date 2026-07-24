@@ -1,5 +1,5 @@
 [package]
-name = "rustforge-dashboard"
+name = "rustforge-tui"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

@@ -3,9 +3,9 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use rustforge_dashboard::analytics::{dashboard_stats, downsample_min_max, rolling_average};
-use rustforge_dashboard::metrics::{parse_line, DQN_CSV_V1_HEADER};
-use rustforge_dashboard::source::csv::CsvSource;
+use rustforge_tui::analytics::{dashboard_stats, downsample_min_max, rolling_average};
+use rustforge_tui::metrics::{parse_line, DQN_CSV_V1_HEADER};
+use rustforge_tui::source::csv::CsvSource;
 
 fn unique_path(tag: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);

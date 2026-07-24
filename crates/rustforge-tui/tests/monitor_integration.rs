@@ -1,6 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use rustforge_dashboard::action::Action;
-use rustforge_dashboard::monitor::{map_monitor_key, MonitorInput};
+use rustforge_tui::action::Action;
+use rustforge_tui::monitor::{map_monitor_key, MonitorInput};
 
 fn key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)

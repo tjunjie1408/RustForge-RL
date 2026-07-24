@@ -1,4 +1,4 @@
-use rustforge_dashboard::monitor::{run_monitor, MonitorOptions};
+use rustforge_tui::monitor::{run_monitor, MonitorOptions};
 
 use crate::cli::MonitorArgs;
 

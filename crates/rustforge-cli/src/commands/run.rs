@@ -4,8 +4,6 @@ use std::path::Path;
 use std::thread;
 
 use anyhow::Context;
-use rustforge_dashboard::live::{run_live, LiveOptions, LiveSession};
-use rustforge_dashboard::terminal::{preflight_current_terminal, preflight_current_terminal_size};
 use rustforge_rl::agent::DqnTrainerAdapter;
 use rustforge_rl::env::{CartPole, GridWorld};
 use rustforge_rl::metrics::DqnCsvMetricSink;
@@ -19,6 +17,8 @@ use rustforge_rl::runtime::trainer::{
     finalize_outcome, OutcomeSlot, StopReason, Trainer, TrainerContext, TrainerStatus,
     TrainingOutcome, TrainingSummary,
 };
+use rustforge_tui::live::{run_live, LiveOptions, LiveSession};
+use rustforge_tui::terminal::{preflight_current_terminal, preflight_current_terminal_size};
 
 use crate::cli::{Algorithm, Environment, RunArgs};
 use crate::commands::train::dqn_config;

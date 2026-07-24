@@ -1,6 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use rustforge_dashboard::live::{map_live_key, LiveInput};
 use rustforge_rl::runtime::trainer::TrainerStatus;
+use rustforge_tui::live::{map_live_key, LiveInput};
 
 #[test]
 fn live_keys_pause_resume_and_escalate_quit_without_exiting_early() {

@@ -1,12 +1,12 @@
-use rustforge_dashboard::action::Action;
-use rustforge_dashboard::app::{AppMode, AppState, ChartRange, Dialog, Palette, View};
-use rustforge_dashboard::history::BoundedHistory;
-use rustforge_dashboard::metrics::parse_line;
-use rustforge_dashboard::source::csv::{
+use rustforge_tui::action::Action;
+use rustforge_tui::app::{AppMode, AppState, ChartRange, Dialog, Palette, View};
+use rustforge_tui::history::BoundedHistory;
+use rustforge_tui::metrics::parse_line;
+use rustforge_tui::source::csv::{
     CsvDiagnostic, CsvDiagnosticKind, CsvSourcePoll, MonitorSourceState,
 };
 
-fn row(episode: u64) -> rustforge_dashboard::metrics::MetricRow {
+fn row(episode: u64) -> rustforge_tui::metrics::MetricRow {
     parse_line(&format!(
         "{episode},{},0.5,0.9,{}",
         episode as f32 * 10.0,

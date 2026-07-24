@@ -1,7 +1,7 @@
 use std::time::Duration;
 
-use rustforge_dashboard::event_loop::EventCadence;
-use rustforge_dashboard::terminal::{
+use rustforge_tui::event_loop::EventCadence;
+use rustforge_tui::terminal::{
     validate_terminal_environment, validate_terminal_size, TerminalPreflightError,
     MIN_TERMINAL_HEIGHT, MIN_TERMINAL_WIDTH,
 };

@@ -6,7 +6,7 @@ members = [
     "crates/rustforge-rl",
     "crates/rustforge-cli",
     "crates/rustforge-python",
-    "crates/rustforge-dashboard",
+    "crates/rustforge-tui",
 ]
 default-members = [
     "crates/rustforge-tensor",
@@ -14,7 +14,7 @@ default-members = [
     "crates/rustforge-nn",
     "crates/rustforge-rl",
     "crates/rustforge-cli",
-    "crates/rustforge-dashboard",
+    "crates/rustforge-tui",
 ]
 resolver = "2"
 

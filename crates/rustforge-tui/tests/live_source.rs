@@ -1,4 +1,3 @@
-use rustforge_dashboard::source::live::LiveSource;
 use rustforge_rl::agent::{DQNConfig, DqnTrainerAdapter};
 use rustforge_rl::env::CartPole;
 use rustforge_rl::runtime::event::{
@@ -6,6 +5,7 @@ use rustforge_rl::runtime::event::{
 };
 use rustforge_rl::runtime::progress::progress_channel;
 use rustforge_rl::runtime::trainer::Trainer;
+use rustforge_tui::source::live::LiveSource;
 
 #[tokio::test]
 async fn live_source_maps_generic_episode_metrics_without_importing_dqn_fields() {

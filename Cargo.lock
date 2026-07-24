@@ -1074,26 +1074,10 @@ dependencies = [
  "anyhow",
  "clap",
  "rustforge-autograd",
- "rustforge-dashboard",
  "rustforge-nn",
  "rustforge-rl",
  "rustforge-tensor",
- "tokio",
-]
-
-[[package]]
-name = "rustforge-dashboard"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "crossbeam-channel",
- "crossterm",
- "futures-util",
- "instability",
- "ratatui",
- "rustforge-rl",
- "serde",
- "sysinfo",
+ "rustforge-tui",
  "tokio",
 ]
 
@@ -1150,6 +1134,22 @@ dependencies = [
  "rand 0.8.5",
  "rand_distr",
  "serde",
+]
+
+[[package]]
+name = "rustforge-tui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "crossbeam-channel",
+ "crossterm",
+ "futures-util",
+ "instability",
+ "ratatui",
+ "rustforge-rl",
+ "serde",
+ "sysinfo",
+ "tokio",
 ]
 
 [[package]]

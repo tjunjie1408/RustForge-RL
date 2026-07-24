@@ -1,12 +1,12 @@
 use std::time::Duration;
 
-use rustforge_dashboard::analytics::{
+use rustforge_tui::analytics::{
     estimate_eta, is_stalled, observed_rates, reward_alerts, RewardAlertKind,
 };
-use rustforge_dashboard::app::{AppMode, AppState};
-use rustforge_dashboard::metrics::parse_line;
-use rustforge_dashboard::monitor::MonitorTracker;
-use rustforge_dashboard::source::csv::{CsvSourcePoll, MonitorSourceState};
+use rustforge_tui::app::{AppMode, AppState};
+use rustforge_tui::metrics::parse_line;
+use rustforge_tui::monitor::MonitorTracker;
+use rustforge_tui::source::csv::{CsvSourcePoll, MonitorSourceState};
 use std::time::Instant;
 
 #[test]

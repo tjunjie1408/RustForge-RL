@@ -4,13 +4,13 @@ use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::style::Color;
 use ratatui::Terminal;
-use rustforge_dashboard::app::{AppMode, AppState, RunMetadata, View};
-use rustforge_dashboard::metrics::parse_line;
-use rustforge_dashboard::source::csv::{
+use rustforge_tui::app::{AppMode, AppState, RunMetadata, View};
+use rustforge_tui::metrics::parse_line;
+use rustforge_tui::source::csv::{
     CsvDiagnostic, CsvDiagnosticKind, CsvSourcePoll, MonitorSourceState,
 };
-use rustforge_dashboard::system::SystemSnapshot;
-use rustforge_dashboard::ui::render;
+use rustforge_tui::system::SystemSnapshot;
+use rustforge_tui::ui::render;
 
 fn sample_app() -> AppState {
     let mut app = AppState::new(AppMode::Monitor, 128, 32);
