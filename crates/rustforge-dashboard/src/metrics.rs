@@ -1,6 +1,9 @@
 //! The metric row parsed from a training CSV line.
 use serde::Serialize;
 
+/// Stable header used by the existing DQN CSV metrics format.
+pub const DQN_CSV_V1_HEADER: &str = "episode,reward,avg_loss,epsilon,global_step";
+
 /// One row of `episode,reward,avg_loss,epsilon,global_step`.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct MetricRow {
