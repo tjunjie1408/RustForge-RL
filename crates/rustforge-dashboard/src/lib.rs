@@ -9,5 +9,7 @@ pub mod metrics;
 pub mod server;
 pub mod source;
 pub mod state;
+pub mod system;
 pub mod tail;
 pub mod terminal;
+pub mod ui;

@@ -4,6 +4,8 @@ use crate::action::Action;
 use crate::history::BoundedHistory;
 use crate::metrics::MetricRow;
 use crate::source::csv::{CsvDiagnostic, CsvSourcePoll, MonitorSourceState};
+use crate::system::SystemSnapshot;
+use std::path::PathBuf;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AppMode {
@@ -46,6 +48,18 @@ pub enum Palette {
     Monochrome,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RunMetadata {
+    pub run_id: Option<String>,
+    pub algorithm: Option<String>,
+    pub environment: Option<String>,
+    pub seed: Option<u64>,
+    pub device: Option<String>,
+    pub metrics_path: Option<PathBuf>,
+    pub manifest_path: Option<PathBuf>,
+    pub schema_version: Option<String>,
+}
+
 impl Palette {
     fn next(self) -> Self {
         match self {
@@ -67,6 +81,10 @@ pub struct AppState {
     palette: Palette,
     help_visible: bool,
     live_controls_available: bool,
+    run_metadata: RunMetadata,
+    no_color: bool,
+    ascii: bool,
+    system_snapshot: Option<SystemSnapshot>,
 }
 
 impl AppState {
@@ -82,6 +100,10 @@ impl AppState {
             palette: Palette::Default,
             help_visible: false,
             live_controls_available: false,
+            run_metadata: RunMetadata::default(),
+            no_color: false,
+            ascii: false,
+            system_snapshot: None,
         }
     }
 
@@ -133,6 +155,10 @@ impl AppState {
         self.view
     }
 
+    pub fn set_view(&mut self, view: View) {
+        self.view = view;
+    }
+
     pub fn source_state(&self) -> MonitorSourceState {
         self.source_state
     }
@@ -171,5 +197,37 @@ impl AppState {
 
     pub fn set_live_controls_available(&mut self, available: bool) {
         self.live_controls_available = available;
+    }
+
+    pub fn run_metadata(&self) -> &RunMetadata {
+        &self.run_metadata
+    }
+
+    pub fn set_run_metadata(&mut self, metadata: RunMetadata) {
+        self.run_metadata = metadata;
+    }
+
+    pub fn no_color(&self) -> bool {
+        self.no_color
+    }
+
+    pub fn set_no_color(&mut self, no_color: bool) {
+        self.no_color = no_color;
+    }
+
+    pub fn ascii(&self) -> bool {
+        self.ascii
+    }
+
+    pub fn set_ascii(&mut self, ascii: bool) {
+        self.ascii = ascii;
+    }
+
+    pub fn system_snapshot(&self) -> Option<&SystemSnapshot> {
+        self.system_snapshot.as_ref()
+    }
+
+    pub fn set_system_snapshot(&mut self, snapshot: SystemSnapshot) {
+        self.system_snapshot = Some(snapshot);
     }
 }
