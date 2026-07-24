@@ -5,13 +5,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use rustforge_dashboard::analytics::{dashboard_stats, downsample_min_max, rolling_average};
 use rustforge_dashboard::metrics::{parse_line, DQN_CSV_V1_HEADER};
-use rustforge_dashboard::tail::CsvTailer;
+use rustforge_dashboard::source::csv::CsvSource;
 
 fn unique_path(tag: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     std::env::temp_dir().join(format!(
-        "rustforge_web_parity_{tag}_{}_{}.csv",
+        "rustforge_terminal_parity_{tag}_{}_{}.csv",
         std::process::id(),
         n
     ))
@@ -44,8 +44,8 @@ fn dqn_csv_v1_schema_and_snapshot_are_preserved() {
         ),
     );
 
-    let mut tailer = CsvTailer::new(&path);
-    let snapshot = tailer.poll();
+    let mut source = CsvSource::new(&path);
+    let snapshot = source.poll();
     assert_eq!(snapshot.rows.len(), 2);
     assert_eq!(snapshot.rows[0].episode, 0);
     assert_eq!(snapshot.rows[1].avg_loss, None);
@@ -61,13 +61,13 @@ fn append_updates_are_incremental_and_partial_lines_are_withheld() {
         &path,
         "episode,reward,avg_loss,epsilon,global_step\n0,1,0.5,1,5\n",
     );
-    let mut tailer = CsvTailer::new(&path);
-    assert_eq!(tailer.poll().rows.len(), 1);
+    let mut source = CsvSource::new(&path);
+    assert_eq!(source.poll().rows.len(), 1);
 
     append(&path, "1,2,0.4,0.9,");
-    assert!(tailer.poll().rows.is_empty());
+    assert!(source.poll().rows.is_empty());
     append(&path, "10\n");
-    let appended = tailer.poll();
+    let appended = source.poll();
     assert_eq!(appended.rows.len(), 1);
     assert_eq!(appended.rows[0].episode, 1);
     assert_eq!(appended.rows[0].global_step, 10);
@@ -76,7 +76,7 @@ fn append_updates_are_incremental_and_partial_lines_are_withheld() {
 }
 
 #[test]
-fn dashboard_kpis_match_the_web_contract() {
+fn terminal_kpis_match_the_replacement_contract() {
     let rows = [
         parse_line("0,10,0.5,1.0,10").unwrap(),
         parse_line("1,30,0.4,0.9,25").unwrap(),

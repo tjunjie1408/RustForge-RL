@@ -89,11 +89,13 @@ A PyTorch-style tensor library built on top of [`ndarray`](https://github.com/ru
 - **Gymnasium bridge**: `rustforge.make("CartPole")` returns a `gymnasium.Env` whose `reset`/`step` yield `float32` NumPy observations
 - **Typed**: ships `_core.pyi` type stubs + a `py.typed` marker; covered by a dedicated CI job (31 pytest)
 
-### 📊 Training Dashboard (`rustforge-dashboard`) — 📋 Planned
+### 📊 Native terminal training console — ✅ Complete
 
-- Real-time web-based monitoring via Axum + WebSocket
-- Live reward curves, loss plots, episode statistics
-- Hyperparameter tracking and experiment comparison
+- Ratatui overview, charts, run details, and reliable event/activity views
+- `rustforge monitor <metrics.csv>` for completed or growing DQN CSV v1 files
+- `rustforge run dqn` for in-process metrics plus pause/resume and graceful/force stop
+- Independent CSV persistence and collision-safe run manifests
+- ASCII and no-color accessibility modes
 
 ---
 
@@ -375,7 +377,7 @@ cargo clippy --workspace
 | Logging | [tracing](https://github.com/tokio-rs/tracing) |
 | Testing | Built-in + [approx](https://github.com/brendanzab/approx) |
 | Python Bindings | [PyO3](https://pyo3.rs/) 0.25 + [maturin](https://www.maturin.rs/) |
-| Future: Web Dashboard | [Axum](https://github.com/tokio-rs/axum) + WebSocket |
+| Terminal Console | [Ratatui](https://ratatui.rs/) + Crossterm |
 | Future: GPU | [wgpu](https://wgpu.rs/) |
 
 ---

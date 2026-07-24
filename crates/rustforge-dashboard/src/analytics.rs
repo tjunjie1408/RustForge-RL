@@ -3,7 +3,7 @@
 use crate::metrics::MetricRow;
 use std::time::Duration;
 
-/// KPI values shown by both the Web dashboard and its terminal replacement.
+/// KPI values shown by the native terminal training console.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DashboardStats {
     pub episode: u64,

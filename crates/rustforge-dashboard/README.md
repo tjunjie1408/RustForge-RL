@@ -1,30 +1,28 @@
-# rustforge-dashboard
+# RustForge native terminal console
 
-Transitional native terminal monitor for a RustForge training run. It loads and
+Ratatui monitor and live training console for RustForge. Monitor mode loads and
 follows the existing DQN CSV v1 format:
 
 ```text
 episode,reward,avg_loss,epsilon,global_step
 ```
 
-This crate is being migrated to `rustforge-tui`. The current binary is a
-read-only Ratatui monitor; it no longer launches a browser or binds a server
-port. Live pause/resume/stop controls belong to the later integrated
-`rustforge run` path, not CSV attach mode.
+The user-facing entry point is the `rustforge` binary. This crate is a library
+consumed by `rustforge-cli`; it does not expose a separate dashboard binary.
 
 ## Run
 
 ```bash
 # Start headless training in one terminal.
-cargo run -p rustforge-cli --release -- \
+cargo run -p rustforge-cli --bin rustforge --release -- \
   train dqn --env cartpole --episodes 200 --output target/run.csv
 
 # Attach the native terminal monitor in another terminal.
-cargo run -p rustforge-dashboard -- --log target/run.csv
+cargo run -p rustforge-cli --bin rustforge -- monitor target/run.csv
 
 # Accessibility and optional monitoring metadata.
-cargo run -p rustforge-dashboard -- \
-  --log target/run.csv --no-color --ascii \
+cargo run -p rustforge-cli --bin rustforge -- monitor target/run.csv \
+  --no-color --ascii \
   --target-reward 195 --total-episodes 200
 ```
 
@@ -48,3 +46,15 @@ q / Ctrl+C       quit monitor
 ```
 
 Monitor mode intentionally has no pause, resume, stop, or checkpoint controls.
+
+For integrated DQN training with live controls:
+
+```bash
+cargo run -p rustforge-cli --bin rustforge -- run dqn \
+  --env cartpole --episodes 200 --target-reward 195
+```
+
+In live mode, `p` pauses/resumes at a step boundary. The first `q` requests a
+graceful episode-boundary stop; a second `q` escalates to force stop after the
+current step. Checkpoint controls remain disabled because recoverable DQN
+checkpointing is not implemented.
