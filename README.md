@@ -69,7 +69,7 @@ A PyTorch-style tensor library built on top of [`ndarray`](https://github.com/ru
 - `Linear`, `Conv2d`, `BatchNorm`, `LayerNorm`
 - `Sequential` container, `Module` trait
 - Loss functions: MSE, CrossEntropy, Huber
-- Model serialization and checkpointing
+- Model parameter serialization and load/save support
 
 ### 🎮 RL Algorithms (`rustforge-rl`) — ✅ Phase 4 Complete
 
@@ -96,6 +96,7 @@ A PyTorch-style tensor library built on top of [`ndarray`](https://github.com/ru
 - `rustforge run dqn` for in-process metrics plus pause/resume and graceful/force stop
 - Independent CSV persistence and collision-safe run manifests
 - ASCII and no-color accessibility modes
+- Recoverable checkpoints and process-restart resumption are not yet supported
 
 ---
 
