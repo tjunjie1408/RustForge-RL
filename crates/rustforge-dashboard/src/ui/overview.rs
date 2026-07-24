@@ -78,11 +78,43 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: Theme) {
     );
 
     let snapshot = app.system_snapshot();
+    let insights = app.monitor_insights();
     let system = vec![
-        metric_line("Elapsed", None, theme, app.ascii()),
-        metric_line("Steps/sec", None, theme, app.ascii()),
-        metric_line("Episodes/min", None, theme, app.ascii()),
-        metric_line("Progress / ETA", None, theme, app.ascii()),
+        metric_line(
+            "Elapsed",
+            Some(format_duration(insights.elapsed)),
+            theme,
+            app.ascii(),
+        ),
+        metric_line(
+            "Steps/sec",
+            insights.steps_per_second.map(|value| format!("{value:.1}")),
+            theme,
+            app.ascii(),
+        ),
+        metric_line(
+            "Episodes/min",
+            insights
+                .episodes_per_minute
+                .map(|value| format!("{value:.2}")),
+            theme,
+            app.ascii(),
+        ),
+        metric_line(
+            "Progress / ETA",
+            insights.progress_fraction.map(|progress| {
+                let eta = insights.eta.map(format_duration).unwrap_or_else(|| {
+                    if app.ascii() {
+                        "-".into()
+                    } else {
+                        "—".into()
+                    }
+                });
+                format!("{:.1}% / {eta}", progress * 100.0)
+            }),
+            theme,
+            app.ascii(),
+        ),
         metric_line(
             "System",
             snapshot.map(|snapshot| {
@@ -130,7 +162,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: Theme) {
         top[1],
     );
 
-    let activity: Vec<Line<'_>> = app
+    let mut activity: Vec<Line<'_>> = app
         .activity()
         .iter()
         .rev()
@@ -142,6 +174,24 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: Theme) {
             ])
         })
         .collect();
+    if insights.stalled {
+        activity.insert(
+            0,
+            Line::styled(
+                "STALL: no new progress for at least 30 seconds",
+                Style::default().fg(theme.warning),
+            ),
+        );
+    }
+    for alert in insights.alerts.iter().rev() {
+        activity.insert(
+            0,
+            Line::styled(
+                format!("ALERT {:?}: {:.2}", alert.kind, alert.value),
+                Style::default().fg(theme.warning),
+            ),
+        );
+    }
     let activity = if activity.is_empty() {
         vec![Line::styled(
             "No source activity yet",
@@ -156,6 +206,16 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: Theme) {
             .block(theme.block(" Recent activity ", app.ascii())),
         sections[1],
     );
+}
+
+fn format_duration(duration: std::time::Duration) -> String {
+    let seconds = duration.as_secs();
+    format!(
+        "{:02}:{:02}:{:02}",
+        seconds / 3600,
+        (seconds / 60) % 60,
+        seconds % 60
+    )
 }
 
 fn metric_line<'a>(label: &'a str, value: Option<String>, theme: Theme, ascii: bool) -> Line<'a> {

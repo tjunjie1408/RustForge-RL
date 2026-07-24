@@ -1,5 +1,5 @@
 use rustforge_dashboard::action::Action;
-use rustforge_dashboard::app::{AppMode, AppState, Palette, View};
+use rustforge_dashboard::app::{AppMode, AppState, ChartRange, Dialog, Palette, View};
 use rustforge_dashboard::history::BoundedHistory;
 use rustforge_dashboard::metrics::parse_line;
 use rustforge_dashboard::source::csv::{
@@ -96,4 +96,35 @@ fn palette_and_help_are_state_not_widget_concerns() {
     app.apply(Action::ToggleHelp);
     assert_eq!(app.palette(), Palette::HighContrast);
     assert!(app.help_visible());
+}
+
+#[test]
+fn chart_range_and_dialog_navigation_are_reducer_owned() {
+    let mut app = AppState::new(AppMode::Monitor, 8, 8);
+    assert_eq!(app.chart_range(), ChartRange::Last100);
+    app.apply(Action::NextRange);
+    assert_eq!(app.chart_range(), ChartRange::Last500);
+    app.apply(Action::PreviousRange);
+    assert_eq!(app.chart_range(), ChartRange::Last100);
+
+    app.apply(Action::ToggleAlertSettings);
+    assert_eq!(app.dialog(), Some(Dialog::AlertSettings));
+    app.apply(Action::DismissDialog);
+    assert_eq!(app.dialog(), None);
+}
+
+#[test]
+fn alert_target_can_be_edited_for_the_current_session() {
+    let mut app = AppState::new(AppMode::Monitor, 8, 8);
+    app.apply(Action::ToggleAlertSettings);
+    for character in ['1', '9', '5', '.', '5'] {
+        app.apply(Action::AlertTargetChar(character));
+    }
+    app.apply(Action::ApplyAlertTarget);
+    assert_eq!(app.target_reward(), Some(195.5));
+    assert_eq!(app.dialog(), None);
+
+    app.apply(Action::ToggleAlertSettings);
+    app.apply(Action::AlertTargetBackspace);
+    assert_eq!(app.alert_target_input(), "195.");
 }

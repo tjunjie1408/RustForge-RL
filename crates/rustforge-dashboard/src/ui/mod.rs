@@ -12,7 +12,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph, Wrap};
 use ratatui::Frame;
 
-use crate::app::{AppState, View};
+use crate::app::{AppState, Dialog, View};
 use crate::source::csv::MonitorSourceState;
 use crate::terminal::{MIN_TERMINAL_HEIGHT, MIN_TERMINAL_WIDTH};
 use theme::Theme;
@@ -41,8 +41,10 @@ pub fn render(frame: &mut Frame<'_>, app: &AppState) {
         View::Events => events::render(frame, sections[1], app, theme),
     }
     render_footer(frame, sections[2], app, theme);
-    if app.help_visible() {
-        render_help(frame, area, app, theme);
+    match app.dialog() {
+        Some(Dialog::Help) => render_help(frame, area, app, theme),
+        Some(Dialog::AlertSettings) => render_alert_settings(frame, area, app, theme),
+        None => {}
     }
 }
 
@@ -66,16 +68,32 @@ fn render_header(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: Theme
 }
 
 fn render_footer(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: Theme) {
+    let range = format!("{:?}", app.chart_range());
     let controls = if app.live_controls_visible() {
         "Tab views  arrows navigate  f follow  p pause/resume  q stop  ? help"
     } else {
         "Tab views  arrows navigate  f follow  t palette  q quit  ? help"
     };
     frame.render_widget(
-        Paragraph::new(controls)
+        Paragraph::new(format!("{controls}  range:{range}"))
             .style(Style::default().fg(theme.muted))
             .alignment(Alignment::Center),
         area,
+    );
+}
+
+fn render_alert_settings(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: Theme) {
+    let popup = centered_rect(64, 40, area);
+    frame.render_widget(Clear, popup);
+    frame.render_widget(
+        Paragraph::new(format!(
+            "Alert settings\n\nTarget reward: {}_\n{}\nChanges affect only this monitor session.\n\nEnter applies; Backspace edits; Esc cancels.",
+            app.alert_target_input(),
+            app.alert_target_error().unwrap_or("")
+        ))
+        .wrap(Wrap { trim: true })
+        .block(theme.block(" Alerts ", app.ascii())),
+        popup,
     );
 }
 

@@ -43,8 +43,8 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: Theme) {
 
 fn render_reward(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: Theme) {
     let raw: Vec<(f64, Option<f64>)> = app
-        .episodes()
-        .iter()
+        .chart_rows()
+        .into_iter()
         .map(|row| (row.episode as f64, finite(f64::from(row.reward))))
         .collect();
     if raw.is_empty() {
@@ -109,8 +109,8 @@ fn render_single<F>(
     F: Fn(&crate::metrics::MetricRow) -> Option<f64>,
 {
     let raw: Vec<(f64, Option<f64>)> = app
-        .episodes()
-        .iter()
+        .chart_rows()
+        .into_iter()
         .map(|row| (row.episode as f64, value(row).and_then(finite)))
         .collect();
     let segments = sampled_segments(&raw, chart_point_cap(area));

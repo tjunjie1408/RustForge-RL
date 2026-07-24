@@ -4,6 +4,8 @@
 pub enum Action {
     NextView,
     PreviousView,
+    NextRange,
+    PreviousRange,
     ScrollUp(usize),
     ScrollDown(usize),
     JumpToFirst,
@@ -11,4 +13,9 @@ pub enum Action {
     ToggleFollow,
     CyclePalette,
     ToggleHelp,
+    ToggleAlertSettings,
+    DismissDialog,
+    AlertTargetChar(char),
+    AlertTargetBackspace,
+    ApplyAlertTarget,
 }

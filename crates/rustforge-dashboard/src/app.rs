@@ -1,11 +1,13 @@
 //! Reducer-owned application state shared by CSV and live sources.
 
 use crate::action::Action;
+use crate::analytics::RewardAlert;
 use crate::history::BoundedHistory;
 use crate::metrics::MetricRow;
 use crate::source::csv::{CsvDiagnostic, CsvSourcePoll, MonitorSourceState};
 use crate::system::SystemSnapshot;
 use std::path::PathBuf;
+use std::time::Duration;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AppMode {
@@ -19,6 +21,49 @@ pub enum View {
     Charts,
     RunDetails,
     Events,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChartRange {
+    Last100,
+    Last500,
+    Last2000,
+    All,
+}
+
+impl ChartRange {
+    fn next(self) -> Self {
+        match self {
+            Self::Last100 => Self::Last500,
+            Self::Last500 => Self::Last2000,
+            Self::Last2000 => Self::All,
+            Self::All => Self::Last100,
+        }
+    }
+
+    fn previous(self) -> Self {
+        match self {
+            Self::Last100 => Self::All,
+            Self::Last500 => Self::Last100,
+            Self::Last2000 => Self::Last500,
+            Self::All => Self::Last2000,
+        }
+    }
+
+    pub fn limit(self) -> Option<usize> {
+        match self {
+            Self::Last100 => Some(100),
+            Self::Last500 => Some(500),
+            Self::Last2000 => Some(2000),
+            Self::All => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Dialog {
+    Help,
+    AlertSettings,
 }
 
 impl View {
@@ -60,6 +105,17 @@ pub struct RunMetadata {
     pub schema_version: Option<String>,
 }
 
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MonitorInsights {
+    pub elapsed: Duration,
+    pub steps_per_second: Option<f64>,
+    pub episodes_per_minute: Option<f64>,
+    pub progress_fraction: Option<f64>,
+    pub eta: Option<Duration>,
+    pub stalled: bool,
+    pub alerts: Vec<RewardAlert>,
+}
+
 impl Palette {
     fn next(self) -> Self {
         match self {
@@ -79,12 +135,18 @@ pub struct AppState {
     follow_live: bool,
     scroll_offset: usize,
     palette: Palette,
-    help_visible: bool,
+    dialog: Option<Dialog>,
+    chart_range: ChartRange,
     live_controls_available: bool,
     run_metadata: RunMetadata,
     no_color: bool,
     ascii: bool,
     system_snapshot: Option<SystemSnapshot>,
+    target_reward: Option<f64>,
+    alert_target_input: String,
+    alert_target_error: Option<String>,
+    total_episodes: Option<u64>,
+    monitor_insights: MonitorInsights,
 }
 
 impl AppState {
@@ -98,12 +160,18 @@ impl AppState {
             follow_live: true,
             scroll_offset: 0,
             palette: Palette::Default,
-            help_visible: false,
+            dialog: None,
+            chart_range: ChartRange::Last100,
             live_controls_available: false,
             run_metadata: RunMetadata::default(),
             no_color: false,
             ascii: false,
             system_snapshot: None,
+            target_reward: None,
+            alert_target_input: String::new(),
+            alert_target_error: None,
+            total_episodes: None,
+            monitor_insights: MonitorInsights::default(),
         }
     }
 
@@ -126,6 +194,8 @@ impl AppState {
         match action {
             Action::NextView => self.view = self.view.next(),
             Action::PreviousView => self.view = self.view.previous(),
+            Action::NextRange => self.chart_range = self.chart_range.next(),
+            Action::PreviousRange => self.chart_range = self.chart_range.previous(),
             Action::ScrollUp(amount) => {
                 self.scroll_offset = self.scroll_offset.saturating_add(amount);
                 self.follow_live = false;
@@ -143,7 +213,60 @@ impl AppState {
             }
             Action::ToggleFollow => self.follow_live = !self.follow_live,
             Action::CyclePalette => self.palette = self.palette.next(),
-            Action::ToggleHelp => self.help_visible = !self.help_visible,
+            Action::ToggleHelp => {
+                self.dialog = if self.dialog == Some(Dialog::Help) {
+                    None
+                } else {
+                    Some(Dialog::Help)
+                }
+            }
+            Action::ToggleAlertSettings => {
+                self.dialog = if self.dialog == Some(Dialog::AlertSettings) {
+                    None
+                } else {
+                    self.alert_target_input = self
+                        .target_reward
+                        .map(|value| value.to_string())
+                        .unwrap_or_default();
+                    self.alert_target_error = None;
+                    Some(Dialog::AlertSettings)
+                }
+            }
+            Action::DismissDialog => self.dialog = None,
+            Action::AlertTargetChar(character) => {
+                if self.dialog == Some(Dialog::AlertSettings)
+                    && (character.is_ascii_digit() || ".eE+-".contains(character))
+                {
+                    self.alert_target_input.push(character);
+                    self.alert_target_error = None;
+                }
+            }
+            Action::AlertTargetBackspace => {
+                if self.dialog == Some(Dialog::AlertSettings) {
+                    self.alert_target_input.pop();
+                    self.alert_target_error = None;
+                }
+            }
+            Action::ApplyAlertTarget => {
+                if self.dialog == Some(Dialog::AlertSettings) {
+                    let value = self.alert_target_input.trim();
+                    if value.is_empty() {
+                        self.target_reward = None;
+                        self.dialog = None;
+                    } else {
+                        match value.parse::<f64>() {
+                            Ok(value) if value.is_finite() => {
+                                self.target_reward = Some(value);
+                                self.dialog = None;
+                            }
+                            _ => {
+                                self.alert_target_error =
+                                    Some("Target must be empty or a finite number".into());
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -188,7 +311,24 @@ impl AppState {
     }
 
     pub fn help_visible(&self) -> bool {
-        self.help_visible
+        self.dialog == Some(Dialog::Help)
+    }
+
+    pub fn dialog(&self) -> Option<Dialog> {
+        self.dialog
+    }
+
+    pub fn chart_range(&self) -> ChartRange {
+        self.chart_range
+    }
+
+    pub fn chart_rows(&self) -> Vec<&MetricRow> {
+        let skip = self
+            .chart_range
+            .limit()
+            .map(|limit| self.episodes.len().saturating_sub(limit))
+            .unwrap_or(0);
+        self.episodes.iter().skip(skip).collect()
     }
 
     pub fn live_controls_visible(&self) -> bool {
@@ -229,5 +369,37 @@ impl AppState {
 
     pub fn set_system_snapshot(&mut self, snapshot: SystemSnapshot) {
         self.system_snapshot = Some(snapshot);
+    }
+
+    pub fn target_reward(&self) -> Option<f64> {
+        self.target_reward
+    }
+
+    pub fn set_target_reward(&mut self, target_reward: Option<f64>) {
+        self.target_reward = target_reward.filter(|value| value.is_finite());
+    }
+
+    pub fn alert_target_input(&self) -> &str {
+        &self.alert_target_input
+    }
+
+    pub fn alert_target_error(&self) -> Option<&str> {
+        self.alert_target_error.as_deref()
+    }
+
+    pub fn total_episodes(&self) -> Option<u64> {
+        self.total_episodes
+    }
+
+    pub fn set_total_episodes(&mut self, total_episodes: Option<u64>) {
+        self.total_episodes = total_episodes.filter(|episodes| *episodes > 0);
+    }
+
+    pub fn monitor_insights(&self) -> &MonitorInsights {
+        &self.monitor_insights
+    }
+
+    pub fn set_monitor_insights(&mut self, insights: MonitorInsights) {
+        self.monitor_insights = insights;
     }
 }
