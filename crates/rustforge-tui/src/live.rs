@@ -34,6 +34,9 @@ pub struct LiveOptions {
     pub total_episodes: u64,
     pub metrics_path: PathBuf,
     pub manifest_path: PathBuf,
+    pub seed: Option<u64>,
+    pub device: Option<String>,
+    pub configuration: Vec<(String, String)>,
 }
 
 pub struct LiveSession {
@@ -116,9 +119,6 @@ pub async fn run_live(
     options: LiveOptions,
     session: LiveSession,
 ) -> anyhow::Result<TrainingOutcome> {
-    preflight_current_terminal().context("live training requires an interactive terminal")?;
-    install_terminal_panic_hook();
-
     let LiveSession {
         events,
         progress,
@@ -127,7 +127,21 @@ pub async fn run_live(
         outcome,
         trainer,
     } = session;
-    let mut source = LiveSource::new(events, progress, &metadata).map_err(anyhow::Error::msg)?;
+    if let Err(error) = preflight_current_terminal() {
+        control.request_graceful_stop();
+        let _ = trainer.join();
+        return Err(error).context("live training requires an interactive terminal");
+    }
+    install_terminal_panic_hook();
+
+    let mut source = match LiveSource::new(events, progress, &metadata) {
+        Ok(source) => source,
+        Err(error) => {
+            control.request_graceful_stop();
+            let _ = trainer.join();
+            return Err(anyhow::Error::msg(error)).context("initialize live metric source");
+        }
+    };
     let mut app = AppState::new(
         AppMode::Live,
         EPISODE_HISTORY_CAPACITY,
@@ -147,7 +161,9 @@ pub async fn run_live(
         metrics_path: Some(options.metrics_path),
         manifest_path: Some(options.manifest_path),
         schema_version: Some("dqn-csv-v1".into()),
-        ..RunMetadata::default()
+        seed: options.seed,
+        device: options.device,
+        configuration: options.configuration,
     });
 
     let mut system = SystemSampler::new();

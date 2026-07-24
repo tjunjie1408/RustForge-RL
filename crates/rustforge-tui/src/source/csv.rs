@@ -6,6 +6,9 @@ use std::path::{Path, PathBuf};
 
 use crate::metrics::{parse_line, MetricRow, DQN_CSV_V1_HEADER};
 
+const MAX_READ_BYTES_PER_POLL: u64 = 1024 * 1024;
+const MAX_CSV_LINE_BYTES: usize = 64 * 1024;
+
 /// Observable state of a persisted-metrics source.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MonitorSourceState {
@@ -63,6 +66,7 @@ pub struct CsvSource {
     present: bool,
     seen_file: bool,
     last_io_error: Option<String>,
+    discarding_oversized_line: bool,
 }
 
 impl CsvSource {
@@ -79,6 +83,7 @@ impl CsvSource {
             present: false,
             seen_file: false,
             last_io_error: None,
+            discarding_oversized_line: false,
         }
     }
 
@@ -185,7 +190,8 @@ impl CsvSource {
             return poll;
         }
 
-        let chunk = match read_range(&self.path, self.offset, size - self.offset) {
+        let read_length = (size - self.offset).min(MAX_READ_BYTES_PER_POLL);
+        let chunk = match read_range(&self.path, self.offset, read_length) {
             Ok(chunk) => chunk,
             Err(error) => {
                 self.report_io_error(&mut poll, "read metrics", &error);
@@ -201,6 +207,31 @@ impl CsvSource {
         }
 
         let mut severe_error = false;
+        if self.discarding_oversized_line {
+            if let Some(newline) = self.pending.iter().position(|byte| *byte == b'\n') {
+                self.pending.drain(..=newline);
+                self.discarding_oversized_line = false;
+            } else {
+                self.pending.clear();
+                poll.state = MonitorSourceState::Idle;
+                return poll;
+            }
+        }
+        if !self.pending.contains(&b'\n') && self.pending.len() > MAX_CSV_LINE_BYTES {
+            let line_number = self.next_line;
+            self.next_line += 1;
+            self.pending.clear();
+            self.discarding_oversized_line = true;
+            if self.header_valid.is_none() {
+                self.header_valid = Some(false);
+                severe_error = true;
+            }
+            poll.diagnostics.push(diagnostic(
+                CsvDiagnosticKind::MalformedRow,
+                Some(line_number),
+                "CSV line exceeds the 64 KiB safety limit",
+            ));
+        }
         if let Some(last_newline) = self.pending.iter().rposition(|byte| *byte == b'\n') {
             let complete: Vec<u8> = self.pending.drain(..=last_newline).collect();
             for raw_line in complete.split(|byte| *byte == b'\n') {
@@ -210,6 +241,19 @@ impl CsvSource {
                 let line_number = self.next_line;
                 self.next_line += 1;
                 let raw_line = raw_line.strip_suffix(b"\r").unwrap_or(raw_line);
+
+                if raw_line.len() > MAX_CSV_LINE_BYTES {
+                    if self.header_valid.is_none() {
+                        self.header_valid = Some(false);
+                        severe_error = true;
+                    }
+                    poll.diagnostics.push(diagnostic(
+                        CsvDiagnosticKind::MalformedRow,
+                        Some(line_number),
+                        "CSV line exceeds the 64 KiB safety limit",
+                    ));
+                    continue;
+                }
 
                 let line = match std::str::from_utf8(raw_line) {
                     Ok(line) => line,
@@ -292,6 +336,7 @@ impl CsvSource {
         self.header_valid = None;
         self.anchor_offset = 0;
         self.anchor.clear();
+        self.discarding_oversized_line = false;
     }
 
     fn anchor_changed(&self) -> io::Result<bool> {

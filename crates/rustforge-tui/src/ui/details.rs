@@ -13,7 +13,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: Theme) {
         AppMode::Monitor => "read-only persisted metrics monitor",
         AppMode::Live => "integrated live training",
     };
-    let lines = vec![
+    let mut lines = vec![
         field("Mode", Some(mode.to_owned()), theme, app.ascii()),
         field("Run ID", metadata.run_id.clone(), theme, app.ascii()),
         field("Algorithm", metadata.algorithm.clone(), theme, app.ascii()),
@@ -68,9 +68,23 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: Theme) {
         ),
         field("Checkpoint", Some("unavailable".into()), theme, app.ascii()),
     ];
+    if !metadata.configuration.is_empty() {
+        lines.push(Line::default());
+        lines.push(Line::styled(
+            "Training configuration",
+            Style::default().fg(theme.accent),
+        ));
+        lines.extend(
+            metadata
+                .configuration
+                .iter()
+                .map(|(label, value)| field(label, Some(value.clone()), theme, app.ascii())),
+        );
+    }
     frame.render_widget(
         Paragraph::new(lines)
             .wrap(Wrap { trim: false })
+            .scroll((app.scroll_offset().min(u16::MAX as usize) as u16, 0))
             .block(theme.block(" Run configuration and capabilities ", app.ascii())),
         area,
     );

@@ -103,6 +103,8 @@ pub struct RunMetadata {
     pub metrics_path: Option<PathBuf>,
     pub manifest_path: Option<PathBuf>,
     pub schema_version: Option<String>,
+    /// Stable, display-only run settings supplied by the launching command.
+    pub configuration: Vec<(String, String)>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]

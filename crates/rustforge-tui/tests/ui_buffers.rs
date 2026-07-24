@@ -23,6 +23,10 @@ fn sample_app() -> AppState {
         metrics_path: Some(PathBuf::from("target/runs/demo/metrics.csv")),
         manifest_path: None,
         schema_version: Some("dqn-csv-v1".into()),
+        configuration: vec![
+            ("Episodes".into(), "100".into()),
+            ("Learning rate".into(), "0.001".into()),
+        ],
     });
     app.apply_csv_poll(CsvSourcePoll {
         rows: vec![
@@ -99,6 +103,8 @@ fn details_and_events_views_render_only_known_facts() {
     assert!(details.contains("historical-cartpole"));
     assert!(details.contains("dqn-csv-v1"));
     assert!(details.contains("read-only"));
+    assert!(details.contains("Learning rate"));
+    assert!(details.contains("0.001"));
 
     app.set_view(View::Events);
     let events = text(&rendered(&app, 100, 28));

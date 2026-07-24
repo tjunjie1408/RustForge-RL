@@ -227,3 +227,21 @@ fn invalid_utf8_is_consumed_and_reported_without_retry_flooding() {
 
     fs::remove_file(path).ok();
 }
+
+#[test]
+fn oversized_partial_line_is_bounded_discarded_and_following_rows_recover() {
+    let path = unique_path("oversized");
+    fs::write(&path, b"episode,reward,avg_loss,epsilon,global_step\n").unwrap();
+    let mut source = CsvSource::new(&path);
+    source.poll();
+
+    append(&path, &vec![b'9'; 70 * 1024]);
+    let oversized = source.poll();
+    assert!(has_diagnostic(&oversized, CsvDiagnosticKind::MalformedRow));
+
+    append(&path, b"\n1,2,0.5,0.9,10\n");
+    let recovered = source.poll();
+    assert_eq!(recovered.rows.len(), 1);
+    assert_eq!(recovered.rows[0].episode, 1);
+    fs::remove_file(path).ok();
+}

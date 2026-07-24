@@ -27,19 +27,43 @@ pub async fn execute(args: RunArgs) -> anyhow::Result<()> {
     preflight_current_terminal().context("rustforge run requires an interactive terminal")?;
     preflight_current_terminal_size().context("terminal is too small for rustforge run")?;
 
+    let config = dqn_config(args.env, args.use_per);
+    let max_steps = match args.env {
+        Environment::Cartpole => 500,
+        Environment::Gridworld => 100,
+    };
+    let display_config = vec![
+        ("Episodes".into(), args.episodes.to_string()),
+        ("Max steps / episode".into(), max_steps.to_string()),
+        ("Observation dimensions".into(), config.obs_dim.to_string()),
+        ("Actions".into(), config.num_actions.to_string()),
+        ("Hidden dimensions".into(), config.hidden_dim.to_string()),
+        ("Learning rate".into(), config.lr.to_string()),
+        ("Discount gamma".into(), config.gamma.to_string()),
+        (
+            "Target update frequency".into(),
+            config.target_update_freq.to_string(),
+        ),
+        ("Double DQN".into(), config.double_dqn.to_string()),
+        ("Prioritized replay".into(), config.use_per.to_string()),
+        (
+            "PER beta annealing steps".into(),
+            config.per_beta_annealing_steps.to_string(),
+        ),
+    ];
     let trainer: Box<dyn Trainer> = match (args.algorithm, args.env) {
         (Algorithm::Dqn, Environment::Cartpole) => Box::new(DqnTrainerAdapter::new(
             CartPole::with_max_steps(500),
-            dqn_config(args.env, args.use_per),
+            config,
             args.episodes,
-            500,
+            max_steps,
             "cartpole",
         )),
         (Algorithm::Dqn, Environment::Gridworld) => Box::new(DqnTrainerAdapter::new(
             GridWorld::new(),
-            dqn_config(args.env, args.use_per),
+            config,
             args.episodes,
-            100,
+            max_steps,
             "gridworld",
         )),
     };
@@ -104,6 +128,9 @@ pub async fn execute(args: RunArgs) -> anyhow::Result<()> {
         total_episodes: args.episodes as u64,
         metrics_path: artifacts.metrics_path().to_path_buf(),
         manifest_path: artifacts.manifest_path().to_path_buf(),
+        seed: Some(2026),
+        device: Some("CPU".into()),
+        configuration: display_config,
     };
     let result = run_live(
         live_options,
