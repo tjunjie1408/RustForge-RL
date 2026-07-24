@@ -1605,9 +1605,11 @@ dependencies = [
  "anyhow",
  "clap",
  "rustforge-autograd",
+ "rustforge-dashboard",
  "rustforge-nn",
  "rustforge-rl",
  "rustforge-tensor",
+ "tokio",
 ]
 
 [[package]]
@@ -1617,10 +1619,12 @@ dependencies = [
  "anyhow",
  "axum",
  "clap",
+ "crossbeam-channel",
  "crossterm",
  "futures-util",
  "instability",
  "ratatui",
+ "rustforge-rl",
  "serde",
  "serde_json",
  "sysinfo",

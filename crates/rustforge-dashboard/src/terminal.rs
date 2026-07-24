@@ -52,6 +52,23 @@ pub fn preflight_current_terminal() -> Result<(), TerminalPreflightError> {
     validate_terminal_environment(io::stdin().is_terminal(), io::stdout().is_terminal())
 }
 
+pub fn validate_terminal_size(width: u16, height: u16) -> io::Result<()> {
+    if width < MIN_TERMINAL_WIDTH || height < MIN_TERMINAL_HEIGHT {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "terminal is {width}x{height}; at least {MIN_TERMINAL_WIDTH}x{MIN_TERMINAL_HEIGHT} is required"
+            ),
+        ));
+    }
+    Ok(())
+}
+
+pub fn preflight_current_terminal_size() -> io::Result<()> {
+    let (width, height) = crossterm::terminal::size()?;
+    validate_terminal_size(width, height)
+}
+
 /// Owns raw mode and the alternate screen until explicitly restored or dropped.
 pub struct TerminalGuard {
     terminal: DashboardTerminal,

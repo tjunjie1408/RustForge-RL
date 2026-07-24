@@ -147,9 +147,10 @@ impl EventDeliveryState {
     }
 }
 
+#[derive(Clone)]
 pub struct BoundedEventPublisher {
     sender: Sender<EventEnvelope>,
-    next_sequence: AtomicU64,
+    next_sequence: Arc<AtomicU64>,
     wait: Duration,
     delivery: EventDeliveryState,
 }
@@ -195,7 +196,7 @@ pub fn bounded_event_channel(
     (
         BoundedEventPublisher {
             sender,
-            next_sequence: AtomicU64::new(0),
+            next_sequence: Arc::new(AtomicU64::new(0)),
             wait,
             delivery: delivery.clone(),
         },

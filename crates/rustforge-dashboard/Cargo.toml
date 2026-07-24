@@ -20,6 +20,8 @@ instability = "=0.3.10"
 crossterm = { version = "0.28", features = ["event-stream"] }
 futures-util = "0.3"
 sysinfo = { version = "=0.35.2", default-features = false, features = ["system"] }
+rustforge-rl = { path = "../rustforge-rl" }
+crossbeam-channel = "0.5"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

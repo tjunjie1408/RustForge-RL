@@ -5,6 +5,7 @@ pub mod app;
 pub mod event_loop;
 pub mod history;
 pub mod launch;
+pub mod live;
 pub mod metrics;
 pub mod monitor;
 pub mod server;

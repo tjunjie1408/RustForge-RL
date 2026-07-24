@@ -2,7 +2,8 @@ use std::time::Duration;
 
 use rustforge_dashboard::event_loop::EventCadence;
 use rustforge_dashboard::terminal::{
-    validate_terminal_environment, TerminalPreflightError, MIN_TERMINAL_HEIGHT, MIN_TERMINAL_WIDTH,
+    validate_terminal_environment, validate_terminal_size, TerminalPreflightError,
+    MIN_TERMINAL_HEIGHT, MIN_TERMINAL_WIDTH,
 };
 
 #[test]
@@ -16,6 +17,13 @@ fn terminal_preflight_rejects_non_tty_before_raw_mode() {
         Err(TerminalPreflightError::OutputNotTerminal)
     );
     assert_eq!(validate_terminal_environment(true, true), Ok(()));
+}
+
+#[test]
+fn live_terminal_size_is_validated_before_raw_mode() {
+    assert!(validate_terminal_size(MIN_TERMINAL_WIDTH, MIN_TERMINAL_HEIGHT).is_ok());
+    assert!(validate_terminal_size(MIN_TERMINAL_WIDTH - 1, MIN_TERMINAL_HEIGHT).is_err());
+    assert!(validate_terminal_size(MIN_TERMINAL_WIDTH, MIN_TERMINAL_HEIGHT - 1).is_err());
 }
 
 #[test]

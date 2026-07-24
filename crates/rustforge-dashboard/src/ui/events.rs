@@ -4,7 +4,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
 use ratatui::Frame;
 
-use crate::app::AppState;
+use crate::app::{AppMode, AppState};
 use crate::ui::theme::Theme;
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: Theme) {
@@ -28,7 +28,11 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: Theme) {
         .collect();
     let lines = if lines.is_empty() {
         vec![Line::styled(
-            "No persisted-source activity has been observed",
+            if app.mode() == AppMode::Live {
+                "No live training event has been observed"
+            } else {
+                "No persisted-source activity has been observed"
+            },
             Style::default().fg(theme.muted),
         )]
     } else {
@@ -38,7 +42,11 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: Theme) {
         Paragraph::new(lines)
             .wrap(Wrap { trim: false })
             .block(theme.block(
-                " Source activity (not synthesized training events) ",
+                if app.mode() == AppMode::Live {
+                    " Reliable training events and runtime health "
+                } else {
+                    " Source activity (not synthesized training events) "
+                },
                 app.ascii(),
             )),
         area,

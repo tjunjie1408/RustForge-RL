@@ -286,6 +286,10 @@ impl AppState {
         self.source_state
     }
 
+    pub fn set_source_state(&mut self, state: MonitorSourceState) {
+        self.source_state = state;
+    }
+
     pub fn episodes(&self) -> &BoundedHistory<MetricRow> {
         &self.episodes
     }

@@ -28,6 +28,9 @@ pub enum CsvDiagnosticKind {
     MalformedRow,
     InvalidUtf8,
     IoError,
+    Lifecycle,
+    Control,
+    Persistence,
 }
 
 /// One diagnostic emitted by a CSV poll.
