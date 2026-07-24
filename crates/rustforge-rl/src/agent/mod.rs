@@ -5,6 +5,7 @@
 
 pub mod a2c;
 pub mod dqn;
+mod dqn_runtime;
 pub mod dqn_train;
 pub mod epsilon_greedy;
 pub mod gaussian_policy;
@@ -18,6 +19,7 @@ pub mod utils;
 
 pub use a2c::{A2CConfig, ActorCriticNet, A2C};
 pub use dqn::{DQNConfig, DQN};
+pub use dqn_runtime::DqnTrainerAdapter;
 pub use dqn_train::train_dqn;
 pub use epsilon_greedy::EpsilonGreedy;
 pub use gaussian_policy::{GaussianPolicy, GaussianPolicyNet};
