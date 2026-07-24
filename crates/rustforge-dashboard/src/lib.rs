@@ -2,6 +2,7 @@
 pub mod action;
 pub mod analytics;
 pub mod app;
+pub mod event_loop;
 pub mod history;
 pub mod launch;
 pub mod metrics;
@@ -9,3 +10,4 @@ pub mod server;
 pub mod source;
 pub mod state;
 pub mod tail;
+pub mod terminal;
