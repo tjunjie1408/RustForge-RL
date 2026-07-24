@@ -29,4 +29,5 @@ pub mod agent;
 pub mod buffer;
 pub mod env;
 pub mod metrics;
+pub mod runtime;
 pub mod training;
