@@ -6,7 +6,7 @@ use rustforge_rl::runtime::control::{ControlApplyResult, ControlKind, TrainerCon
 use rustforge_rl::runtime::event::{
     bounded_event_channel, TrainingEvent, DEFAULT_EVENT_CAPACITY, DEFAULT_EVENT_PUBLISH_WAIT,
 };
-use rustforge_rl::runtime::persistence::NullMetricSink;
+use rustforge_rl::runtime::persistence::{NullMetricSink, PersistenceStatus};
 use rustforge_rl::runtime::progress::progress_channel;
 use rustforge_rl::runtime::trainer::{StopReason, Trainer, TrainerContext};
 
@@ -120,6 +120,7 @@ fn runtime() -> (
             progress,
             control: control.clone(),
             metrics: Box::new(NullMetricSink),
+            persistence: PersistenceStatus::new(),
         },
         receiver,
         reader,

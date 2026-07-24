@@ -1666,7 +1666,9 @@ dependencies = [
  "rustforge-nn",
  "rustforge-tensor",
  "serde",
+ "serde_json",
  "smallvec",
+ "tempfile",
  "tracing",
 ]
 

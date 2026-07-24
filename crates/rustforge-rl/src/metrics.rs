@@ -10,6 +10,11 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::sync::Mutex;
 
+use crate::runtime::persistence::{MetricError, MetricRecord, MetricSink};
+use crate::runtime::trainer::{MetricDescriptor, MetricId};
+
+pub const DQN_CSV_V1_HEADER: &str = "episode,reward,avg_loss,epsilon,global_step";
+
 /// A single record of per-episode training metrics.
 #[derive(Debug, Clone)]
 pub struct EpisodeMetrics {
@@ -63,10 +68,84 @@ impl CsvLogger {
     pub fn new<P: AsRef<Path>>(path: P) -> std::io::Result<Self> {
         let file = File::create(path)?;
         let mut writer = BufWriter::new(file);
-        writeln!(writer, "episode,reward,avg_loss,epsilon,global_step")?;
+        writeln!(writer, "{DQN_CSV_V1_HEADER}")?;
         writer.flush()?;
         Ok(CsvLogger {
             writer: Mutex::new(writer),
+        })
+    }
+}
+
+/// Non-panicking DQN CSV v1 persistence sink used by integrated runs.
+pub struct DqnCsvMetricSink {
+    writer: BufWriter<File>,
+    reward: MetricId,
+    loss: MetricId,
+    epsilon: MetricId,
+}
+
+impl DqnCsvMetricSink {
+    pub fn create(
+        path: impl AsRef<Path>,
+        descriptors: &[MetricDescriptor],
+    ) -> std::io::Result<Self> {
+        let metric = |name: &str| {
+            descriptors
+                .iter()
+                .find(|descriptor| descriptor.name == name)
+                .map(|descriptor| descriptor.id)
+                .ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!("missing DQN metric descriptor: {name}"),
+                    )
+                })
+        };
+        let reward = metric("reward.episode")?;
+        let loss = metric("loss.td")?;
+        let epsilon = metric("exploration.epsilon")?;
+        let mut writer = BufWriter::new(File::create(path)?);
+        writeln!(writer, "{DQN_CSV_V1_HEADER}")?;
+        writer.flush()?;
+        Ok(Self {
+            writer,
+            reward,
+            loss,
+            epsilon,
+        })
+    }
+
+    fn value(record: &MetricRecord, metric: MetricId) -> Option<f64> {
+        record
+            .values
+            .iter()
+            .find(|value| value.metric == metric)
+            .map(|value| value.value)
+    }
+}
+
+impl MetricSink for DqnCsvMetricSink {
+    fn emit(&mut self, record: &MetricRecord) -> Result<(), MetricError> {
+        let reward = Self::value(record, self.reward).ok_or_else(|| MetricError {
+            message: "DQN CSV record is missing reward.episode".into(),
+        })?;
+        let loss = Self::value(record, self.loss).unwrap_or(f64::NAN);
+        let epsilon = Self::value(record, self.epsilon).ok_or_else(|| MetricError {
+            message: "DQN CSV record is missing exploration.epsilon".into(),
+        })?;
+        writeln!(
+            self.writer,
+            "{},{reward},{loss},{epsilon},{}",
+            record.episode, record.global_step
+        )
+        .map_err(|error| MetricError {
+            message: error.to_string(),
+        })
+    }
+
+    fn flush(&mut self) -> Result<(), MetricError> {
+        self.writer.flush().map_err(|error| MetricError {
+            message: error.to_string(),
         })
     }
 }

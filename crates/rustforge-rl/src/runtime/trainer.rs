@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use super::control::TrainerControl;
 use super::event::{TrainingEvent, TrainingEventPublisher};
-use super::persistence::{MetricSink, PersistenceSummary};
+use super::persistence::{MetricSink, PersistenceStatus, PersistenceSummary};
 use super::progress::ProgressPublisher;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -65,6 +65,7 @@ pub struct TrainerContext {
     pub progress: ProgressPublisher,
     pub control: TrainerControl,
     pub metrics: Box<dyn MetricSink>,
+    pub persistence: PersistenceStatus,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

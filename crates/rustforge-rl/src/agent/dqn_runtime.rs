@@ -18,7 +18,9 @@ use crate::runtime::control::{ControlObservation, StopMode, TrainerControl};
 use crate::runtime::event::{
     EpisodeSummary, MetricValue, StatusChanged, TrainingEvent, TrainingStarted,
 };
-use crate::runtime::persistence::{MetricRecord, MetricSink, PersistenceEvent, PersistenceTracker};
+use crate::runtime::persistence::{
+    MetricRecord, MetricSink, PersistenceEvent, PersistenceStatus, PersistenceTracker,
+};
 use crate::runtime::progress::{ProgressPublisher, ProgressScalar, ProgressUpdate};
 use crate::runtime::trainer::{
     MetricDescriptor, MetricId, MetricKind, StopReason, Trainer, TrainerCapabilities,
@@ -204,6 +206,7 @@ struct LiveHooks {
     metadata: TrainerMetadata,
     status: TrainerStatus,
     persistence: PersistenceTracker,
+    persistence_status: PersistenceStatus,
 }
 
 impl LiveHooks {
@@ -213,6 +216,7 @@ impl LiveHooks {
             progress: context.progress,
             control: context.control,
             metrics: context.metrics,
+            persistence_status: context.persistence,
             metadata,
             status: TrainerStatus::Running,
             persistence: PersistenceTracker::new(),
@@ -329,6 +333,7 @@ impl LiveHooks {
             }
             None => {}
         }
+        self.persistence_status.store(self.persistence.summary());
     }
 }
 
