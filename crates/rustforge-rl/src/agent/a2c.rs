@@ -97,6 +97,27 @@ impl ActorCriticNet {
         }
     }
 
+    /// Creates an actor-critic network with reproducible layer initialization.
+    pub fn new_seeded(obs_dim: usize, hidden_dim: usize, num_actions: usize, seed: u64) -> Self {
+        // Separate stable offsets prevent the three layers from sharing weights.
+        let trunk = Sequential::new(vec![
+            Box::new(Linear::new_seeded(
+                obs_dim,
+                hidden_dim,
+                seed.wrapping_add(0),
+            )),
+            Box::new(ReLU),
+        ]);
+        let actor_head = Linear::new_seeded(hidden_dim, num_actions, seed.wrapping_add(1));
+        let critic_head = Linear::new_seeded(hidden_dim, 1, seed.wrapping_add(2));
+
+        ActorCriticNet {
+            trunk,
+            actor_head,
+            critic_head,
+        }
+    }
+
     /// Forward pass: returns (logits, value).
     ///
     /// - `logits`: `[batch, num_actions]` — raw policy logits
@@ -166,6 +187,19 @@ impl A2C {
     /// Creates a new A2C agent.
     pub fn new(config: A2CConfig) -> Self {
         let net = ActorCriticNet::new(config.obs_dim, config.hidden_dim, config.num_actions);
+        let optimizer = Adam::new(net.parameters(), config.lr);
+
+        A2C {
+            net,
+            optimizer,
+            config,
+        }
+    }
+
+    /// Creates an A2C agent with reproducible network initialization.
+    pub fn new_seeded(config: A2CConfig, seed: u64) -> Self {
+        let net =
+            ActorCriticNet::new_seeded(config.obs_dim, config.hidden_dim, config.num_actions, seed);
         let optimizer = Adam::new(net.parameters(), config.lr);
 
         A2C {
@@ -302,6 +336,35 @@ mod tests {
     }
 
     #[test]
+    fn actor_critic_net_seeded_initialization_is_reproducible() {
+        let first = ActorCriticNet::new_seeded(4, 16, 2, 2026);
+        let second = ActorCriticNet::new_seeded(4, 16, 2, 2026);
+        let changed = ActorCriticNet::new_seeded(4, 16, 2, 2027);
+
+        let first_params: Vec<_> = first
+            .parameters()
+            .into_iter()
+            .map(|parameter| parameter.data().to_vec())
+            .collect();
+        let second_params: Vec<_> = second
+            .parameters()
+            .into_iter()
+            .map(|parameter| parameter.data().to_vec())
+            .collect();
+        let changed_params: Vec<_> = changed
+            .parameters()
+            .into_iter()
+            .map(|parameter| parameter.data().to_vec())
+            .collect();
+
+        assert_eq!(first_params, second_params);
+        assert!(first_params
+            .iter()
+            .zip(&changed_params)
+            .any(|(first, changed)| first != changed));
+    }
+
+    #[test]
     fn actor_critic_net_gradient_flow() {
         let net = ActorCriticNet::new(2, 8, 3);
         let input = Variable::new(Tensor::from_vec(vec![1.0, 2.0], &[1, 2]), false);
@@ -349,6 +412,25 @@ mod tests {
     fn a2c_construction() {
         let agent = A2C::new(A2CConfig::default());
         assert_eq!(agent.net.parameters().len(), 6);
+    }
+
+    #[test]
+    fn a2c_seeded_construction_is_reproducible() {
+        let first = A2C::new_seeded(A2CConfig::default(), 2026);
+        let repeated = A2C::new_seeded(A2CConfig::default(), 2026);
+        let changed = A2C::new_seeded(A2CConfig::default(), 2027);
+
+        let parameters = |agent: &A2C| {
+            agent
+                .net()
+                .parameters()
+                .into_iter()
+                .map(|parameter| parameter.data().to_vec())
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(parameters(&first), parameters(&repeated));
+        assert_ne!(parameters(&first), parameters(&changed));
     }
 
     #[test]

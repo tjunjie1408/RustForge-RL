@@ -48,10 +48,25 @@ fn dqn_csv_v1_schema_and_snapshot_are_preserved() {
     let snapshot = source.poll();
     assert_eq!(snapshot.rows.len(), 2);
     assert_eq!(snapshot.rows[0].episode, 0);
-    assert_eq!(snapshot.rows[1].avg_loss, None);
+    assert_eq!(snapshot.rows[0].primary_loss, Some(0.5));
+    assert_eq!(snapshot.rows[0].policy_signal, Some(1.0));
+    assert_eq!(snapshot.rows[1].primary_loss, None);
     assert!(!snapshot.reset);
 
     fs::remove_file(path).ok();
+}
+
+#[test]
+fn optional_legacy_dqn_loss_maps_to_absent_semantic_value() {
+    let non_finite = parse_line("1,9.0,NaN,0.5,10").unwrap();
+    assert_eq!(non_finite.primary_loss, None);
+    assert_eq!(non_finite.policy_signal, Some(0.5));
+
+    let missing = parse_line("2,8.0,,0.4,20").unwrap();
+    assert_eq!(missing.primary_loss, None);
+    assert_eq!(missing.policy_signal, Some(0.4));
+
+    assert!(parse_line("3,7.0,0.1,NaN,30").is_none());
 }
 
 #[test]

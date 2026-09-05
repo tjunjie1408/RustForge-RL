@@ -5,7 +5,7 @@ use ratatui::buffer::Buffer;
 use ratatui::style::Color;
 use ratatui::Terminal;
 use rustforge_tui::app::{AppMode, AppState, RunMetadata, View};
-use rustforge_tui::metrics::parse_line;
+use rustforge_tui::metrics::{parse_line, MetricLabels};
 use rustforge_tui::source::csv::{
     CsvDiagnostic, CsvDiagnosticKind, CsvSourcePoll, MonitorSourceState,
 };
@@ -92,6 +92,33 @@ fn charts_view_contains_reward_average_loss_and_exploration() {
     assert!(output.contains("Reward + rolling avg"));
     assert!(output.contains("Loss"));
     assert!(output.contains("Exploration / epsilon"));
+}
+
+#[test]
+fn live_charts_use_descriptor_labels_and_skip_unassigned_optional_panels() {
+    let mut app = sample_app();
+    app.set_view(View::Charts);
+    app.set_metric_labels(MetricLabels {
+        episode_reward: "Episode reward".into(),
+        primary_loss: Some("PPO policy loss".into()),
+        policy_signal: Some("PPO policy entropy".into()),
+        throughput: "Steps per second".into(),
+    });
+    let output = text(&rendered(&app, 110, 34));
+    assert!(output.contains("Episode reward + rolling avg"));
+    assert!(output.contains("PPO policy loss"));
+    assert!(output.contains("PPO policy entropy"));
+
+    app.set_metric_labels(MetricLabels {
+        episode_reward: "Episode reward".into(),
+        primary_loss: None,
+        policy_signal: None,
+        throughput: "Steps per second".into(),
+    });
+    let without_optional = text(&rendered(&app, 110, 34));
+    assert!(without_optional.contains("Episode reward + rolling avg"));
+    assert!(!without_optional.contains("PPO policy loss"));
+    assert!(!without_optional.contains("PPO policy entropy"));
 }
 
 #[test]

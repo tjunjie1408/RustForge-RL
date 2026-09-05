@@ -89,6 +89,26 @@ impl DqnCsvMetricSink {
         path: impl AsRef<Path>,
         descriptors: &[MetricDescriptor],
     ) -> std::io::Result<Self> {
+        Self::metric_ids(descriptors)?;
+        Self::from_file(File::create(path)?, descriptors)
+    }
+
+    pub fn from_file(file: File, descriptors: &[MetricDescriptor]) -> std::io::Result<Self> {
+        let (reward, loss, epsilon) = Self::metric_ids(descriptors)?;
+        let mut writer = BufWriter::new(file);
+        writeln!(writer, "{DQN_CSV_V1_HEADER}")?;
+        writer.flush()?;
+        Ok(Self {
+            writer,
+            reward,
+            loss,
+            epsilon,
+        })
+    }
+
+    fn metric_ids(
+        descriptors: &[MetricDescriptor],
+    ) -> std::io::Result<(MetricId, MetricId, MetricId)> {
         let metric = |name: &str| {
             descriptors
                 .iter()
@@ -104,15 +124,7 @@ impl DqnCsvMetricSink {
         let reward = metric("reward.episode")?;
         let loss = metric("loss.td")?;
         let epsilon = metric("exploration.epsilon")?;
-        let mut writer = BufWriter::new(File::create(path)?);
-        writeln!(writer, "{DQN_CSV_V1_HEADER}")?;
-        writer.flush()?;
-        Ok(Self {
-            writer,
-            reward,
-            loss,
-            epsilon,
-        })
+        Ok((reward, loss, epsilon))
     }
 
     fn value(record: &MetricRecord, metric: MetricId) -> Option<f64> {
@@ -126,13 +138,19 @@ impl DqnCsvMetricSink {
 
 impl MetricSink for DqnCsvMetricSink {
     fn emit(&mut self, record: &MetricRecord) -> Result<(), MetricError> {
-        let reward = Self::value(record, self.reward).ok_or_else(|| MetricError {
-            message: "DQN CSV record is missing reward.episode".into(),
-        })?;
-        let loss = Self::value(record, self.loss).unwrap_or(f64::NAN);
-        let epsilon = Self::value(record, self.epsilon).ok_or_else(|| MetricError {
-            message: "DQN CSV record is missing exploration.epsilon".into(),
-        })?;
+        let reward = Self::value(record, self.reward)
+            .map(|value| value as f32)
+            .ok_or_else(|| MetricError {
+                message: "DQN CSV record is missing reward.episode".into(),
+            })?;
+        let loss = Self::value(record, self.loss)
+            .map(|value| value as f32)
+            .unwrap_or(f32::NAN);
+        let epsilon = Self::value(record, self.epsilon)
+            .map(|value| value as f32)
+            .ok_or_else(|| MetricError {
+                message: "DQN CSV record is missing exploration.epsilon".into(),
+            })?;
         writeln!(
             self.writer,
             "{},{reward},{loss},{epsilon},{}",

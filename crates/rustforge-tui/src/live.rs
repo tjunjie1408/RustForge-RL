@@ -34,9 +34,26 @@ pub struct LiveOptions {
     pub total_episodes: u64,
     pub metrics_path: PathBuf,
     pub manifest_path: PathBuf,
+    pub metrics_schema: String,
     pub seed: Option<u64>,
     pub device: Option<String>,
     pub configuration: Vec<(String, String)>,
+}
+
+impl LiveOptions {
+    pub fn run_metadata(&self, metadata: &TrainerMetadata) -> RunMetadata {
+        RunMetadata {
+            run_id: Some(metadata.run_id.clone()),
+            algorithm: Some(metadata.algorithm.clone()),
+            environment: Some(metadata.environment.clone()),
+            metrics_path: Some(self.metrics_path.clone()),
+            manifest_path: Some(self.manifest_path.clone()),
+            schema_version: Some(self.metrics_schema.clone()),
+            seed: self.seed,
+            device: self.device.clone(),
+            configuration: self.configuration.clone(),
+        }
+    }
 }
 
 pub struct LiveSession {
@@ -147,6 +164,7 @@ pub async fn run_live(
         EPISODE_HISTORY_CAPACITY,
         ACTIVITY_HISTORY_CAPACITY,
     );
+    app.set_metric_labels(source.metric_labels());
     app.set_live_controls_available(
         metadata.capabilities.pause_resume || metadata.capabilities.graceful_stop,
     );
@@ -154,17 +172,7 @@ pub async fn run_live(
     app.set_ascii(options.ascii);
     app.set_target_reward(options.target_reward);
     app.set_total_episodes(Some(options.total_episodes));
-    app.set_run_metadata(RunMetadata {
-        run_id: Some(metadata.run_id.clone()),
-        algorithm: Some(metadata.algorithm.clone()),
-        environment: Some(metadata.environment.clone()),
-        metrics_path: Some(options.metrics_path),
-        manifest_path: Some(options.manifest_path),
-        schema_version: Some("dqn-csv-v1".into()),
-        seed: options.seed,
-        device: options.device,
-        configuration: options.configuration,
-    });
+    app.set_run_metadata(options.run_metadata(&metadata));
 
     let mut system = SystemSampler::new();
     app.set_system_snapshot(system.sample());

@@ -117,6 +117,26 @@ impl REINFORCE {
         }
     }
 
+    /// Creates a REINFORCE agent with reproducible network initialization.
+    pub fn new_seeded(config: REINFORCEConfig, seed: u64) -> Self {
+        let policy_net = Sequential::new(vec![
+            Box::new(Linear::new_seeded(config.obs_dim, config.hidden_dim, seed)),
+            Box::new(ReLU),
+            Box::new(Linear::new_seeded(
+                config.hidden_dim,
+                config.num_actions,
+                seed.wrapping_add(1),
+            )),
+        ]);
+        let optimizer = Adam::new(policy_net.parameters(), config.lr);
+
+        REINFORCE {
+            policy_net,
+            optimizer,
+            config,
+        }
+    }
+
     /// Forward pass: returns raw logits for the given state.
     ///
     /// The output is policy logits, NOT Q-values. For action selection,
@@ -262,6 +282,34 @@ mod tests {
 
         let logits = agent.forward(&[1.0, 0.0]);
         assert_eq!(logits.shape(), vec![1, 2]);
+    }
+
+    #[test]
+    fn reinforce_seeded_construction_is_reproducible() {
+        let config = || REINFORCEConfig {
+            obs_dim: 2,
+            num_actions: 2,
+            hidden_dim: 8,
+            lr: 1e-2,
+            gamma: 0.99,
+            use_baseline: true,
+        };
+        let first = REINFORCE::new_seeded(config(), 42);
+        let repeated = REINFORCE::new_seeded(config(), 42);
+        let changed = REINFORCE::new_seeded(config(), 43);
+
+        let parameter_values = |agent: &REINFORCE| {
+            agent
+                .policy_net()
+                .parameters()
+                .iter()
+                .map(|parameter| parameter.data().to_vec())
+                .collect::<Vec<_>>()
+        };
+
+        let first_values = parameter_values(&first);
+        assert_eq!(first_values, parameter_values(&repeated));
+        assert_ne!(first_values, parameter_values(&changed));
     }
 
     #[test]

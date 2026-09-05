@@ -1,18 +1,24 @@
 //! Metric persistence boundary and deduplicated health tracking.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
-use std::fs;
-use std::io::{self, Write};
+use std::fs::{self, File};
+use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde::Serialize;
+use serde::ser::SerializeMap;
+use serde::{Serialize, Serializer};
 use smallvec::SmallVec;
 
 use super::event::MetricValue;
-use super::trainer::{MetricDescriptor, TrainerMetadata, TrainingOutcome};
+use super::trainer::{
+    validate_metric_descriptors, MetricDescriptor, MetricId, TrainerMetadata, TrainingOutcome,
+};
+
+pub const DQN_CSV_V1_SCHEMA: &str = "dqn-csv-v1";
+pub const GENERIC_JSONL_V1_SCHEMA: &str = "rustforge-metrics-jsonl-v1";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct MetricRecord {
@@ -24,6 +30,155 @@ pub struct MetricRecord {
 pub trait MetricSink: Send {
     fn emit(&mut self, record: &MetricRecord) -> Result<(), MetricError>;
     fn flush(&mut self) -> Result<(), MetricError>;
+}
+
+pub struct JsonlMetricSink {
+    writer: Box<dyn Write + Send>,
+    descriptor_names: Vec<String>,
+    descriptor_indices: HashMap<MetricId, usize>,
+    poisoned: Option<String>,
+}
+
+impl JsonlMetricSink {
+    pub fn create(path: impl AsRef<Path>, descriptors: &[MetricDescriptor]) -> io::Result<Self> {
+        validate_metric_descriptors(descriptors)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+        Self::from_file(File::create(path)?, descriptors)
+    }
+
+    pub fn from_file(file: File, descriptors: &[MetricDescriptor]) -> io::Result<Self> {
+        Self::from_writer(BufWriter::new(file), descriptors)
+    }
+
+    pub fn from_writer(
+        writer: impl Write + Send + 'static,
+        descriptors: &[MetricDescriptor],
+    ) -> io::Result<Self> {
+        validate_metric_descriptors(descriptors)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+
+        let descriptor_names = descriptors
+            .iter()
+            .map(|descriptor| descriptor.name.clone())
+            .collect();
+        let descriptor_indices = descriptors
+            .iter()
+            .enumerate()
+            .map(|(index, descriptor)| (descriptor.id, index))
+            .collect();
+
+        Ok(Self {
+            writer: Box::new(writer),
+            descriptor_names,
+            descriptor_indices,
+            poisoned: None,
+        })
+    }
+
+    fn poisoned_error(&self) -> Option<MetricError> {
+        self.poisoned.as_ref().map(|failure| {
+            metric_error(format!(
+                "JSONL metric sink is poisoned after an I/O failure: {failure}"
+            ))
+        })
+    }
+
+    fn poison(&mut self, error: io::Error) -> MetricError {
+        let message = error.to_string();
+        self.poisoned = Some(message.clone());
+        metric_error(message)
+    }
+}
+
+impl MetricSink for JsonlMetricSink {
+    fn emit(&mut self, record: &MetricRecord) -> Result<(), MetricError> {
+        if let Some(error) = self.poisoned_error() {
+            return Err(error);
+        }
+        let mut ordered_values = vec![None; self.descriptor_names.len()];
+        for value in &record.values {
+            let Some(index) = self.descriptor_indices.get(&value.metric).copied() else {
+                return Err(metric_error(format!(
+                    "unknown metric id {}",
+                    value.metric.get()
+                )));
+            };
+            if ordered_values[index].is_some() {
+                return Err(metric_error(format!(
+                    "duplicate metric id {}",
+                    value.metric.get()
+                )));
+            }
+            if !value.value.is_finite() {
+                return Err(metric_error(format!(
+                    "non-finite metric id {}",
+                    value.metric.get()
+                )));
+            }
+            ordered_values[index] = Some(value.value);
+        }
+
+        let mut serialized = {
+            let metrics: Vec<_> = self
+                .descriptor_names
+                .iter()
+                .zip(ordered_values)
+                .filter_map(|(name, value)| value.map(|value| (name.as_str(), value)))
+                .collect();
+            serde_json::to_vec(&JsonlRecord {
+                episode: record.episode,
+                global_step: record.global_step,
+                metrics: OrderedMetrics(&metrics),
+            })
+            .map_err(|error| metric_error(error.to_string()))?
+        };
+        serialized.push(b'\n');
+        if let Err(error) = self.writer.write_all(&serialized) {
+            return Err(self.poison(error));
+        }
+        if let Err(error) = self.writer.flush() {
+            return Err(self.poison(error));
+        }
+        Ok(())
+    }
+
+    fn flush(&mut self) -> Result<(), MetricError> {
+        if let Some(error) = self.poisoned_error() {
+            return Err(error);
+        }
+        match self.writer.flush() {
+            Ok(()) => Ok(()),
+            Err(error) => Err(self.poison(error)),
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct JsonlRecord<'a> {
+    episode: u64,
+    global_step: u64,
+    metrics: OrderedMetrics<'a>,
+}
+
+struct OrderedMetrics<'a>(&'a [(&'a str, f64)]);
+
+impl Serialize for OrderedMetrics<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut map = serializer.serialize_map(Some(self.0.len()))?;
+        for (name, value) in self.0 {
+            map.serialize_entry(name, value)?;
+        }
+        map.end()
+    }
+}
+
+fn metric_error(message: impl Into<String>) -> MetricError {
+    MetricError {
+        message: message.into(),
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -247,9 +402,25 @@ impl RunManifest {
         target_reward: Option<f64>,
         source_config: BTreeMap<String, String>,
     ) -> Self {
+        Self::started_with_metrics_schema(
+            metadata,
+            DQN_CSV_V1_SCHEMA,
+            seed,
+            target_reward,
+            source_config,
+        )
+    }
+
+    pub fn started_with_metrics_schema(
+        metadata: &TrainerMetadata,
+        metrics_schema: impl Into<String>,
+        seed: Option<u64>,
+        target_reward: Option<f64>,
+        source_config: BTreeMap<String, String>,
+    ) -> Self {
         Self {
             schema_version: 1,
-            metrics_schema: "dqn-csv-v1".into(),
+            metrics_schema: metrics_schema.into(),
             run_id: metadata.run_id.clone(),
             algorithm: metadata.algorithm.clone(),
             environment: metadata.environment.clone(),
@@ -313,6 +484,7 @@ pub struct RunArtifacts {
 
 impl RunArtifacts {
     pub fn create_default(base: impl AsRef<Path>, manifest: RunManifest) -> io::Result<Self> {
+        metrics_filename(&manifest.metrics_schema)?;
         fs::create_dir_all(base.as_ref())?;
         let prefix = format!(
             "{}-{}",
@@ -343,6 +515,7 @@ impl RunArtifacts {
         overwrite: bool,
         manifest: RunManifest,
     ) -> io::Result<Self> {
+        metrics_filename(&manifest.metrics_schema)?;
         let directory = directory.as_ref();
         if directory.exists() && !overwrite {
             return Err(io::Error::new(
@@ -355,8 +528,9 @@ impl RunArtifacts {
     }
 
     fn initialize(directory: PathBuf, manifest: RunManifest) -> io::Result<Self> {
+        let metrics_filename = metrics_filename(&manifest.metrics_schema)?;
         let artifacts = Self {
-            metrics_path: directory.join("metrics.csv"),
+            metrics_path: directory.join(metrics_filename),
             manifest_path: directory.join("manifest.json"),
             directory,
             manifest,
@@ -403,6 +577,17 @@ impl RunArtifacts {
             }
             Err(error) => Err(error),
         }
+    }
+}
+
+fn metrics_filename(schema: &str) -> io::Result<&'static str> {
+    match schema {
+        DQN_CSV_V1_SCHEMA => Ok("metrics.csv"),
+        GENERIC_JSONL_V1_SCHEMA => Ok("metrics.jsonl"),
+        schema => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("unsupported metrics schema: {schema}"),
+        )),
     }
 }
 

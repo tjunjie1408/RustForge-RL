@@ -5,23 +5,88 @@ use std::time::Instant;
 use crossbeam_channel::Receiver;
 use rustforge_rl::runtime::event::{EventEnvelope, MetricValue, TrainingEvent};
 use rustforge_rl::runtime::progress::{ProgressReader, ProgressSnapshot};
-use rustforge_rl::runtime::trainer::{MetricId, TrainerMetadata, TrainerStatus};
+use rustforge_rl::runtime::trainer::{
+    validate_metric_descriptors, MetricDescriptor, MetricId, MetricRole, TrainerMetadata,
+    TrainerStatus,
+};
 
 use crate::app::MonitorInsights;
-use crate::metrics::MetricRow;
+use crate::metrics::{MetricLabels, MetricRow};
 use crate::source::csv::{CsvDiagnostic, CsvDiagnosticKind, CsvSourcePoll, MonitorSourceState};
 
 pub struct LiveSource {
     events: tokio::sync::mpsc::UnboundedReceiver<EventEnvelope>,
     progress: ProgressReader,
-    reward: MetricId,
-    loss: MetricId,
-    epsilon: MetricId,
-    throughput: MetricId,
+    metrics: LiveMetricRoles,
     state: MonitorSourceState,
     last_revision: u64,
     last_progress_at: Instant,
     disconnected: bool,
+}
+
+#[derive(Clone, Debug)]
+struct ResolvedMetric {
+    id: MetricId,
+    label: String,
+}
+
+#[derive(Clone, Debug)]
+struct LiveMetricRoles {
+    episode_reward: ResolvedMetric,
+    primary_loss: Option<ResolvedMetric>,
+    policy_signal: Option<ResolvedMetric>,
+    throughput: ResolvedMetric,
+}
+
+impl LiveMetricRoles {
+    fn resolve(metadata: &TrainerMetadata) -> Result<Self, String> {
+        validate_metric_descriptors(&metadata.metrics)
+            .map_err(|error| format!("invalid live metric descriptors: {error}"))?;
+        let required = |role| {
+            descriptor_for_role(metadata, role)
+                .map(ResolvedMetric::from)
+                .ok_or_else(|| format!("live source is missing required metric role {role:?}"))
+        };
+        Ok(Self {
+            episode_reward: required(MetricRole::EpisodeReward)?,
+            primary_loss: descriptor_for_role(metadata, MetricRole::PrimaryLoss)
+                .map(ResolvedMetric::from),
+            policy_signal: descriptor_for_role(metadata, MetricRole::PolicySignal)
+                .map(ResolvedMetric::from),
+            throughput: required(MetricRole::Throughput)?,
+        })
+    }
+
+    fn labels(&self) -> MetricLabels {
+        MetricLabels {
+            episode_reward: self.episode_reward.label.clone(),
+            primary_loss: self
+                .primary_loss
+                .as_ref()
+                .map(|metric| metric.label.clone()),
+            policy_signal: self
+                .policy_signal
+                .as_ref()
+                .map(|metric| metric.label.clone()),
+            throughput: self.throughput.label.clone(),
+        }
+    }
+}
+
+impl From<&MetricDescriptor> for ResolvedMetric {
+    fn from(descriptor: &MetricDescriptor) -> Self {
+        Self {
+            id: descriptor.id,
+            label: descriptor.label.clone(),
+        }
+    }
+}
+
+fn descriptor_for_role(metadata: &TrainerMetadata, role: MetricRole) -> Option<&MetricDescriptor> {
+    metadata
+        .metrics
+        .iter()
+        .find(|descriptor| descriptor.role == Some(role))
 }
 
 impl LiveSource {
@@ -30,14 +95,7 @@ impl LiveSource {
         progress: ProgressReader,
         metadata: &TrainerMetadata,
     ) -> Result<Self, String> {
-        let metric = |name: &str| {
-            metadata
-                .metrics
-                .iter()
-                .find(|metric| metric.name == name)
-                .map(|metric| metric.id)
-                .ok_or_else(|| format!("live source is missing metric descriptor {name}"))
-        };
+        let metrics = LiveMetricRoles::resolve(metadata)?;
         let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
         std::thread::spawn(move || {
             while let Ok(envelope) = events.recv() {
@@ -49,10 +107,7 @@ impl LiveSource {
         Ok(Self {
             events: event_rx,
             progress,
-            reward: metric("reward.episode")?,
-            loss: metric("loss.td")?,
-            epsilon: metric("exploration.epsilon")?,
-            throughput: metric("performance.steps_per_second")?,
+            metrics,
             state: MonitorSourceState::Waiting,
             last_revision: 0,
             last_progress_at: Instant::now(),
@@ -113,7 +168,7 @@ impl LiveSource {
         }
         progress_insights(
             &snapshot,
-            self.throughput,
+            self.metrics.throughput.id,
             total_episodes,
             now,
             self.last_progress_at,
@@ -126,6 +181,10 @@ impl LiveSource {
 
     pub fn disconnected(&self) -> bool {
         self.disconnected
+    }
+
+    pub fn metric_labels(&self) -> MetricLabels {
+        self.metrics.labels()
     }
 
     fn apply(&mut self, envelope: EventEnvelope, poll: &mut CsvSourcePoll) {
@@ -165,16 +224,27 @@ impl LiveSource {
                 ),
             ),
             TrainingEvent::EpisodeCompleted(summary) => {
-                let reward = value(&summary.metrics, self.reward).unwrap_or(f64::NAN) as f32;
-                let loss = value(&summary.metrics, self.loss)
-                    .filter(|value| value.is_finite())
-                    .map(|value| value as f32);
-                let epsilon = value(&summary.metrics, self.epsilon).unwrap_or(f64::NAN) as f32;
+                let reward = match required_finite_value(
+                    &summary.metrics,
+                    &self.metrics.episode_reward,
+                    "episode reward",
+                ) {
+                    Ok(reward) => reward,
+                    Err(message) => {
+                        diagnostic(poll, CsvDiagnosticKind::MalformedRow, sequence, message);
+                        self.state = MonitorSourceState::Following;
+                        return;
+                    }
+                };
+                let primary_loss =
+                    optional_finite_value(&summary.metrics, self.metrics.primary_loss.as_ref());
+                let policy_signal =
+                    optional_finite_value(&summary.metrics, self.metrics.policy_signal.as_ref());
                 poll.rows.push(MetricRow {
                     episode: summary.episode,
                     reward,
-                    avg_loss: loss,
-                    epsilon,
+                    primary_loss,
+                    policy_signal,
                     global_step: summary.global_step,
                 });
                 self.state = MonitorSourceState::Following;
@@ -219,11 +289,34 @@ impl LiveSource {
     }
 }
 
-fn value(values: &[MetricValue], metric: MetricId) -> Option<f64> {
-    values
-        .iter()
-        .find(|value| value.metric == metric)
-        .map(|value| value.value)
+fn required_finite_value(
+    values: &[MetricValue],
+    metric: &ResolvedMetric,
+    role_name: &str,
+) -> Result<f32, String> {
+    let mut matches = values.iter().filter(|value| value.metric == metric.id);
+    let Some(value) = matches.next() else {
+        return Err(format!("{role_name} metric is missing"));
+    };
+    if matches.next().is_some() {
+        return Err(format!("{role_name} metric is duplicated"));
+    }
+    let converted = value.value as f32;
+    if !value.value.is_finite() || !converted.is_finite() {
+        return Err(format!("{role_name} metric must be finite"));
+    }
+    Ok(converted)
+}
+
+fn optional_finite_value(values: &[MetricValue], metric: Option<&ResolvedMetric>) -> Option<f32> {
+    let metric = metric?;
+    let mut matches = values.iter().filter(|value| value.metric == metric.id);
+    let value = matches.next()?;
+    let converted = value.value as f32;
+    if matches.next().is_some() || !value.value.is_finite() || !converted.is_finite() {
+        return None;
+    }
+    Some(converted)
 }
 
 fn state_for_status(status: TrainerStatus) -> MonitorSourceState {

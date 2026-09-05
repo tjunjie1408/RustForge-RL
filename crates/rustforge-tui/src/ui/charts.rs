@@ -10,45 +10,51 @@ use crate::app::AppState;
 use crate::ui::theme::Theme;
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: Theme) {
+    let labels = app.metric_labels();
+    let panel_count = 1
+        + usize::from(labels.primary_loss.is_some())
+        + usize::from(labels.policy_signal.is_some());
+    let constraints = vec![Constraint::Ratio(1, panel_count as u32); panel_count];
     let sections = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage(40),
-            Constraint::Percentage(30),
-            Constraint::Percentage(30),
-        ])
+        .constraints(constraints)
         .split(area);
-    render_reward(frame, sections[0], app, theme);
-    render_single(
-        frame,
-        sections[1],
-        app,
-        theme,
-        " Loss ",
-        "Loss",
-        |row| row.avg_loss.map(f64::from),
-        theme.warning,
-    );
-    render_single(
-        frame,
-        sections[2],
-        app,
-        theme,
-        " Exploration / epsilon ",
-        "epsilon",
-        |row| Some(f64::from(row.epsilon)),
-        theme.success,
-    );
+    render_reward(frame, sections[0], app, theme, &labels.episode_reward);
+    let mut panel = 1;
+    if let Some(label) = labels.primary_loss.as_deref() {
+        render_single(
+            frame,
+            sections[panel],
+            app,
+            theme,
+            label,
+            |row| row.primary_loss.map(f64::from),
+            theme.warning,
+        );
+        panel += 1;
+    }
+    if let Some(label) = labels.policy_signal.as_deref() {
+        render_single(
+            frame,
+            sections[panel],
+            app,
+            theme,
+            label,
+            |row| row.policy_signal.map(f64::from),
+            theme.success,
+        );
+    }
 }
 
-fn render_reward(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: Theme) {
+fn render_reward(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: Theme, label: &str) {
+    let title = format!(" {label} + rolling avg ");
     let raw: Vec<(f64, Option<f64>)> = app
         .chart_rows()
         .into_iter()
         .map(|row| (row.episode as f64, finite(f64::from(row.reward))))
         .collect();
     if raw.is_empty() {
-        render_no_data(frame, area, app, theme, " Reward + rolling avg ");
+        render_no_data(frame, area, app, theme, &title);
         return;
     }
     let rewards: Vec<f64> = raw.iter().map(|(_, value)| value.unwrap_or(0.0)).collect();
@@ -66,7 +72,7 @@ fn render_reward(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: Theme
     let y_bounds = bounds(all_values);
     let datasets = vec![
         Dataset::default()
-            .name("reward")
+            .name(label)
             .marker(if app.ascii() {
                 Marker::Dot
             } else {
@@ -88,9 +94,9 @@ fn render_reward(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: Theme
     ];
     frame.render_widget(
         Chart::new(datasets)
-            .block(theme.block(" Reward + rolling avg ", app.ascii()))
+            .block(theme.block(&title, app.ascii()))
             .x_axis(axis("episode", x_bounds, theme))
-            .y_axis(axis("reward", y_bounds, theme)),
+            .y_axis(axis(label, y_bounds, theme)),
         area,
     );
 }
@@ -101,13 +107,13 @@ fn render_single<F>(
     area: Rect,
     app: &AppState,
     theme: Theme,
-    title: &'static str,
-    label: &'static str,
+    label: &str,
     value: F,
     color: ratatui::style::Color,
 ) where
     F: Fn(&crate::metrics::MetricRow) -> Option<f64>,
 {
+    let title = format!(" {label} ");
     let raw: Vec<(f64, Option<f64>)> = app
         .chart_rows()
         .into_iter()
@@ -115,7 +121,7 @@ fn render_single<F>(
         .collect();
     let segments = sampled_segments(&raw, chart_point_cap(area));
     if segments.is_empty() {
-        render_no_data(frame, area, app, theme, title);
+        render_no_data(frame, area, app, theme, &title);
         return;
     }
     let x_bounds = bounds(segments.iter().flatten().map(|(x, _)| *x));
@@ -138,20 +144,14 @@ fn render_single<F>(
         .collect();
     frame.render_widget(
         Chart::new(datasets)
-            .block(theme.block(title, app.ascii()))
+            .block(theme.block(&title, app.ascii()))
             .x_axis(axis("episode", x_bounds, theme))
             .y_axis(axis(label, y_bounds, theme)),
         area,
     );
 }
 
-fn render_no_data(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    app: &AppState,
-    theme: Theme,
-    title: &'static str,
-) {
+fn render_no_data(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: Theme, title: &str) {
     frame.render_widget(
         Paragraph::new("No finite data")
             .style(Style::default().fg(theme.muted))
@@ -160,7 +160,7 @@ fn render_no_data(
     );
 }
 
-fn axis(title: &'static str, bounds: [f64; 2], theme: Theme) -> Axis<'static> {
+fn axis<'a>(title: &'a str, bounds: [f64; 2], theme: Theme) -> Axis<'a> {
     Axis::default()
         .title(Span::styled(title, Style::default().fg(theme.muted)))
         .style(Style::default().fg(theme.muted))

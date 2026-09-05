@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use rustforge_rl::agent::{DQNConfig, DqnTrainerAdapter};
 use rustforge_rl::env::CartPole;
-use rustforge_rl::runtime::persistence::{RunArtifacts, RunManifest};
+use rustforge_rl::runtime::persistence::{RunArtifacts, RunManifest, GENERIC_JSONL_V1_SCHEMA};
 use rustforge_rl::runtime::trainer::{Trainer, TrainingOutcome};
 
 #[test]
@@ -61,4 +61,100 @@ fn default_run_directories_are_collision_safe_and_manifest_is_finalized() {
     assert_eq!(json["metrics_schema"], "dqn-csv-v1");
     assert_eq!(json["outcome"]["summary"]["total_steps"], 3);
     assert_eq!(json["outcome"]["event_delivery_complete"], true);
+}
+
+#[test]
+fn manifest_can_select_dqn_or_generic_metrics_schema_explicitly() {
+    let metadata = DqnTrainerAdapter::new(
+        CartPole::with_max_steps(10),
+        DQNConfig::default(),
+        1,
+        10,
+        "cartpole",
+    )
+    .metadata();
+
+    let dqn = RunManifest::started_with_metrics_schema(
+        &metadata,
+        "dqn-csv-v1",
+        Some(42),
+        Some(195.0),
+        BTreeMap::new(),
+    );
+    assert_eq!(dqn.schema_version, 1);
+    assert_eq!(dqn.metrics_schema, "dqn-csv-v1");
+
+    let generic = RunManifest::started_with_metrics_schema(
+        &metadata,
+        GENERIC_JSONL_V1_SCHEMA,
+        Some(42),
+        Some(195.0),
+        BTreeMap::new(),
+    );
+    assert_eq!(generic.schema_version, 1);
+    assert_eq!(generic.metrics_schema, GENERIC_JSONL_V1_SCHEMA);
+
+    let json = serde_json::to_value(generic).unwrap();
+    assert!(json["metrics"][0].get("role").is_none());
+}
+
+#[test]
+fn artifact_metric_filename_matches_the_selected_schema() {
+    let directory = tempfile::tempdir().unwrap();
+    let metadata = DqnTrainerAdapter::new(
+        CartPole::with_max_steps(10),
+        DQNConfig::default(),
+        1,
+        10,
+        "cartpole",
+    )
+    .metadata();
+
+    let dqn = RunArtifacts::create_at(
+        directory.path().join("dqn"),
+        false,
+        RunManifest::started(&metadata, Some(42), None, BTreeMap::new()),
+    )
+    .unwrap();
+    assert!(dqn.metrics_path().ends_with("metrics.csv"));
+
+    let ppo = RunArtifacts::create_at(
+        directory.path().join("ppo"),
+        false,
+        RunManifest::started_with_metrics_schema(
+            &metadata,
+            GENERIC_JSONL_V1_SCHEMA,
+            Some(42),
+            None,
+            BTreeMap::new(),
+        ),
+    )
+    .unwrap();
+    assert!(ppo.metrics_path().ends_with("metrics.jsonl"));
+}
+
+#[test]
+fn artifact_creation_rejects_unknown_metrics_schema() {
+    let directory = tempfile::tempdir().unwrap();
+    let metadata = DqnTrainerAdapter::new(
+        CartPole::with_max_steps(10),
+        DQNConfig::default(),
+        1,
+        10,
+        "cartpole",
+    )
+    .metadata();
+    let manifest = RunManifest::started_with_metrics_schema(
+        &metadata,
+        "unknown-metrics-v9",
+        Some(42),
+        None,
+        BTreeMap::new(),
+    );
+
+    let target = directory.path().join("unknown");
+    let error = RunArtifacts::create_at(&target, false, manifest).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+    assert!(error.to_string().contains("unknown-metrics-v9"));
+    assert!(!target.exists());
 }

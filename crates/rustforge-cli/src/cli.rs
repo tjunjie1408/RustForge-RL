@@ -15,11 +15,11 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Commands {
-    /// Train a DQN agent without an interactive terminal.
+    /// Train an agent without an interactive terminal.
     Train(TrainArgs),
     /// Inspect a completed or actively written DQN CSV v1 file.
     Monitor(MonitorArgs),
-    /// Train DQN with the native live terminal console.
+    /// Train an agent with the native live terminal console.
     Run(RunArgs),
     /// Export a DQN computation graph as Graphviz DOT.
     ExportGraph,
@@ -28,6 +28,9 @@ pub enum Commands {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub enum Algorithm {
     Dqn,
+    Ppo,
+    A2c,
+    Reinforce,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -46,8 +49,10 @@ pub struct TrainArgs {
     pub episodes: usize,
     #[arg(long)]
     pub no_log: bool,
-    #[arg(long, default_value = "target/cli_train_dqn.csv")]
-    pub output: PathBuf,
+    #[arg(long)]
+    pub output: Option<PathBuf>,
+    #[arg(long, requires = "output")]
+    pub overwrite: bool,
     #[arg(long)]
     pub use_per: bool,
 }

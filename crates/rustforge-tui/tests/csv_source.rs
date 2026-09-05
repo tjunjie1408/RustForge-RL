@@ -70,7 +70,7 @@ fn accepts_utf8_bom_crlf_blank_lines_and_partial_final_lines() {
 
     let first = source.poll();
     assert_eq!(first.rows.len(), 1);
-    assert_eq!(first.rows[0].avg_loss, None);
+    assert_eq!(first.rows[0].primary_loss, None);
     append(&path, b"20\r\n");
     let second = source.poll();
     assert_eq!(second.rows.len(), 1);
@@ -116,6 +116,29 @@ fn reports_malformed_rows_but_keeps_valid_rows() {
     assert_eq!(poll.rows[0].episode, 0);
     assert_eq!(poll.state, MonitorSourceState::Following);
     assert!(has_diagnostic(&poll, CsvDiagnosticKind::MalformedRow));
+
+    fs::remove_file(path).ok();
+}
+
+#[test]
+fn missing_or_non_finite_epsilon_reports_malformed_rows_without_fabricating_data() {
+    let path = unique_path("epsilon");
+    fs::write(
+        &path,
+        b"episode,reward,avg_loss,epsilon,global_step\n0,1,0.5,,10\n1,2,0.4,NaN,20\n2,3,0.3,inf,30\n3,4,0.2,-inf,40\n",
+    )
+    .unwrap();
+    let mut source = CsvSource::new(&path);
+
+    let poll = source.poll();
+    assert!(poll.rows.is_empty());
+    assert_eq!(
+        poll.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.kind == CsvDiagnosticKind::MalformedRow)
+            .count(),
+        4
+    );
 
     fs::remove_file(path).ok();
 }

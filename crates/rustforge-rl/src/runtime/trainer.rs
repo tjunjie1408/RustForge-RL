@@ -1,5 +1,6 @@
 //! Generic trainer boundary and authoritative terminal outcome.
 
+use std::collections::HashSet;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -29,6 +30,14 @@ pub enum MetricKind {
     Rate,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum MetricRole {
+    EpisodeReward,
+    PrimaryLoss,
+    PolicySignal,
+    Throughput,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MetricDescriptor {
     pub id: MetricId,
@@ -36,6 +45,63 @@ pub struct MetricDescriptor {
     pub label: String,
     pub unit: Option<String>,
     pub kind: MetricKind,
+    pub role: Option<MetricRole>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MetricSchemaError {
+    message: String,
+}
+
+impl MetricSchemaError {
+    fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for MetricSchemaError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for MetricSchemaError {}
+
+pub fn validate_metric_descriptors(
+    descriptors: &[MetricDescriptor],
+) -> Result<(), MetricSchemaError> {
+    let mut ids = HashSet::new();
+    let mut names = HashSet::new();
+    let mut roles = HashSet::new();
+
+    for descriptor in descriptors {
+        if descriptor.name.is_empty() {
+            return Err(MetricSchemaError::new("metric name must not be empty"));
+        }
+        if !ids.insert(descriptor.id) {
+            return Err(MetricSchemaError::new(format!(
+                "duplicate metric id {}",
+                descriptor.id.get()
+            )));
+        }
+        if !names.insert(descriptor.name.as_str()) {
+            return Err(MetricSchemaError::new(format!(
+                "duplicate metric name {}",
+                descriptor.name
+            )));
+        }
+        if let Some(role) = descriptor.role {
+            if !roles.insert(role) {
+                return Err(MetricSchemaError::new(format!(
+                    "duplicate metric role {role:?}"
+                )));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

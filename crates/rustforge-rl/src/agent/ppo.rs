@@ -189,10 +189,36 @@ impl PPODiscrete {
         }
     }
 
+    /// Creates a PPO discrete agent with reproducible network initialization.
+    pub fn new_seeded(config: PPODiscreteConfig, seed: u64) -> Self {
+        let net = ActorCriticNet::new_seeded(
+            config.base.obs_dim,
+            config.base.hidden_dim,
+            config.num_actions,
+            seed,
+        );
+        let optimizer = Adam::new(net.parameters(), config.base.lr);
+        PPODiscrete {
+            net,
+            optimizer,
+            config,
+        }
+    }
+
     /// Selects an action by sampling from the policy distribution.
     ///
     /// Returns `(action_index, log_prob, value)`.
     pub fn select_action(&self, state: &[f32]) -> (usize, f32, f32) {
+        let mut rng = rand::thread_rng();
+        self.select_action_with_rng(state, &mut rng)
+    }
+
+    /// Selects an action using a caller-owned random-number stream.
+    pub fn select_action_with_rng<R: Rng + ?Sized>(
+        &self,
+        state: &[f32],
+        rng: &mut R,
+    ) -> (usize, f32, f32) {
         let state_tensor = Tensor::from_vec(state.to_vec(), &[1, self.config.base.obs_dim]);
         let state_var = Variable::from_tensor(state_tensor);
         let (logits, value) = self.net.forward(&state_var);
@@ -202,19 +228,30 @@ impl PPODiscrete {
         let probs_data = log_probs.data().to_vec();
 
         // Sample from categorical distribution
-        let mut rng = rand::thread_rng();
         let probs: Vec<f32> = probs_data.iter().map(|lp| lp.exp()).collect();
         let total: f32 = probs.iter().sum();
+        assert!(
+            total.is_finite() && total > 0.0,
+            "policy probabilities must have a finite positive total"
+        );
         let sample: f32 = rng.gen::<f32>() * total;
         let mut cumsum = 0.0;
-        let mut action = 0;
+        let mut action = None;
+        let mut last_positive_action = None;
         for (i, p) in probs.iter().enumerate() {
+            if *p <= 0.0 {
+                continue;
+            }
+            last_positive_action = Some(i);
             cumsum += p;
-            if sample <= cumsum {
-                action = i;
+            if sample < cumsum {
+                action = Some(i);
                 break;
             }
         }
+        let action = action
+            .or(last_positive_action)
+            .expect("positive probability total must include a positive action");
 
         let log_prob = probs_data[action];
         let value_scalar = value.data().to_vec()[0];
@@ -235,6 +272,16 @@ impl PPODiscrete {
     ///
     /// Returns `(policy_loss, value_loss, entropy)` averaged over mini-batches.
     pub fn train_on_batch(&mut self, batch: &RolloutBatch) -> (f32, f32, f32) {
+        let mut rng = rand::thread_rng();
+        self.train_on_batch_with_rng(batch, &mut rng)
+    }
+
+    /// Trains on a rollout batch using a caller-owned shuffle stream.
+    pub fn train_on_batch_with_rng<R: Rng + ?Sized>(
+        &mut self,
+        batch: &RolloutBatch,
+        rng: &mut R,
+    ) -> (f32, f32, f32) {
         let n = batch.size;
         if n == 0 {
             return (0.0, 0.0, 0.0);
@@ -256,15 +303,13 @@ impl PPODiscrete {
         let mut mb_actions = vec![0; mini_batch_size];
 
         let mut indices: Vec<usize> = (0..n).collect();
-        let mut rng = rand::thread_rng();
-
         let mut total_policy_loss = 0.0_f32;
         let mut total_value_loss = 0.0_f32;
         let mut total_entropy = 0.0_f32;
         let mut num_updates = 0;
 
         for _epoch in 0..self.config.base.ppo_epochs {
-            indices.shuffle(&mut rng);
+            indices.shuffle(rng);
 
             for start in (0..n).step_by(mini_batch_size) {
                 let end = (start + mini_batch_size).min(n);
@@ -595,6 +640,150 @@ impl PPOContinuous {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::rngs::mock::StepRng;
+    use rand::rngs::StdRng;
+    use rand::SeedableRng;
+
+    fn seeded_discrete_config() -> PPODiscreteConfig {
+        PPODiscreteConfig {
+            base: PPOConfig {
+                obs_dim: 4,
+                hidden_dim: 16,
+                mini_batch_size: 4,
+                ppo_epochs: 2,
+                ..PPOConfig::default()
+            },
+            num_actions: 2,
+        }
+    }
+
+    fn parameter_values(agent: &PPODiscrete) -> Vec<Vec<f32>> {
+        agent
+            .net
+            .parameters()
+            .into_iter()
+            .map(|parameter| parameter.data().to_vec())
+            .collect()
+    }
+
+    fn zero_parameters(agent: &PPODiscrete) {
+        for parameter in agent.net.parameters() {
+            parameter.set_data(Tensor::zeros(&parameter.shape()));
+        }
+    }
+
+    #[test]
+    fn ppo_discrete_zero_draw_skips_zero_probability_leading_action() {
+        let agent = PPODiscrete::new_seeded(seeded_discrete_config(), 2026);
+        zero_parameters(&agent);
+        agent.net.parameters()[3].set_data(Tensor::from_vec(vec![-1000.0, 0.0], &[2]));
+        let mut zero_rng = StepRng::new(0, 0);
+
+        let (action, log_probability, _) = agent.select_action_with_rng(&[0.0; 4], &mut zero_rng);
+
+        assert_eq!(action, 1);
+        assert!(log_probability.is_finite());
+        assert!(log_probability.exp() > 0.0);
+    }
+
+    #[test]
+    fn ppo_discrete_seeded_initialization_is_reproducible() {
+        let first = PPODiscrete::new_seeded(seeded_discrete_config(), 2026);
+        let second = PPODiscrete::new_seeded(seeded_discrete_config(), 2026);
+        let changed = PPODiscrete::new_seeded(seeded_discrete_config(), 2027);
+
+        assert_eq!(parameter_values(&first), parameter_values(&second));
+        assert_ne!(parameter_values(&first), parameter_values(&changed));
+    }
+
+    #[test]
+    fn ppo_discrete_seeded_action_sampling_is_reproducible() {
+        let first = PPODiscrete::new_seeded(seeded_discrete_config(), 2026);
+        let second = PPODiscrete::new_seeded(seeded_discrete_config(), 2026);
+        let mut first_rng = StdRng::seed_from_u64(41);
+        let mut second_rng = StdRng::seed_from_u64(41);
+        let state = [0.1, -0.2, 0.3, -0.4];
+
+        let first_samples: Vec<_> = (0..32)
+            .map(|_| first.select_action_with_rng(&state, &mut first_rng))
+            .collect();
+        let second_samples: Vec<_> = (0..32)
+            .map(|_| second.select_action_with_rng(&state, &mut second_rng))
+            .collect();
+
+        assert_eq!(first_samples, second_samples);
+    }
+
+    #[test]
+    fn ppo_discrete_different_action_rng_streams_change_samples() {
+        let agent = PPODiscrete::new_seeded(seeded_discrete_config(), 2026);
+        zero_parameters(&agent);
+        let state = [0.0; 4];
+        let mut first_rng = StdRng::seed_from_u64(41);
+        let mut second_rng = StdRng::seed_from_u64(42);
+
+        let first_actions: Vec<_> = (0..128)
+            .map(|_| agent.select_action_with_rng(&state, &mut first_rng).0)
+            .collect();
+        let second_actions: Vec<_> = (0..128)
+            .map(|_| agent.select_action_with_rng(&state, &mut second_rng).0)
+            .collect();
+
+        assert_ne!(first_actions, second_actions);
+    }
+
+    #[test]
+    fn ppo_discrete_seeded_batch_update_is_reproducible() {
+        let collector = PPODiscrete::new_seeded(seeded_discrete_config(), 2026);
+        let mut action_rng = StdRng::seed_from_u64(51);
+        let mut buffer = crate::buffer::RolloutBuffer::new(8, 4);
+        for index in 0..8 {
+            let state = [index as f32 * 0.1, 0.2, -0.1, 0.4];
+            let (action, log_probability, value) =
+                collector.select_action_with_rng(&state, &mut action_rng);
+            buffer.push_with_log_prob(&state, action, 1.0, value, 0.0, log_probability);
+        }
+        buffer.compute_returns_and_advantages(0.99, 0.95, 0.0);
+        let batch = buffer.to_batch();
+
+        let mut first = PPODiscrete::new_seeded(seeded_discrete_config(), 2026);
+        let mut second = PPODiscrete::new_seeded(seeded_discrete_config(), 2026);
+        let mut first_rng = StdRng::seed_from_u64(61);
+        let mut second_rng = StdRng::seed_from_u64(61);
+
+        let first_losses = first.train_on_batch_with_rng(&batch, &mut first_rng);
+        let second_losses = second.train_on_batch_with_rng(&batch, &mut second_rng);
+
+        assert_eq!(first_losses, second_losses);
+        assert_eq!(parameter_values(&first), parameter_values(&second));
+    }
+
+    #[test]
+    fn ppo_discrete_different_shuffle_rng_streams_change_updates() {
+        let collector = PPODiscrete::new_seeded(seeded_discrete_config(), 2026);
+        let mut action_rng = StdRng::seed_from_u64(51);
+        let mut buffer = crate::buffer::RolloutBuffer::new(8, 4);
+        for index in 0..8 {
+            let state = [index as f32 * 0.1, 0.2, -0.1, 0.4];
+            let (action, log_probability, value) =
+                collector.select_action_with_rng(&state, &mut action_rng);
+            buffer.push_with_log_prob(&state, action, 1.0, value, 0.0, log_probability);
+        }
+        buffer.compute_returns_and_advantages(0.99, 0.95, 0.0);
+        let batch = buffer.to_batch();
+
+        let mut first = PPODiscrete::new_seeded(seeded_discrete_config(), 2026);
+        let mut second = PPODiscrete::new_seeded(seeded_discrete_config(), 2026);
+        let mut first_rng = StdRng::seed_from_u64(61);
+        let mut second_rng = StdRng::seed_from_u64(62);
+
+        let first_losses = first.train_on_batch_with_rng(&batch, &mut first_rng);
+        let second_losses = second.train_on_batch_with_rng(&batch, &mut second_rng);
+
+        assert!(
+            first_losses != second_losses || parameter_values(&first) != parameter_values(&second)
+        );
+    }
 
     #[test]
     fn ppo_discrete_construction() {

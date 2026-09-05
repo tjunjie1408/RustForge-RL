@@ -62,6 +62,19 @@ impl Linear {
         }
     }
 
+    /// Creates a new linear layer with reproducible Kaiming-uniform weights.
+    pub fn new_seeded(in_features: usize, out_features: usize, seed: u64) -> Self {
+        let weight_data = Tensor::kaiming_uniform(&[out_features, in_features], Some(seed));
+        let weight = Variable::new(weight_data, true);
+        let bias_data = Tensor::zeros(&[out_features]);
+        let bias = Variable::new(bias_data, true);
+
+        Linear {
+            weight,
+            bias: Some(bias),
+        }
+    }
+
     /// Creates a linear layer without bias.
     ///
     /// Useful when the subsequent layer (e.g., BatchNorm) already has a bias term.
@@ -145,6 +158,34 @@ mod tests {
         assert_eq!(params.len(), 2); // weight + bias
         assert_eq!(params[0].shape(), vec![5, 10]); // weight
         assert_eq!(params[1].shape(), vec![5]); // bias
+    }
+
+    #[test]
+    fn test_linear_seeded_initialization_is_reproducible() {
+        let first = Linear::new_seeded(4, 3, 2026);
+        let second = Linear::new_seeded(4, 3, 2026);
+        let changed = Linear::new_seeded(4, 3, 2027);
+
+        let first_params = first.parameters();
+        let second_params = second.parameters();
+        let changed_params = changed.parameters();
+
+        assert_eq!(
+            first_params[0].data().to_vec(),
+            second_params[0].data().to_vec()
+        );
+        assert_eq!(
+            first_params[1].data().to_vec(),
+            second_params[1].data().to_vec()
+        );
+        assert_ne!(
+            first_params[0].data().to_vec(),
+            changed_params[0].data().to_vec()
+        );
+        assert_eq!(
+            first_params[1].data().to_vec(),
+            changed_params[1].data().to_vec()
+        );
     }
 
     #[test]

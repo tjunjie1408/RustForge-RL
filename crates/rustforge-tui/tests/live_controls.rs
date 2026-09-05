@@ -33,6 +33,40 @@ fn live_keys_pause_resume_and_escalate_quit_without_exiting_early() {
     );
 }
 
+#[test]
+fn live_options_carry_the_selected_metrics_schema_to_run_details() {
+    let options = LiveOptions {
+        no_color: true,
+        ascii: true,
+        target_reward: None,
+        total_episodes: 1,
+        metrics_path: "metrics.jsonl".into(),
+        manifest_path: "manifest.json".into(),
+        metrics_schema: "rustforge-metrics-jsonl-v1".into(),
+        seed: Some(2026),
+        device: Some("CPU".into()),
+        configuration: vec![("Algorithm".into(), "PPO".into())],
+    };
+    let metadata = TrainerMetadata {
+        algorithm: "ppo-discrete".into(),
+        environment: "cartpole".into(),
+        run_id: "ppo-run".into(),
+        capabilities: TrainerCapabilities {
+            pause_resume: true,
+            graceful_stop: true,
+            force_stop: true,
+            checkpoint: false,
+        },
+        metrics: Vec::new(),
+    };
+
+    let run_metadata = options.run_metadata(&metadata);
+    assert_eq!(
+        run_metadata.schema_version.as_deref(),
+        Some("rustforge-metrics-jsonl-v1")
+    );
+}
+
 #[tokio::test]
 async fn setup_failure_requests_shutdown_and_joins_the_trainer() {
     let joined = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -51,6 +85,7 @@ async fn setup_failure_requests_shutdown_and_joins_the_trainer() {
             total_episodes: 1,
             metrics_path: "unused.csv".into(),
             manifest_path: "unused.json".into(),
+            metrics_schema: "dqn-csv-v1".into(),
             seed: None,
             device: None,
             configuration: Vec::new(),

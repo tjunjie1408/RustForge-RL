@@ -23,7 +23,7 @@ use crate::runtime::persistence::{
 };
 use crate::runtime::progress::{ProgressPublisher, ProgressScalar, ProgressUpdate};
 use crate::runtime::trainer::{
-    MetricDescriptor, MetricId, MetricKind, StopReason, Trainer, TrainerCapabilities,
+    MetricDescriptor, MetricId, MetricKind, MetricRole, StopReason, Trainer, TrainerCapabilities,
     TrainerContext, TrainerError, TrainerMetadata, TrainerStatus, TrainingSummary,
 };
 use crate::training::{episode_done, replay_done};
@@ -615,6 +615,13 @@ fn metric(
         label: label.into(),
         unit: unit.map(str::to_owned),
         kind,
+        role: match name {
+            "reward.episode" => Some(MetricRole::EpisodeReward),
+            "loss.td" => Some(MetricRole::PrimaryLoss),
+            "exploration.epsilon" => Some(MetricRole::PolicySignal),
+            "performance.steps_per_second" => Some(MetricRole::Throughput),
+            _ => None,
+        },
     }
 }
 

@@ -3,7 +3,7 @@
 use crate::action::Action;
 use crate::analytics::RewardAlert;
 use crate::history::BoundedHistory;
-use crate::metrics::MetricRow;
+use crate::metrics::{MetricLabels, MetricRow};
 use crate::source::csv::{CsvDiagnostic, CsvSourcePoll, MonitorSourceState};
 use crate::system::SystemSnapshot;
 use std::path::PathBuf;
@@ -139,6 +139,7 @@ pub struct AppState {
     palette: Palette,
     dialog: Option<Dialog>,
     chart_range: ChartRange,
+    metric_labels: MetricLabels,
     live_controls_available: bool,
     run_metadata: RunMetadata,
     no_color: bool,
@@ -164,6 +165,7 @@ impl AppState {
             palette: Palette::Default,
             dialog: None,
             chart_range: ChartRange::Last100,
+            metric_labels: MetricLabels::dqn_monitor_defaults(),
             live_controls_available: false,
             run_metadata: RunMetadata::default(),
             no_color: false,
@@ -335,6 +337,14 @@ impl AppState {
             .map(|limit| self.episodes.len().saturating_sub(limit))
             .unwrap_or(0);
         self.episodes.iter().skip(skip).collect()
+    }
+
+    pub fn metric_labels(&self) -> &MetricLabels {
+        &self.metric_labels
+    }
+
+    pub fn set_metric_labels(&mut self, labels: MetricLabels) {
+        self.metric_labels = labels;
     }
 
     pub fn live_controls_visible(&self) -> bool {

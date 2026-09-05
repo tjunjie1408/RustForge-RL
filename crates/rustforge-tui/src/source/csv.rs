@@ -298,13 +298,13 @@ impl CsvSource {
                                 "expected exactly five CSV fields",
                             ));
                         } else if let Some(row) = parse_line(line) {
-                            if row.reward.is_finite() && row.epsilon.is_finite() {
+                            if row.reward.is_finite() {
                                 poll.rows.push(row);
                             } else {
                                 poll.diagnostics.push(diagnostic(
                                     CsvDiagnosticKind::MalformedRow,
                                     Some(line_number),
-                                    "reward and epsilon must be finite",
+                                    "reward must be finite",
                                 ));
                             }
                         } else {
