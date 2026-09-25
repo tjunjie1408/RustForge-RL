@@ -34,7 +34,10 @@ pub trait GradFn {
 
     /// Computes gradients for each input given the output gradient.
     ///
-    /// Returns gradients in the same order as `inputs()`.
+    /// Returns gradients in the same order as `inputs()`. The backward pass
+    /// ignores the entry for any input that does not require grad, so an
+    /// implementation may return a cheap placeholder there instead of
+    /// computing it.
     fn backward(&self, grad_output: &Tensor) -> GradOutputs;
 }
 
@@ -266,8 +269,16 @@ impl GradFn for MatmulGrad {
             }
             // Standard 2D: [m,k] × [k,n] → [m,n]
             (2, 2) => {
-                let grad_a = grad_output.matmul(&b.t());
-                let grad_b = a.t().matmul(grad_output);
+                let grad_a = if self.lhs.requires_grad() {
+                    grad_output.matmul_t(b)
+                } else {
+                    unused_grad()
+                };
+                let grad_b = if self.rhs.requires_grad() {
+                    a.t_matmul(grad_output)
+                } else {
+                    unused_grad()
+                };
                 smallvec![grad_a, grad_b]
             }
             // Higher dimensions: treat as batch matmul (simplified)
@@ -278,6 +289,43 @@ impl GradFn for MatmulGrad {
             }
         }
     }
+}
+
+// Matrix multiplication with transposed rhs: y = a @ bᵀ
+
+pub struct MatmulTGrad {
+    pub lhs: Variable,
+    pub rhs: Variable,
+    pub lhs_data: Tensor,
+    pub rhs_data: Tensor,
+}
+
+impl GradFn for MatmulTGrad {
+    fn inputs(&self) -> GradInputs {
+        smallvec![self.lhs.clone(), self.rhs.clone()]
+    }
+
+    /// For y = A @ Bᵀ with A `[m,k]`, B `[n,k]`:
+    ///   ∂L/∂A = grad_output @ B        → `[m,k]`
+    ///   ∂L/∂B = grad_outputᵀ @ A       → `[n,k]`
+    fn backward(&self, grad_output: &Tensor) -> GradOutputs {
+        let grad_a = if self.lhs.requires_grad() {
+            grad_output.matmul(&self.rhs_data)
+        } else {
+            unused_grad()
+        };
+        let grad_b = if self.rhs.requires_grad() {
+            grad_output.t_matmul(&self.lhs_data)
+        } else {
+            unused_grad()
+        };
+        smallvec![grad_a, grad_b]
+    }
+}
+
+/// Placeholder for the gradient of an input that does not require grad.
+fn unused_grad() -> Tensor {
+    Tensor::scalar(0.0)
 }
 
 // ReLU: y = max(0, x)

@@ -166,7 +166,7 @@ pub fn var_conv2d(input: &Variable, weight: &Variable) -> Variable {
 
     let out = Tensor::from_vec(out_vec, &[batch_size, out_channels, out_h, out_w]);
 
-    let requires_grad = input.requires_grad() || weight.requires_grad();
+    let requires_grad = super::needs_grad(&[input, weight]);
 
     let grad_fn: Option<Box<dyn GradFn>> = if requires_grad {
         Some(Box::new(Conv2dGrad {

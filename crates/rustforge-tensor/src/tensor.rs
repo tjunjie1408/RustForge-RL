@@ -291,9 +291,9 @@ impl Tensor {
     /// - `axes`: The new axis order. E.g. `[2, 0, 1]` means the original 2nd axis becomes the 0th,
     ///   the original 0th axis becomes the 1st, and so on.
     pub fn permute(&self, axes: &[usize]) -> Tensor {
-        let permuted = self.data.clone().permuted_axes(IxDyn(axes));
-        // Ensure memory is contiguous
-        Tensor::from_ndarray(permuted.as_standard_layout().to_owned())
+        // Permute a view, then copy once into contiguous storage.
+        let permuted = self.data.view().permuted_axes(IxDyn(axes));
+        Tensor::from_ndarray(permuted.as_standard_layout().into_owned())
     }
 
     /// Inserts a new dimension of size 1 at the specified position.

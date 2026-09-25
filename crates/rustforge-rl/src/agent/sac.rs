@@ -34,6 +34,7 @@
 //! - **Alpha update**: `log π` is detached from the actor's computation graph.
 //!   Alpha gradient only flows to `log_alpha`.
 
+use rustforge_autograd::no_grad;
 use rustforge_autograd::optimizer::adam::Adam;
 use rustforge_autograd::{Optimizer, Variable};
 use rustforge_nn::loss::mse_loss;
@@ -192,7 +193,7 @@ impl SAC {
     pub fn select_action(&self, state: &[f32]) -> Vec<f32> {
         let state_tensor = Tensor::from_vec(state.to_vec(), &[1, self.config.obs_dim]);
         let state_var = Variable::from_tensor(state_tensor);
-        let (action, _log_prob) = self.actor.sample(&state_var);
+        let (action, _log_prob) = no_grad(|| self.actor.sample(&state_var));
         let result = action.data().to_vec();
         result
     }
@@ -201,7 +202,7 @@ impl SAC {
     pub fn deterministic_action(&self, state: &[f32]) -> Vec<f32> {
         let state_tensor = Tensor::from_vec(state.to_vec(), &[1, self.config.obs_dim]);
         let state_var = Variable::from_tensor(state_tensor);
-        self.actor.deterministic_action(&state_var)
+        no_grad(|| self.actor.deterministic_action(&state_var))
     }
 
     /// Performs one training step on a batch of transitions.

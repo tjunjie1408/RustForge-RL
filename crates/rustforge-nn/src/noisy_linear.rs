@@ -76,7 +76,7 @@ impl Module for NoisyLinear {
         // \mu_w + \sigma_w \odot \epsilon_w
         let weight = &self.weight_mu + &(&self.weight_sigma * &eps_w_var);
 
-        let out = input.matmul(&weight.t());
+        let out = input.matmul_t(&weight);
 
         if let Some(b_mu) = &self.bias_mu {
             let b_sigma = self.bias_sigma.as_ref().unwrap();

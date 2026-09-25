@@ -15,6 +15,7 @@
 //!
 //! Momentum helps accelerate SGD in the relevant direction and dampens oscillations.
 
+use ndarray::Zip;
 use rustforge_tensor::Tensor;
 
 use crate::variable::Variable;
@@ -67,30 +68,30 @@ impl SGD {
 
 impl Optimizer for SGD {
     fn step(&mut self) {
-        for (i, param) in self.params.iter().enumerate() {
-            if let Some(grad) = param.grad() {
-                if self.momentum > 0.0 {
-                    // v = μ·v + grad
-                    let v = match &self.velocities[i] {
-                        Some(prev_v) => &(prev_v * self.momentum) + &grad,
-                        None => grad.clone(),
+        let (lr, momentum) = (self.lr, self.momentum);
+        for (param, velocity) in self.params.iter().zip(&mut self.velocities) {
+            param.update_with_grad(|data, grad| {
+                if momentum > 0.0 {
+                    // v = μ·v + grad ;  θ = θ - lr·v
+                    let v = match velocity {
+                        Some(v) => {
+                            Zip::from(v.data_mut())
+                                .and(grad.data())
+                                .for_each(|v, &g| *v = *v * momentum + g);
+                            v
+                        }
+                        None => velocity.insert(grad.clone()),
                     };
-                    // θ = θ - lr·v
-                    let new_data = {
-                        let param_d = param.data();
-                        &*param_d - &(&v * self.lr)
-                    };
-                    self.velocities[i] = Some(v);
-                    param.set_data(new_data);
+                    Zip::from(data.data_mut())
+                        .and(v.data())
+                        .for_each(|p, &v| *p -= v * lr);
                 } else {
                     // θ = θ - lr·∇θ
-                    let new_data = {
-                        let param_d = param.data();
-                        &*param_d - &(&grad * self.lr)
-                    };
-                    param.set_data(new_data);
+                    Zip::from(data.data_mut())
+                        .and(grad.data())
+                        .for_each(|p, &g| *p -= g * lr);
                 }
-            }
+            });
         }
     }
 
@@ -118,7 +119,7 @@ mod tests {
         // θ = 10.0, grad = 2.0, lr = 0.1
         // After step: θ = 10.0 - 0.1 * 2.0 = 9.8
         let w = Variable::new(Tensor::from_vec(vec![10.0], &[1]), true);
-        w.accumulate_grad(&Tensor::from_vec(vec![2.0], &[1]));
+        w.accumulate_grad(Tensor::from_vec(vec![2.0], &[1]));
 
         let mut sgd = SGD::new(vec![w.clone()], 0.1, 0.0);
         sgd.step();
@@ -130,7 +131,7 @@ mod tests {
     #[test]
     fn test_sgd_momentum() {
         let w = Variable::new(Tensor::from_vec(vec![10.0], &[1]), true);
-        w.accumulate_grad(&Tensor::from_vec(vec![2.0], &[1]));
+        w.accumulate_grad(Tensor::from_vec(vec![2.0], &[1]));
 
         let mut sgd = SGD::new(vec![w.clone()], 0.1, 0.9);
 
@@ -140,7 +141,7 @@ mod tests {
 
         // Step 2: grad = 2.0 again, v = 0.9*2.0 + 2.0 = 3.8, θ = 9.8 - 0.1*3.8 = 9.42
         w.zero_grad();
-        w.accumulate_grad(&Tensor::from_vec(vec![2.0], &[1]));
+        w.accumulate_grad(Tensor::from_vec(vec![2.0], &[1]));
         sgd.step();
         assert!((w.data().to_vec()[0] - 9.42).abs() < 1e-5);
     }
@@ -148,7 +149,7 @@ mod tests {
     #[test]
     fn test_sgd_zero_grad() {
         let w = Variable::new(Tensor::from_vec(vec![5.0], &[1]), true);
-        w.accumulate_grad(&Tensor::from_vec(vec![1.0], &[1]));
+        w.accumulate_grad(Tensor::from_vec(vec![1.0], &[1]));
         assert!(w.grad().is_some());
 
         let mut sgd = SGD::new(vec![w.clone()], 0.01, 0.0);

@@ -1,5 +1,6 @@
 //! A2C adapter for the generic live-training runtime.
 
+use rustforge_autograd::no_grad;
 use std::convert::TryFrom;
 use std::fmt::Debug;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -343,7 +344,7 @@ where
         let mut force_after_episode = false;
 
         for step_index in 0..max_steps_per_episode {
-            let (logits, value) = agent.forward(&state_buf);
+            let (logits, value) = no_grad(|| agent.forward(&state_buf));
             let action_index = match action_rng.as_mut() {
                 Some(rng) => A2C::sample_action(&logits.data(), rng),
                 None => A2C::sample_action_default(&logits.data()),

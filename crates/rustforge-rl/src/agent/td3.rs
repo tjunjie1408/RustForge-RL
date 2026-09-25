@@ -29,6 +29,7 @@
 //!   via `soft_update` with small τ.
 
 use rand::Rng;
+use rustforge_autograd::no_grad;
 use rustforge_autograd::optimizer::adam::Adam;
 use rustforge_autograd::{Optimizer, Variable};
 use rustforge_nn::loss::mse_loss;
@@ -200,7 +201,7 @@ impl TD3 {
     pub fn select_action(&self, state: &[f32], noise_std: f32) -> Vec<f32> {
         let state_tensor = Tensor::from_vec(state.to_vec(), &[1, self.config.obs_dim]);
         let state_var = Variable::from_tensor(state_tensor);
-        let raw_action = self.actor.forward(&state_var);
+        let raw_action = no_grad(|| self.actor.forward(&state_var));
         let raw_data = raw_action.data().to_vec();
 
         let mut rng = rand::thread_rng();

@@ -78,6 +78,12 @@ impl Variable {
         requires_grad: bool,
         grad_fn: Option<Box<dyn GradFn>>,
     ) -> Self {
+        // Safety net for ops that decided before consulting the grad mode.
+        let (requires_grad, grad_fn) = if crate::is_grad_enabled() {
+            (requires_grad, grad_fn)
+        } else {
+            (false, None)
+        };
         Variable {
             inner: Rc::new(RefCell::new(VariableInner {
                 data,
@@ -140,16 +146,29 @@ impl Variable {
     /// If no gradient exists yet, sets it. Otherwise, adds to the existing gradient.
     /// This is the core mechanism for gradient accumulation during backward pass,
     /// handling the case where a variable is used multiple times in the graph.
-    pub(crate) fn accumulate_grad(&self, grad: &Tensor) {
+    pub(crate) fn accumulate_grad(&self, grad: Tensor) {
         let mut inner = self.inner.borrow_mut();
         match &mut inner.grad {
             Some(existing) => {
                 // In-place addition: zero allocation
-                *existing += grad;
+                *existing += &grad;
             }
             None => {
-                inner.grad = Some(grad.clone());
+                // Take ownership instead of copying the first gradient.
+                inner.grad = Some(grad);
             }
+        }
+    }
+
+    /// Updates the data in place from the current gradient, if one exists.
+    ///
+    /// Used by optimizers to avoid copying the gradient and reallocating the
+    /// parameter on every step.
+    pub(crate) fn update_with_grad(&self, update: impl FnOnce(&mut Tensor, &Tensor)) {
+        let mut inner = self.inner.borrow_mut();
+        let VariableInner { data, grad, .. } = &mut *inner;
+        if let Some(grad) = grad.as_ref() {
+            update(data, grad);
         }
     }
 
@@ -183,6 +202,15 @@ impl Variable {
     }
 
     // Math Operations (forward computation + graph tracking)
+
+    /// Matrix multiplication with a transposed right operand: `self @ rhsᵀ`.
+    ///
+    /// Equivalent to `self.matmul(&rhs.t())` but never materialises the
+    /// transpose, in either the forward or the backward pass. This is the
+    /// shape of a linear layer: `[batch, in] @ [out, in]ᵀ → [batch, out]`.
+    pub fn matmul_t(&self, rhs: &Variable) -> Variable {
+        crate::ops::var_matmul_t(self, rhs)
+    }
 
     /// Matrix multiplication: self @ rhs
     ///
@@ -395,8 +423,8 @@ mod tests {
         let v = Variable::new(Tensor::zeros(&[2]), true);
         let g1 = Tensor::ones(&[2]);
         let g2 = Tensor::ones(&[2]);
-        v.accumulate_grad(&g1);
-        v.accumulate_grad(&g2);
+        v.accumulate_grad(g1);
+        v.accumulate_grad(g2);
         let grad = v.grad().unwrap();
         assert_eq!(grad.to_vec(), vec![2.0, 2.0]);
     }
@@ -404,7 +432,7 @@ mod tests {
     #[test]
     fn test_zero_grad() {
         let v = Variable::new(Tensor::zeros(&[2]), true);
-        v.accumulate_grad(&Tensor::ones(&[2]));
+        v.accumulate_grad(Tensor::ones(&[2]));
         assert!(v.grad().is_some());
         v.zero_grad();
         assert!(v.grad().is_none());
@@ -422,7 +450,7 @@ mod tests {
         let v1 = Variable::new(Tensor::zeros(&[2]), true);
         let v2 = v1.clone();
         assert_eq!(v1, v2); // same Rc pointer
-        v1.accumulate_grad(&Tensor::ones(&[2]));
+        v1.accumulate_grad(Tensor::ones(&[2]));
         assert!(v2.grad().is_some()); // shared state
     }
 }

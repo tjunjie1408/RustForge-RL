@@ -69,7 +69,7 @@ pub fn backward(output: &Variable) {
         if let Some((inputs, input_grads)) = grad_result {
             for (input_var, input_grad) in inputs.into_iter().zip(input_grads) {
                 if input_var.requires_grad() {
-                    input_var.accumulate_grad(&input_grad);
+                    input_var.accumulate_grad(input_grad);
                 }
             }
         }

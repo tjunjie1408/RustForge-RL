@@ -5,6 +5,7 @@ use std::fmt::Debug;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use rustforge_autograd::no_grad;
 use rustforge_autograd::Variable;
 use rustforge_nn::Module;
 use rustforge_tensor::Tensor;
@@ -428,7 +429,7 @@ where
 
         for step_index in 0..max_steps_per_episode {
             let input = Tensor::from_vec(state_buf.clone(), &[1, obs_dim]);
-            let output = agent.q_net().forward(&Variable::from_tensor(input));
+            let output = no_grad(|| agent.q_net().forward(&Variable::from_tensor(input)));
             let q_values = output.data();
             ensure_finite_q_values(&q_values, episode, global_step)?;
             let action_idx = explorer.select_action(&q_values, global_step, num_actions);

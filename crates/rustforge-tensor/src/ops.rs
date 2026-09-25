@@ -404,6 +404,61 @@ impl Tensor {
         }
     }
 
+    /// Computes `self · rhsᵀ` without materialising the transpose.
+    ///
+    /// For 2D operands `[m, k] · [n, k]ᵀ → [m, n]`, the transposed operand is
+    /// passed to GEMM as a strided view. Other ranks fall back to
+    /// `self.matmul(&rhs.t())`.
+    ///
+    /// ```rust
+    /// use rustforge_tensor::Tensor;
+    /// let a = Tensor::from_vec(vec![1.0, 2.0], &[1, 2]);
+    /// let w = Tensor::from_vec(vec![1.0, 0.0, 0.0, 1.0, 1.0, 1.0], &[3, 2]);
+    /// assert_eq!(a.matmul_t(&w).to_vec(), vec![1.0, 2.0, 3.0]);
+    /// ```
+    pub fn matmul_t(&self, rhs: &Tensor) -> Tensor {
+        match (self.matrix_view(), rhs.matrix_view()) {
+            (Some(a), Some(b)) => {
+                assert_eq!(
+                    a.ncols(),
+                    b.ncols(),
+                    "matmul_t shape mismatch: {:?} × {:?}ᵀ",
+                    self.shape(),
+                    rhs.shape()
+                );
+                Tensor::from_ndarray(a.dot(&b.t()).into_dyn())
+            }
+            _ => self.matmul(&rhs.t()),
+        }
+    }
+
+    /// Computes `selfᵀ · rhs` without materialising the transpose.
+    ///
+    /// For 2D operands `[k, m]ᵀ · [k, n] → [m, n]`. Other ranks fall back to
+    /// `self.t().matmul(rhs)`.
+    pub fn t_matmul(&self, rhs: &Tensor) -> Tensor {
+        match (self.matrix_view(), rhs.matrix_view()) {
+            (Some(a), Some(b)) => {
+                assert_eq!(
+                    a.nrows(),
+                    b.nrows(),
+                    "t_matmul shape mismatch: {:?}ᵀ × {:?}",
+                    self.shape(),
+                    rhs.shape()
+                );
+                Tensor::from_ndarray(a.t().dot(&b).into_dyn())
+            }
+            _ => self.t().matmul(rhs),
+        }
+    }
+
+    fn matrix_view(&self) -> Option<ndarray::ArrayView2<'_, f32>> {
+        self.data()
+            .view()
+            .into_dimensionality::<ndarray::Ix2>()
+            .ok()
+    }
+
     /// Internal implementation of batch matrix multiplication.
     ///
     /// Handles tensors higher than 2D by flattening the batch dimensions into a single

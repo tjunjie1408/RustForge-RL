@@ -13,6 +13,7 @@
 //! Default hyperparameters follow the original paper (Kingma & Ba, 2015):
 //! β₁ = 0.9, β₂ = 0.999, ε = 1e-8
 
+use ndarray::Zip;
 use rustforge_tensor::Tensor;
 
 use crate::variable::Variable;
@@ -93,29 +94,26 @@ impl Optimizer for Adam {
     fn step(&mut self) {
         self.t += 1;
         let t = self.t as f32;
+        let (lr, beta1, beta2, epsilon) = (self.lr, self.beta1, self.beta2, self.epsilon);
+        let bias1 = 1.0 - beta1.powf(t);
+        let bias2 = 1.0 - beta2.powf(t);
 
-        for (i, param) in self.params.iter().enumerate() {
-            if let Some(grad) = param.grad() {
-                // m = β₁·m + (1-β₁)·g
-                self.m[i] = &(&self.m[i] * self.beta1) + &(&grad * (1.0 - self.beta1));
-
-                // v = β₂·v + (1-β₂)·g²
-                let grad_sq = &grad * &grad;
-                self.v[i] = &(&self.v[i] * self.beta2) + &(&grad_sq * (1.0 - self.beta2));
-
-                // Bias-corrected estimates
-                let m_hat = &self.m[i] / (1.0 - self.beta1.powf(t));
-                let v_hat = &self.v[i] / (1.0 - self.beta2.powf(t));
-
-                // θ = θ - lr · m̂ / (√v̂ + ε)
-                let denom = &v_hat.sqrt() + self.epsilon;
-                let update = &m_hat / &denom;
-                let new_data = {
-                    let param_d = param.data();
-                    &*param_d - &(&update * self.lr)
-                };
-                param.set_data(new_data);
-            }
+        for ((param, m), v) in self.params.iter().zip(&mut self.m).zip(&mut self.v) {
+            param.update_with_grad(|data, grad| {
+                Zip::from(data.data_mut())
+                    .and(grad.data())
+                    .and(m.data_mut())
+                    .and(v.data_mut())
+                    .for_each(|p, &g, m, v| {
+                        // m = β₁·m + (1-β₁)·g ;  v = β₂·v + (1-β₂)·g²
+                        *m = *m * beta1 + g * (1.0 - beta1);
+                        *v = *v * beta2 + (g * g) * (1.0 - beta2);
+                        // θ = θ - lr · m̂ / (√v̂ + ε)
+                        let m_hat = *m / bias1;
+                        let v_hat = *v / bias2;
+                        *p -= (m_hat / (v_hat.sqrt() + epsilon)) * lr;
+                    });
+            });
         }
     }
 
@@ -142,7 +140,7 @@ mod tests {
     fn test_adam_basic() {
         // Verify that Adam makes a reasonable update
         let w = Variable::new(Tensor::from_vec(vec![5.0], &[1]), true);
-        w.accumulate_grad(&Tensor::from_vec(vec![2.0], &[1]));
+        w.accumulate_grad(Tensor::from_vec(vec![2.0], &[1]));
 
         let mut adam = Adam::new(vec![w.clone()], 0.1);
         let before = w.data().to_vec()[0];
@@ -163,7 +161,7 @@ mod tests {
             w.zero_grad();
             // gradient = w (gradient points toward higher values of w²/2)
             let current = w.data().to_vec()[0];
-            w.accumulate_grad(&Tensor::from_vec(vec![current], &[1]));
+            w.accumulate_grad(Tensor::from_vec(vec![current], &[1]));
             adam.step();
         }
 
@@ -179,7 +177,7 @@ mod tests {
     #[test]
     fn test_adam_zero_grad() {
         let w = Variable::new(Tensor::from_vec(vec![5.0], &[1]), true);
-        w.accumulate_grad(&Tensor::from_vec(vec![1.0], &[1]));
+        w.accumulate_grad(Tensor::from_vec(vec![1.0], &[1]));
         assert!(w.grad().is_some());
 
         let mut adam = Adam::new(vec![w.clone()], 0.01);

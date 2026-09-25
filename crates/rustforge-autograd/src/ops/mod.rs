@@ -27,15 +27,18 @@ pub mod conv;
 pub use conv::{var_conv2d, Conv2dGrad};
 
 use crate::graph::{
-    AddGrad, ConcatGrad, DivGrad, ExpGrad, GatherAxisGrad, GradFn, LogGrad, MatmulGrad, MeanGrad,
-    MulGrad, NegGrad, PowGrad, ReluGrad, ScalarAddGrad, ScalarMulGrad, SigmoidGrad, SiluGrad,
-    SqrtGrad, SubGrad, SumAxisGrad, SumGrad, TanhGrad, TransposeGrad,
+    AddGrad, ConcatGrad, DivGrad, ExpGrad, GatherAxisGrad, GradFn, LogGrad, MatmulGrad,
+    MatmulTGrad, MeanGrad, MulGrad, NegGrad, PowGrad, ReluGrad, ScalarAddGrad, ScalarMulGrad,
+    SigmoidGrad, SiluGrad, SqrtGrad, SubGrad, SumAxisGrad, SumGrad, TanhGrad, TransposeGrad,
 };
 use crate::variable::Variable;
 
-/// Returns true if any of the given variables requires gradient tracking.
-fn needs_grad(inputs: &[&Variable]) -> bool {
-    inputs.iter().any(|v| v.requires_grad())
+/// Returns true if gradient tracking is enabled and any input requires it.
+///
+/// Every operation must decide through this function before saving tensors
+/// for its backward pass, so that [`crate::no_grad`] skips those copies.
+pub(crate) fn needs_grad(inputs: &[&Variable]) -> bool {
+    crate::is_grad_enabled() && inputs.iter().any(|v| v.requires_grad())
 }
 
 // Variable + Variable
@@ -138,7 +141,7 @@ impl Neg for &Variable {
     fn neg(self) -> Variable {
         let d = self.data();
         let result_data = -&*d;
-        let requires_grad = self.requires_grad();
+        let requires_grad = needs_grad(&[self]);
         let grad_fn: Option<Box<dyn GradFn>> = if requires_grad {
             Some(Box::new(NegGrad {
                 input: self.clone(),
@@ -251,7 +254,7 @@ impl Add<f32> for &Variable {
     fn add(self, rhs: f32) -> Variable {
         let d = self.data();
         let result_data = &*d + rhs;
-        let requires_grad = self.requires_grad();
+        let requires_grad = needs_grad(&[self]);
         let grad_fn: Option<Box<dyn GradFn>> = if requires_grad {
             Some(Box::new(ScalarAddGrad {
                 input: self.clone(),
@@ -293,7 +296,7 @@ impl Mul<f32> for &Variable {
     fn mul(self, rhs: f32) -> Variable {
         let d = self.data();
         let result_data = &*d * rhs;
-        let requires_grad = self.requires_grad();
+        let requires_grad = needs_grad(&[self]);
         let grad_fn: Option<Box<dyn GradFn>> = if requires_grad {
             Some(Box::new(ScalarMulGrad {
                 input: self.clone(),
@@ -366,11 +369,36 @@ pub fn var_matmul(lhs: &Variable, rhs: &Variable) -> Variable {
     Variable::from_grad_fn(result_data, requires_grad, grad_fn)
 }
 
+/// Matrix multiplication `lhs @ rhsᵀ` with gradient tracking.
+///
+/// 2D operands use the fused path; other ranks fall back to
+/// `var_matmul(lhs, rhsᵀ)`.
+pub fn var_matmul_t(lhs: &Variable, rhs: &Variable) -> Variable {
+    if lhs.data().ndim() != 2 || rhs.data().ndim() != 2 {
+        return var_matmul(lhs, &var_transpose(rhs));
+    }
+    let lhs_data = lhs.data();
+    let rhs_data = rhs.data();
+    let result_data = lhs_data.matmul_t(&rhs_data);
+    let requires_grad = needs_grad(&[lhs, rhs]);
+    let grad_fn: Option<Box<dyn GradFn>> = if requires_grad {
+        Some(Box::new(MatmulTGrad {
+            lhs: lhs.clone(),
+            rhs: rhs.clone(),
+            lhs_data: lhs_data.clone(),
+            rhs_data: rhs_data.clone(),
+        }))
+    } else {
+        None
+    };
+    Variable::from_grad_fn(result_data, requires_grad, grad_fn)
+}
+
 /// ReLU with gradient tracking.
 pub fn var_relu(input: &Variable) -> Variable {
     let input_data = input.data();
     let result_data = input_data.relu();
-    let requires_grad = input.requires_grad();
+    let requires_grad = needs_grad(&[input]);
     let grad_fn: Option<Box<dyn GradFn>> = if requires_grad {
         Some(Box::new(ReluGrad {
             input: input.clone(),
@@ -386,7 +414,7 @@ pub fn var_relu(input: &Variable) -> Variable {
 pub fn var_sigmoid(input: &Variable) -> Variable {
     let input_data = input.data();
     let output_data = input_data.sigmoid();
-    let requires_grad = input.requires_grad();
+    let requires_grad = needs_grad(&[input]);
     let grad_fn: Option<Box<dyn GradFn>> = if requires_grad {
         Some(Box::new(SigmoidGrad {
             input: input.clone(),
@@ -402,7 +430,7 @@ pub fn var_sigmoid(input: &Variable) -> Variable {
 pub fn var_silu(input: &Variable) -> Variable {
     let input_data = input.data();
     let result_data = input_data.silu();
-    let requires_grad = input.requires_grad();
+    let requires_grad = needs_grad(&[input]);
     let grad_fn: Option<Box<dyn GradFn>> = if requires_grad {
         Some(Box::new(SiluGrad {
             input: input.clone(),
@@ -418,7 +446,7 @@ pub fn var_silu(input: &Variable) -> Variable {
 pub fn var_tanh(input: &Variable) -> Variable {
     let input_data = input.data();
     let output_data = input_data.tanh_();
-    let requires_grad = input.requires_grad();
+    let requires_grad = needs_grad(&[input]);
     let grad_fn: Option<Box<dyn GradFn>> = if requires_grad {
         Some(Box::new(TanhGrad {
             input: input.clone(),
@@ -434,7 +462,7 @@ pub fn var_tanh(input: &Variable) -> Variable {
 pub fn var_exp(input: &Variable) -> Variable {
     let input_data = input.data();
     let output_data = input_data.exp();
-    let requires_grad = input.requires_grad();
+    let requires_grad = needs_grad(&[input]);
     let grad_fn: Option<Box<dyn GradFn>> = if requires_grad {
         Some(Box::new(ExpGrad {
             input: input.clone(),
@@ -450,7 +478,7 @@ pub fn var_exp(input: &Variable) -> Variable {
 pub fn var_log(input: &Variable) -> Variable {
     let input_data = input.data();
     let result_data = input_data.log();
-    let requires_grad = input.requires_grad();
+    let requires_grad = needs_grad(&[input]);
     let grad_fn: Option<Box<dyn GradFn>> = if requires_grad {
         Some(Box::new(LogGrad {
             input: input.clone(),
@@ -466,7 +494,7 @@ pub fn var_log(input: &Variable) -> Variable {
 pub fn var_pow(input: &Variable, p: f32) -> Variable {
     let input_data = input.data();
     let result_data = input_data.pow(p);
-    let requires_grad = input.requires_grad();
+    let requires_grad = needs_grad(&[input]);
     let grad_fn: Option<Box<dyn GradFn>> = if requires_grad {
         Some(Box::new(PowGrad {
             input: input.clone(),
@@ -483,7 +511,7 @@ pub fn var_pow(input: &Variable, p: f32) -> Variable {
 pub fn var_sqrt(input: &Variable) -> Variable {
     let input_data = input.data();
     let output_data = input_data.sqrt();
-    let requires_grad = input.requires_grad();
+    let requires_grad = needs_grad(&[input]);
     let grad_fn: Option<Box<dyn GradFn>> = if requires_grad {
         Some(Box::new(SqrtGrad {
             input: input.clone(),
@@ -498,7 +526,7 @@ pub fn var_sqrt(input: &Variable) -> Variable {
 /// Sum (all elements) with gradient tracking.
 pub fn var_sum(input: &Variable) -> Variable {
     let result_data = input.data().sum();
-    let requires_grad = input.requires_grad();
+    let requires_grad = needs_grad(&[input]);
     let grad_fn: Option<Box<dyn GradFn>> = if requires_grad {
         Some(Box::new(SumGrad {
             input: input.clone(),
@@ -512,7 +540,7 @@ pub fn var_sum(input: &Variable) -> Variable {
 /// Mean (all elements) with gradient tracking.
 pub fn var_mean(input: &Variable) -> Variable {
     let result_data = input.data().mean();
-    let requires_grad = input.requires_grad();
+    let requires_grad = needs_grad(&[input]);
     let grad_fn: Option<Box<dyn GradFn>> = if requires_grad {
         Some(Box::new(MeanGrad {
             input: input.clone(),
@@ -526,7 +554,7 @@ pub fn var_mean(input: &Variable) -> Variable {
 /// Sum along axis with gradient tracking.
 pub fn var_sum_axis(input: &Variable, axis: usize, keepdim: bool) -> Variable {
     let result_data = input.data().sum_axis(axis, keepdim).unwrap();
-    let requires_grad = input.requires_grad();
+    let requires_grad = needs_grad(&[input]);
     let grad_fn: Option<Box<dyn GradFn>> = if requires_grad {
         Some(Box::new(SumAxisGrad {
             input: input.clone(),
@@ -542,7 +570,7 @@ pub fn var_sum_axis(input: &Variable, axis: usize, keepdim: bool) -> Variable {
 /// Transpose (swap last two dimensions) with gradient tracking.
 pub fn var_transpose(input: &Variable) -> Variable {
     let result_data = input.data().t();
-    let requires_grad = input.requires_grad();
+    let requires_grad = needs_grad(&[input]);
     let grad_fn: Option<Box<dyn GradFn>> = if requires_grad {
         Some(Box::new(TransposeGrad {
             input: input.clone(),
@@ -567,7 +595,7 @@ pub fn var_gather(input: &Variable, axis: usize, indices: &[usize]) -> Variable 
     let result_data = input_data
         .gather(axis, indices)
         .expect("gather forward failed in var_gather");
-    let requires_grad = input.requires_grad();
+    let requires_grad = needs_grad(&[input]);
     let grad_fn: Option<Box<dyn GradFn>> = if requires_grad {
         Some(Box::new(GatherAxisGrad {
             input: input.clone(),

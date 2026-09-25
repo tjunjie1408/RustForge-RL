@@ -34,18 +34,26 @@
 //! | Category | Operations |
 //! |----------|-----------|
 //! | Arithmetic | `+`, `-`, `*`, `/`, negation |
-//! | Matrix | `matmul` |
+//! | Matrix | `matmul`, `matmul_t` (`a @ bᵀ` without a transpose copy) |
 //! | Activations | `relu`, `sigmoid`, `tanh` |
 //! | Math | `exp`, `log`, `pow`, `sqrt` |
 //! | Reductions | `sum`, `mean`, `sum_axis` |
 //! | Scalar | `Variable ± f32`, `Variable × f32` |
+//!
+//! ## Inference without a graph
+//!
+//! Wrap forward passes whose results are never differentiated (action
+//! selection, target estimates) in [`no_grad`]. Operations inside record no
+//! graph nodes and skip the tensor copies those nodes would save.
 
 pub mod backward;
+mod grad_mode;
 pub mod graph;
 pub mod ops;
 pub mod optimizer;
 pub mod variable;
 
 // Re-export core types for user convenience
+pub use grad_mode::{is_grad_enabled, no_grad};
 pub use optimizer::Optimizer;
 pub use variable::Variable;

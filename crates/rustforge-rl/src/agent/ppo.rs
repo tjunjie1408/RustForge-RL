@@ -40,6 +40,7 @@
 
 use rand::seq::SliceRandom;
 use rand::Rng;
+use rustforge_autograd::no_grad;
 use rustforge_autograd::optimizer::adam::Adam;
 use rustforge_autograd::{Optimizer, Variable};
 use rustforge_nn::loss::mse_loss;
@@ -221,7 +222,7 @@ impl PPODiscrete {
     ) -> (usize, f32, f32) {
         let state_tensor = Tensor::from_vec(state.to_vec(), &[1, self.config.base.obs_dim]);
         let state_var = Variable::from_tensor(state_tensor);
-        let (logits, value) = self.net.forward(&state_var);
+        let (logits, value) = no_grad(|| self.net.forward(&state_var));
 
         // Softmax for sampling
         let log_probs = log_softmax_var(&logits);
@@ -263,7 +264,7 @@ impl PPODiscrete {
     pub fn value_of(&self, state: &[f32]) -> f32 {
         let state_tensor = Tensor::from_vec(state.to_vec(), &[1, self.config.base.obs_dim]);
         let state_var = Variable::from_tensor(state_tensor);
-        let (_logits, value) = self.net.forward(&state_var);
+        let (_logits, value) = no_grad(|| self.net.forward(&state_var));
         let result = value.data().to_vec()[0];
         result
     }
@@ -486,8 +487,10 @@ impl PPOContinuous {
         let state_tensor = Tensor::from_vec(state.to_vec(), &[1, self.config.base.obs_dim]);
         let state_var = Variable::from_tensor(state_tensor);
 
-        let (action, log_prob) = self.actor.sample(&state_var);
-        let value = self.critic.forward(&state_var);
+        let (action, log_prob, value) = no_grad(|| {
+            let (action, log_prob) = self.actor.sample(&state_var);
+            (action, log_prob, self.critic.forward(&state_var))
+        });
 
         let action_data = action.data().to_vec();
         let log_prob_scalar = log_prob.data().to_vec()[0];

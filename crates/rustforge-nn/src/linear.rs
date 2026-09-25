@@ -106,7 +106,7 @@ impl Module for Linear {
     /// - tensor of shape `[batch, out_features]`
     fn forward(&self, input: &Variable) -> Variable {
         // x [batch, in] @ W^T [in, out] → [batch, out]
-        let out = input.matmul(&self.weight.t());
+        let out = input.matmul_t(&self.weight);
         match &self.bias {
             Some(b) => &out + b,
             None => out,

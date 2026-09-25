@@ -37,6 +37,7 @@
 //! 4. `clear()` buffer
 
 use rand::Rng;
+use rustforge_autograd::no_grad;
 use rustforge_autograd::optimizer::adam::Adam;
 use rustforge_autograd::{Optimizer, Variable};
 use rustforge_nn::loss::mse_loss;
@@ -220,7 +221,7 @@ impl A2C {
     ///
     /// Used during rollout collection to fill `RolloutBuffer::push(... value ...)`.
     pub fn value_of(&self, state: &[f32]) -> f32 {
-        let (_, value) = self.forward(state);
+        let (_, value) = no_grad(|| self.forward(state));
         let val = value.data().item();
         val
     }

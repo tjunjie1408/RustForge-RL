@@ -13,6 +13,7 @@
 
 use super::Optimizer;
 use crate::variable::Variable;
+use ndarray::Zip;
 use rustforge_tensor::Tensor;
 
 /// RMSprop optimizer.
@@ -79,28 +80,31 @@ impl RMSprop {
 
 impl Optimizer for RMSprop {
     fn step(&mut self) {
+        let (lr, alpha, eps) = (self.lr, self.alpha, self.eps);
         for (i, param) in self.params.iter().enumerate() {
-            if let Some(grad) = param.grad() {
-                // v ← α·v + (1-α)·g²
-                let grad_sq = &grad * &grad;
-                self.v[i] = &(&self.v[i] * self.alpha) + &(&grad_sq * (1.0 - self.alpha));
-
-                let denom = &self.v[i].sqrt() + self.eps;
-                let step_val = &grad / &denom;
-
-                let update = if let Some(mom) = self.momentum {
-                    // m ← momentum·m + g / (√v + ε)
-                    self.m[i] = &(&self.m[i] * mom) + &step_val;
-                    &self.m[i] * self.lr
-                } else {
-                    &step_val * self.lr
-                };
-
-                let new_data = {
-                    let param_d = param.data();
-                    &*param_d - &update
-                };
-                param.set_data(new_data);
+            let v = &mut self.v[i];
+            match (self.momentum, self.m.get_mut(i)) {
+                (Some(momentum), Some(m)) => param.update_with_grad(|data, grad| {
+                    Zip::from(data.data_mut())
+                        .and(grad.data())
+                        .and(v.data_mut())
+                        .and(m.data_mut())
+                        .for_each(|p, &g, v, m| {
+                            // v ← α·v + (1-α)·g² ;  m ← momentum·m + g / (√v + ε)
+                            *v = *v * alpha + (g * g) * (1.0 - alpha);
+                            *m = *m * momentum + g / (v.sqrt() + eps);
+                            *p -= *m * lr;
+                        });
+                }),
+                _ => param.update_with_grad(|data, grad| {
+                    Zip::from(data.data_mut())
+                        .and(grad.data())
+                        .and(v.data_mut())
+                        .for_each(|p, &g, v| {
+                            *v = *v * alpha + (g * g) * (1.0 - alpha);
+                            *p -= (g / (v.sqrt() + eps)) * lr;
+                        });
+                }),
             }
         }
     }
@@ -127,7 +131,7 @@ mod tests {
     #[test]
     fn test_rmsprop_no_momentum() {
         let w = Variable::new(Tensor::from_vec(vec![1.0], &[1]), true);
-        w.accumulate_grad(&Tensor::from_vec(vec![2.0], &[1]));
+        w.accumulate_grad(Tensor::from_vec(vec![2.0], &[1]));
 
         let mut opt = RMSprop::new(vec![w.clone()], 0.1, 0.5, 0.0, None);
         // alpha=0.5, grad=2.0
@@ -143,7 +147,7 @@ mod tests {
     #[test]
     fn test_rmsprop_momentum() {
         let w = Variable::new(Tensor::from_vec(vec![1.0], &[1]), true);
-        w.accumulate_grad(&Tensor::from_vec(vec![2.0], &[1]));
+        w.accumulate_grad(Tensor::from_vec(vec![2.0], &[1]));
 
         let mut opt = RMSprop::new(vec![w.clone()], 0.1, 0.5, 0.0, Some(0.9));
         // step 1:
@@ -157,7 +161,7 @@ mod tests {
 
         // step 2:
         w.zero_grad();
-        w.accumulate_grad(&Tensor::from_vec(vec![2.0], &[1]));
+        w.accumulate_grad(Tensor::from_vec(vec![2.0], &[1]));
         // v = 0.5 * 2.0 + 0.5 * 4.0 = 3.0
         // step_val = 2.0 / sqrt(3.0) = 1.1547005
         // m = 0.9 * 1.4142135 + 1.1547005 = 1.2727921 + 1.1547005 = 2.4274926
@@ -217,7 +221,7 @@ mod tests {
     #[test]
     fn test_rmsprop_set_lr() {
         let w = Variable::new(Tensor::from_vec(vec![1.0], &[1]), true);
-        w.accumulate_grad(&Tensor::from_vec(vec![2.0], &[1]));
+        w.accumulate_grad(Tensor::from_vec(vec![2.0], &[1]));
 
         let mut opt = RMSprop::new(vec![w.clone()], 0.1, 0.5, 0.0, None);
         assert_eq!(opt.lr(), 0.1, "Initial learning rate should be 0.1");
@@ -243,8 +247,8 @@ mod tests {
     fn test_rmsprop_zero_grad() {
         let w1 = Variable::new(Tensor::from_vec(vec![1.0], &[1]), true);
         let w2 = Variable::new(Tensor::from_vec(vec![2.0], &[1]), true);
-        w1.accumulate_grad(&Tensor::from_vec(vec![2.0], &[1]));
-        w2.accumulate_grad(&Tensor::from_vec(vec![3.0], &[1]));
+        w1.accumulate_grad(Tensor::from_vec(vec![2.0], &[1]));
+        w2.accumulate_grad(Tensor::from_vec(vec![3.0], &[1]));
 
         let mut opt = RMSprop::new(vec![w1.clone(), w2.clone()], 0.1, 0.5, 0.0, None);
 

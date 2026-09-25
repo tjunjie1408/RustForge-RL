@@ -30,6 +30,7 @@
 //! - **Agent-Env boundary**: DQN owns networks+optimizer. The training loop is external —
 //!   the caller drives `env.step()` and feeds transitions to `buffer.push()` + `train_step()`.
 
+use rustforge_autograd::no_grad;
 use rustforge_autograd::optimizer::adam::Adam;
 use rustforge_autograd::{Optimizer, Variable};
 use rustforge_nn::loss::mse_loss;
@@ -158,7 +159,7 @@ impl DQN {
     pub fn select_greedy_action(&self, state: &[f32]) -> usize {
         let state_tensor = Tensor::from_vec(state.to_vec(), &[1, self.config.obs_dim]);
         let state_var = Variable::from_tensor(state_tensor);
-        let q_values = self.q_net.forward(&state_var);
+        let q_values = no_grad(|| self.q_net.forward(&state_var));
         let q_data = q_values.data();
         q_data
             .argmax_axis(1)
@@ -225,7 +226,7 @@ impl DQN {
         let td_target = if self.config.double_dqn {
             // Double DQN: online net selects action, target net evaluates
             // a* = argmax_a Q(s', a; θ)  (online network, but detached)
-            let next_q_online = self.q_net.forward(&next_states_var);
+            let next_q_online = no_grad(|| self.q_net.forward(&next_states_var));
             let next_q_online_data = next_q_online.data();
             let best_actions = next_q_online_data
                 .argmax_axis(1)
