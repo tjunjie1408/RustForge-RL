@@ -14,9 +14,7 @@ const TAG_WIDTH: usize = 12;
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: Theme) {
     let visible = area.height.saturating_sub(2) as usize;
     let lines: Vec<Line<'_>> = app
-        .activity()
-        .iter()
-        .rev()
+        .activity_newest_first()
         .skip(app.scroll_offset())
         .take(visible)
         .map(|item| activity_line(item, theme))
@@ -72,9 +70,7 @@ pub(super) fn recent_lines(app: &AppState, theme: Theme, limit: usize) -> Vec<Li
         ));
     }
     lines.extend(
-        app.activity()
-            .iter()
-            .rev()
+        app.activity_newest_first()
             .map(|item| activity_line(item, theme)),
     );
     lines.truncate(limit);

@@ -129,6 +129,13 @@ impl Palette {
     }
 }
 
+/// Total rows ever pushed to each history at the moment the view froze.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FrozenAnchor {
+    episodes: u64,
+    activity: u64,
+}
+
 pub struct AppState {
     mode: AppMode,
     view: View,
@@ -136,6 +143,8 @@ pub struct AppState {
     episodes: BoundedHistory<MetricRow>,
     activity: BoundedHistory<CsvDiagnostic>,
     follow_live: bool,
+    /// Absolute history lengths captured when following was turned off.
+    frozen_at: Option<FrozenAnchor>,
     scroll_offset: usize,
     palette: Palette,
     dialog: Option<Dialog>,
@@ -165,6 +174,7 @@ impl AppState {
             episodes: BoundedHistory::new(episode_capacity),
             activity: BoundedHistory::new(activity_capacity),
             follow_live: true,
+            frozen_at: None,
             scroll_offset: 0,
             palette: Palette::Default,
             dialog: None,
@@ -190,7 +200,7 @@ impl AppState {
         if poll.reset {
             self.episodes.clear();
             self.scroll_offset = 0;
-            self.follow_live = true;
+            self.set_follow(true);
         }
         for row in poll.rows {
             self.episodes.push(row);
@@ -209,20 +219,20 @@ impl AppState {
             Action::PreviousRange => self.chart_range = self.chart_range.previous(),
             Action::ScrollUp(amount) => {
                 self.scroll_offset = self.scroll_offset.saturating_add(amount);
-                self.follow_live = false;
+                self.set_follow(false);
             }
             Action::ScrollDown(amount) => {
                 self.scroll_offset = self.scroll_offset.saturating_sub(amount);
             }
             Action::JumpToFirst => {
                 self.scroll_offset = self.episodes.len().saturating_sub(1);
-                self.follow_live = false;
+                self.set_follow(false);
             }
             Action::JumpToLatest => {
                 self.scroll_offset = 0;
-                self.follow_live = true;
+                self.set_follow(true);
             }
-            Action::ToggleFollow => self.follow_live = !self.follow_live,
+            Action::ToggleFollow => self.set_follow(!self.follow_live),
             Action::CyclePalette => self.palette = self.palette.next(),
             Action::ToggleHelp => {
                 self.dialog = if self.dialog == Some(Dialog::Help) {
@@ -337,13 +347,40 @@ impl AppState {
         self.chart_range
     }
 
+    /// Episodes in the selected chart range, ending at the latest row while
+    /// following or at the row that was latest when the view froze.
     pub fn chart_rows(&self) -> Vec<&MetricRow> {
-        let skip = self
+        let end = match self.frozen_at {
+            Some(anchor) => visible_end(&self.episodes, anchor.episodes),
+            None => self.episodes.len(),
+        };
+        let start = self
             .chart_range
             .limit()
-            .map(|limit| self.episodes.len().saturating_sub(limit))
+            .map(|limit| end.saturating_sub(limit))
             .unwrap_or(0);
-        self.episodes.iter().skip(skip).collect()
+        self.episodes.iter().skip(start).take(end - start).collect()
+    }
+
+    /// Activity from newest to oldest, hiding entries that arrived after the view froze.
+    pub fn activity_newest_first(&self) -> impl Iterator<Item = &CsvDiagnostic> {
+        let hidden = match self.frozen_at {
+            Some(anchor) => self.activity.len() - visible_end(&self.activity, anchor.activity),
+            None => 0,
+        };
+        self.activity.iter().rev().skip(hidden)
+    }
+
+    fn set_follow(&mut self, follow: bool) {
+        self.follow_live = follow;
+        if follow {
+            self.frozen_at = None;
+        } else if self.frozen_at.is_none() {
+            self.frozen_at = Some(FrozenAnchor {
+                episodes: pushed(&self.episodes),
+                activity: pushed(&self.activity),
+            });
+        }
     }
 
     pub fn metric_labels(&self) -> &MetricLabels {
@@ -451,4 +488,15 @@ impl AppState {
     pub fn set_finished(&mut self, finished: bool) {
         self.finished = finished;
     }
+}
+
+fn pushed<T>(history: &BoundedHistory<T>) -> u64 {
+    history.evicted() + history.len() as u64
+}
+
+/// Index one past the last retained item that existed when `anchor` items had been pushed.
+fn visible_end<T>(history: &BoundedHistory<T>, anchor: u64) -> usize {
+    usize::try_from(anchor.saturating_sub(history.evicted()))
+        .unwrap_or(usize::MAX)
+        .min(history.len())
 }

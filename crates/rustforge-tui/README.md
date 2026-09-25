@@ -60,6 +60,11 @@ g                alert settings
 q / Ctrl+C       quit monitor
 ```
 
+`f`, scrolling up, or `Home` freezes the view: charts keep the episode window
+that was current at that moment and the event lists hide newer entries, while
+KPIs and new data keep updating in the background. The footer shows `FROZEN`
+until `f` or `End` resumes following.
+
 Monitor mode intentionally has no pause, resume, stop, or checkpoint controls.
 
 For integrated DQN training with live controls:

@@ -128,3 +128,87 @@ fn alert_target_can_be_edited_for_the_current_session() {
     app.apply(Action::AlertTargetBackspace);
     assert_eq!(app.alert_target_input(), "195.");
 }
+
+fn poll(rows: std::ops::Range<u64>, messages: &[&str]) -> CsvSourcePoll {
+    CsvSourcePoll {
+        rows: rows.map(row).collect(),
+        state: MonitorSourceState::Following,
+        reset: false,
+        diagnostics: messages
+            .iter()
+            .map(|message| CsvDiagnostic {
+                kind: CsvDiagnosticKind::Lifecycle,
+                line: None,
+                message: (*message).into(),
+            })
+            .collect(),
+    }
+}
+
+fn last_charted_episode(app: &AppState) -> Option<u64> {
+    app.chart_rows().last().map(|row| row.episode)
+}
+
+fn newest_activity(app: &AppState) -> Option<String> {
+    app.activity_newest_first()
+        .next()
+        .map(|item| item.message.clone())
+}
+
+#[test]
+fn toggle_follow_freezes_chart_window_and_activity_until_resumed() {
+    let mut app = AppState::new(AppMode::Monitor, 64, 16);
+    app.apply_csv_poll(poll(0..5, &["first"]));
+
+    app.apply(Action::ToggleFollow);
+    assert!(!app.follow_live());
+    app.apply_csv_poll(poll(5..10, &["second"]));
+    assert_eq!(app.latest_episode().unwrap().episode, 9);
+    assert_eq!(last_charted_episode(&app), Some(4));
+    assert_eq!(newest_activity(&app).as_deref(), Some("first"));
+
+    app.apply(Action::ToggleFollow);
+    assert!(app.follow_live());
+    assert_eq!(last_charted_episode(&app), Some(9));
+    assert_eq!(newest_activity(&app).as_deref(), Some("second"));
+}
+
+#[test]
+fn scrolling_freezes_and_jump_to_latest_resumes_following() {
+    let mut app = AppState::new(AppMode::Monitor, 64, 16);
+    app.apply_csv_poll(poll(0..3, &[]));
+    app.apply(Action::ScrollUp(1));
+    app.apply_csv_poll(poll(3..6, &[]));
+    assert_eq!(last_charted_episode(&app), Some(2));
+
+    app.apply(Action::JumpToLatest);
+    assert_eq!(last_charted_episode(&app), Some(5));
+}
+
+#[test]
+fn frozen_chart_window_respects_range_and_eviction() {
+    let mut app = AppState::new(AppMode::Monitor, 8, 4);
+    app.apply_csv_poll(poll(0..6, &[]));
+    app.apply(Action::ToggleFollow);
+    app.apply_csv_poll(poll(6..10, &[]));
+    // Capacity 8 evicted episodes 0 and 1; the frozen window still ends at episode 5.
+    let charted: Vec<u64> = app.chart_rows().iter().map(|row| row.episode).collect();
+    assert_eq!(charted, vec![2, 3, 4, 5]);
+
+    app.apply_csv_poll(poll(10..20, &[]));
+    // The frozen window has been fully evicted.
+    assert!(app.chart_rows().is_empty());
+}
+
+#[test]
+fn source_reset_clears_freeze() {
+    let mut app = AppState::new(AppMode::Monitor, 64, 16);
+    app.apply_csv_poll(poll(0..5, &[]));
+    app.apply(Action::ToggleFollow);
+    app.apply_csv_poll(CsvSourcePoll {
+        reset: true,
+        ..poll(0..2, &[])
+    });
+    assert!(app.follow_live());
+    assert_eq!(last_charted_episode(&app), Some(1));
+}

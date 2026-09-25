@@ -297,3 +297,29 @@ fn narrow_footer_drops_hints_instead_of_overlapping_range() {
     assert!(last_row.trim_end().ends_with("range: last 100"));
     assert!(last_row.contains("  range: last 100"));
 }
+
+#[test]
+fn frozen_view_is_announced_in_footer_and_hides_newer_events() {
+    let mut app = sample_app();
+    app.apply(rustforge_tui::action::Action::ToggleFollow);
+    app.apply_csv_poll(CsvSourcePoll {
+        rows: vec![parse_line("3,99,0.1,0.1,70").unwrap()],
+        state: MonitorSourceState::Following,
+        reset: false,
+        diagnostics: vec![CsvDiagnostic {
+            kind: CsvDiagnosticKind::Truncated,
+            line: None,
+            message: "arrived after freeze".into(),
+        }],
+    });
+    let output = text(&rendered(&app, 110, 34));
+    assert!(output.contains("FROZEN"));
+    assert!(output.contains("f follow"));
+    assert!(output.contains("attached to metrics file"));
+    assert!(!output.contains("arrived after freeze"));
+
+    app.apply(rustforge_tui::action::Action::ToggleFollow);
+    let following = text(&rendered(&app, 110, 34));
+    assert!(!following.contains("FROZEN"));
+    assert!(following.contains("arrived after freeze"));
+}

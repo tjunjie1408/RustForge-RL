@@ -82,3 +82,33 @@ fn monitor_tracker_uses_only_progress_observed_after_attach() {
     assert_eq!(insight.eta, Some(Duration::from_secs(80)));
     assert!(!insight.stalled);
 }
+
+fn has_divergence(alerts: &[rustforge_tui::analytics::RewardAlert]) -> bool {
+    alerts
+        .iter()
+        .any(|alert| alert.kind == RewardAlertKind::Divergence)
+}
+
+#[test]
+fn divergence_ignores_flat_or_improving_negative_rewards() {
+    // GridWorld-style timeouts: every episode scores -1.0.
+    let flat = [-1.0; 25];
+    assert!(!has_divergence(&reward_alerts(&flat, None, 20, 0.25)));
+
+    // Recent episodes are better than every earlier one.
+    let mut improving = vec![-1.0; 20];
+    improving.extend([-0.4; 20]);
+    assert!(!has_divergence(&reward_alerts(&improving, None, 20, 0.25)));
+}
+
+#[test]
+fn divergence_detects_real_drops_for_negative_rewards() {
+    let mut rewards = vec![-200.0, -150.0, -110.0];
+    rewards.extend([-180.0; 3]);
+    assert!(has_divergence(&reward_alerts(&rewards, None, 3, 0.25)));
+}
+
+#[test]
+fn divergence_ignores_all_zero_rewards() {
+    assert!(!has_divergence(&reward_alerts(&[0.0; 30], None, 10, 0.5)));
+}

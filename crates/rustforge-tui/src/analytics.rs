@@ -160,6 +160,12 @@ pub struct RewardAlert {
     pub value: f64,
 }
 
+/// Detect a reached reward target and a sustained reward drop.
+///
+/// Divergence compares the average of the last `minimum_samples` rewards with
+/// the best earlier reward. It fires when the drop is at least
+/// `divergence_fraction` of `max(best - worst, |best|)` over the earlier
+/// rewards, so negative-reward environments behave like positive ones.
 pub fn reward_alerts(
     rewards: &[f64],
     target: Option<f64>,
@@ -192,12 +198,16 @@ pub fn reward_alerts(
     if (0.0..1.0).contains(&divergence_fraction) && finite.len() > minimum_samples {
         let recent = &finite[finite.len() - minimum_samples..];
         let recent_average = recent.iter().sum::<f64>() / recent.len() as f64;
-        let earlier_best = finite[..finite.len() - minimum_samples]
-            .iter()
-            .copied()
-            .fold(f64::NEG_INFINITY, f64::max);
-        if earlier_best.is_finite() && recent_average <= earlier_best * (1.0 - divergence_fraction)
-        {
+        let (earlier_best, earlier_worst) = finite[..finite.len() - minimum_samples].iter().fold(
+            (f64::NEG_INFINITY, f64::INFINITY),
+            |(best, worst), value| (best.max(*value), worst.min(*value)),
+        );
+        // Measure the drop against a sign-independent scale. Scaling by `best`
+        // alone inverts the threshold for negative rewards and flags flat or
+        // improving runs.
+        let scale = (earlier_best - earlier_worst).max(earlier_best.abs());
+        let drop = earlier_best - recent_average;
+        if scale.is_finite() && scale > 0.0 && drop > 0.0 && drop >= divergence_fraction * scale {
             alerts.push(RewardAlert {
                 kind: RewardAlertKind::Divergence,
                 value: recent_average,

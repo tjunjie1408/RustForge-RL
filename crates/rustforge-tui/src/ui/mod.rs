@@ -275,6 +275,9 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: Theme
     } else {
         ("←/→", "↑/↓")
     };
+    if !app.follow_live() {
+        hints.push(("f", "follow"));
+    }
     hints.extend([
         ("?", "help"),
         ("Tab", "view"),
@@ -288,6 +291,14 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: Theme
         Some(limit) => format!("range: last {limit} "),
         None => "range: all ".into(),
     };
+    let mut status = Vec::new();
+    if !app.follow_live() {
+        status.push(Span::styled(" FROZEN ", theme.badge(theme.warning)));
+        status.push(Span::raw(" "));
+    }
+    status.push(Span::styled(range, theme.muted_style()));
+    let status = Line::from(status);
+    let status_width = status.width();
     let groups = hints
         .into_iter()
         .enumerate()
@@ -299,14 +310,14 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: Theme
             ]
         })
         .collect();
-    let hints_width = usize::from(area.width).saturating_sub(range.len() + 1);
+    let hints_width = usize::from(area.width).saturating_sub(status_width + 1);
     let columns = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Min(0), Constraint::Length(range.len() as u16)])
+        .constraints([Constraint::Min(0), Constraint::Length(status_width as u16)])
         .split(area);
     frame.render_widget(Paragraph::new(fit_groups(groups, hints_width)), columns[0]);
     frame.render_widget(
-        Paragraph::new(Span::styled(range, theme.muted_style())).alignment(Alignment::Right),
+        Paragraph::new(status).alignment(Alignment::Right),
         columns[1],
     );
 }
