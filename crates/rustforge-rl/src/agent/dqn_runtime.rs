@@ -98,7 +98,7 @@ where
             &mut hooks,
         );
         hooks.flush();
-        Ok(result.summary)
+        result.map(|result| result.summary)
     }
 }
 
@@ -118,7 +118,10 @@ where
     let mut hooks = HeadlessHooks { logger };
     let result = train_dqn_core(env, config, episodes, max_steps_per_episode, &mut hooks);
     hooks.flush();
-    result.agent
+    // The legacy entry point returns the agent directly, so failures stay panics here.
+    result
+        .unwrap_or_else(|error| panic!("DQN training failed: {error}"))
+        .agent
 }
 
 struct DqnRunResult {
@@ -385,7 +388,7 @@ fn train_dqn_core<E, H>(
     episodes: usize,
     max_steps_per_episode: usize,
     hooks: &mut H,
-) -> DqnRunResult
+) -> Result<DqnRunResult, TrainerError>
 where
     E: Environment,
     E::Act: TryFrom<usize>,
@@ -426,9 +429,14 @@ where
         for step_index in 0..max_steps_per_episode {
             let input = Tensor::from_vec(state_buf.clone(), &[1, obs_dim]);
             let output = agent.q_net().forward(&Variable::from_tensor(input));
-            let action_idx = explorer.select_action(&output.data(), global_step, num_actions);
-            let env_action = E::Act::try_from(action_idx)
-                .unwrap_or_else(|_| unreachable!("DQN produced invalid action index"));
+            let q_values = output.data();
+            ensure_finite_q_values(&q_values, episode, global_step)?;
+            let action_idx = explorer.select_action(&q_values, global_step, num_actions);
+            let env_action = E::Act::try_from(action_idx).map_err(|error| TrainerError {
+                message: format!(
+                    "DQN action index {action_idx} was rejected by the environment: {error:?}"
+                ),
+            })?;
             let (next_state, reward, terminated, truncated, _) = env.step(env_action);
             episode_reward += reward;
             episode_length += 1;
@@ -550,7 +558,7 @@ where
         }
     }
 
-    DqnRunResult {
+    Ok(DqnRunResult {
         agent,
         summary: TrainingSummary::stopped(
             global_step as u64,
@@ -558,6 +566,23 @@ where
             started.elapsed(),
             stop_reason,
         ),
+    })
+}
+
+/// Fails the run when the online network has diverged to NaN or infinite Q-values.
+fn ensure_finite_q_values(
+    q_values: &Tensor,
+    episode: usize,
+    global_step: usize,
+) -> Result<(), TrainerError> {
+    if q_values.data().iter().all(|value| value.is_finite()) {
+        Ok(())
+    } else {
+        Err(TrainerError {
+            message: format!(
+                "DQN Q-values became non-finite at episode {episode}, global step {global_step};                  training diverged"
+            ),
+        })
     }
 }
 
@@ -668,5 +693,23 @@ fn throughput(global_step: u64, elapsed: Duration) -> f64 {
         global_step as f64 / seconds
     } else {
         0.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn non_finite_q_values_fail_the_run_with_context() {
+        let finite = Tensor::from_vec(vec![0.5, -1.0], &[1, 2]);
+        assert!(ensure_finite_q_values(&finite, 3, 40).is_ok());
+
+        for bad in [f32::NAN, f32::INFINITY] {
+            let diverged = Tensor::from_vec(vec![0.5, bad], &[1, 2]);
+            let error = ensure_finite_q_values(&diverged, 3, 40).unwrap_err();
+            assert!(error.message.contains("episode 3"));
+            assert!(error.message.contains("global step 40"));
+        }
     }
 }

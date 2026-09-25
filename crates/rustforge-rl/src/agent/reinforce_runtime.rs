@@ -9,7 +9,7 @@ use rand::rngs::StdRng;
 use rand::SeedableRng;
 use smallvec::{smallvec, SmallVec};
 
-use super::on_policy_runtime::{derive_seed, EpisodeBoundary};
+use super::on_policy_runtime::{derive_seed, finite_values, EpisodeBoundary};
 use super::{REINFORCEConfig, REINFORCE};
 use crate::buffer::RolloutBuffer;
 use crate::env::{Environment, IntoTensorBuffer};
@@ -516,7 +516,7 @@ fn step_scalars(state: StepState) -> SmallVec<[ProgressScalar; 8]> {
 }
 
 fn episode_values(state: EpisodeState) -> SmallVec<[MetricValue; 8]> {
-    smallvec![
+    finite_values(smallvec![
         MetricValue {
             metric: REWARD_EPISODE,
             value: f64::from(state.step.episode_reward)
@@ -537,7 +537,7 @@ fn episode_values(state: EpisodeState) -> SmallVec<[MetricValue; 8]> {
             metric: STEPS_PER_SECOND,
             value: throughput(state.step.global_step, state.step.elapsed)
         },
-    ]
+    ])
 }
 
 fn throughput(global_step: u64, elapsed: Duration) -> f64 {
@@ -546,5 +546,31 @@ fn throughput(global_step: u64, elapsed: Duration) -> f64 {
         global_step as f64 / seconds
     } else {
         0.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn non_finite_losses_are_omitted_without_dropping_the_reward() {
+        let values = episode_values(EpisodeState {
+            step: StepState {
+                global_step: 10,
+                episode: 0,
+                episode_step: 10,
+                episode_reward: 12.0,
+                rollout_size: 10,
+                elapsed: Duration::from_secs(1),
+            },
+            moving_average: 12.0,
+            policy_loss: f32::NAN,
+        });
+        assert!(values.iter().all(|value| value.value.is_finite()));
+        assert!(values
+            .iter()
+            .any(|value| value.metric == REWARD_EPISODE && value.value == 12.0));
+        assert!(!values.iter().any(|value| value.metric == LOSS_POLICY));
     }
 }

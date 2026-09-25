@@ -82,6 +82,9 @@ impl PrioritizedReplayBuffer {
     pub fn update_priorities(&mut self, tree_indices: &[usize], td_errors: &[f32]) {
         for (&tree_idx, &err) in tree_indices.iter().zip(td_errors.iter()) {
             let p = (err.abs() + 1e-5).powf(self.alpha);
+            if !p.is_finite() {
+                continue;
+            }
             self.tree.update(tree_idx, p);
             if p > self.max_priority {
                 self.max_priority = p;
@@ -195,6 +198,25 @@ mod tests {
         // With only 2 elements equal priority (initial max_priority=1.0), weights should be 1.0 after normalization.
         assert!((w_vec[0] - 1.0).abs() < 1e-4);
         assert!((w_vec[1] - 1.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn non_finite_td_errors_keep_previous_priorities() {
+        let mut buf = PrioritizedReplayBuffer::new(8, 2, 0.6);
+        buf.push(&[1.0, 1.0], 0, 1.0, &[2.0, 2.0], false);
+        buf.push(&[3.0, 3.0], 1, 1.0, &[4.0, 4.0], false);
+
+        let mut batch = TransitionBatch::new(2, 2);
+        let mut weights = Tensor::zeros(&[2, 1]);
+        let mut tree_indices = vec![0; 2];
+        buf.sample(2, 0.4, &mut batch, &mut weights, &mut tree_indices);
+        buf.update_priorities(&tree_indices, &[f32::NAN, f32::INFINITY]);
+
+        assert!(buf.tree.total_priority().is_finite());
+        assert!(buf.max_priority.is_finite());
+        // Sampling must keep working instead of panicking on a NaN range.
+        buf.sample(2, 0.4, &mut batch, &mut weights, &mut tree_indices);
+        assert!(weights.to_vec().iter().all(|weight| weight.is_finite()));
     }
 
     #[test]

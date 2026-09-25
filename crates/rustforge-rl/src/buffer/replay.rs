@@ -266,6 +266,26 @@ impl ContinuousTransitionBatch {
             size: 0,
         }
     }
+
+    /// Returns a batch containing only the first `size` rows.
+    ///
+    /// `sample()` leaves stale rows past `size` when the buffer holds fewer
+    /// transitions than the batch capacity; training must not mix them in.
+    pub fn valid_rows(&self) -> Self {
+        let rows = |tensor: &Tensor| {
+            tensor
+                .slice_axis(0, 0, self.size)
+                .expect("batch tensors are at least two-dimensional")
+        };
+        ContinuousTransitionBatch {
+            states: rows(&self.states),
+            actions: rows(&self.actions),
+            rewards: rows(&self.rewards),
+            next_states: rows(&self.next_states),
+            dones: rows(&self.dones),
+            size: self.size,
+        }
+    }
 }
 
 /// Uniform-sampling experience replay buffer for continuous action spaces.

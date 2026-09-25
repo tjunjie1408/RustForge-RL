@@ -101,7 +101,7 @@ impl EpsilonGreedy {
             let flat = q_values.to_vec();
             flat.iter()
                 .enumerate()
-                .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+                .max_by(|(_, a), (_, b)| a.total_cmp(b))
                 .map(|(idx, _)| idx)
                 .unwrap_or(0)
         }
@@ -160,5 +160,12 @@ mod tests {
                 counts
             );
         }
+    }
+
+    #[test]
+    fn greedy_selection_does_not_panic_on_nan() {
+        let mut eps = EpsilonGreedy::new(0.0, 0.0, 1);
+        let q = Tensor::from_vec(vec![f32::NAN, 1.0], &[1, 2]);
+        assert!(eps.select_action(&q, 0, 2) < 2);
     }
 }

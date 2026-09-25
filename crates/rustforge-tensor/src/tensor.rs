@@ -485,6 +485,10 @@ impl Tensor {
     }
 
     /// Returns the indices of the maximum values along a specified axis (argmax).
+    ///
+    /// Ties resolve to the last maximal index. Returns
+    /// [`TensorError::NonFinite`] if any value is NaN, because NaN has no
+    /// meaningful ordering (for example, diverged Q-values).
     pub fn argmax_axis(&self, axis: usize) -> TensorResult<Vec<usize>> {
         if axis >= self.ndim() {
             return Err(TensorError::AxisOutOfBounds {
@@ -492,12 +496,17 @@ impl Tensor {
                 ndim: self.ndim(),
             });
         }
+        if self.data.iter().any(|value| value.is_nan()) {
+            return Err(TensorError::NonFinite {
+                op: "argmax_axis".to_string(),
+            });
+        }
 
         // Find argmax along each lane of the axis
         let result = self.data.map_axis(Axis(axis), |lane| {
             lane.iter()
                 .enumerate()
-                .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+                .max_by(|(_, a), (_, b)| a.total_cmp(b))
                 .map(|(idx, _)| idx)
                 .unwrap_or(0)
         });
@@ -770,18 +779,14 @@ impl Tensor {
             });
         }
 
+        check_indices("gather", indices, num_cols)?;
+
         // Extract values: output[i] = self[i, indices[i]]
-        let flat = self.to_vec();
-        let mut result = Vec::with_capacity(batch_size);
-        for (i, &idx) in indices.iter().enumerate() {
-            debug_assert!(
-                idx < num_cols,
-                "gather index {} out of bounds for axis with size {}",
-                idx,
-                num_cols
-            );
-            result.push(flat[i * num_cols + idx]);
-        }
+        let result = indices
+            .iter()
+            .enumerate()
+            .map(|(i, &idx)| self.data[[i, idx]])
+            .collect();
         Ok(Tensor::from_vec(result, &[batch_size, 1]))
     }
 
@@ -837,18 +842,33 @@ impl Tensor {
             });
         }
 
-        let values_flat = values.to_vec();
+        if values.numel() != batch_size {
+            return Err(TensorError::ShapeMismatch {
+                op: "scatter_add".to_string(),
+                left: shape.to_vec(),
+                right: values.shape().to_vec(),
+            });
+        }
+        check_indices("scatter_add", indices, num_cols)?;
+
         let mut result = vec![0.0f32; batch_size * num_cols];
-        for (i, &idx) in indices.iter().enumerate() {
-            debug_assert!(
-                idx < num_cols,
-                "scatter_add index {} out of bounds for axis with size {}",
-                idx,
-                num_cols
-            );
-            result[i * num_cols + idx] += values_flat[i];
+        for ((i, &idx), value) in indices.iter().enumerate().zip(values.data.iter()) {
+            result[i * num_cols + idx] += *value;
         }
         Ok(Tensor::from_vec(result, shape))
+    }
+}
+
+/// Validates per-row indices in every build profile; an unchecked index would
+/// silently read or write the neighbouring row.
+fn check_indices(op: &str, indices: &[usize], size: usize) -> TensorResult<()> {
+    match indices.iter().find(|&&index| index >= size) {
+        Some(&index) => Err(TensorError::IndexOutOfBounds {
+            op: op.to_string(),
+            index,
+            size,
+        }),
+        None => Ok(()),
     }
 }
 

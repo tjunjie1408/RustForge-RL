@@ -212,6 +212,7 @@ impl SAC {
         if n == 0 {
             return (0.0, 0.0, 0.0, self.alpha());
         }
+        let batch = &batch.valid_rows();
 
         let alpha = self.alpha();
 
@@ -368,6 +369,24 @@ mod tests {
         assert!(al.is_finite(), "actor_loss is not finite: {}", al);
         assert!(alpha_l.is_finite(), "alpha_loss is not finite: {}", alpha_l);
         assert!(alpha > 0.0, "alpha must be positive: {}", alpha);
+    }
+
+    #[test]
+    fn sac_train_step_handles_partially_filled_batch() {
+        let mut agent = SAC::new(make_config());
+        let mut buf = ContinuousReplayBuffer::new(100, 4, 2);
+        for i in 0..3 {
+            let v = i as f32 * 0.1;
+            buf.push(&[v; 4], &[0.1, -0.1], 1.0, &[v + 0.1; 4], i == 2);
+        }
+
+        // The batch holds 8 rows but only 3 transitions are available.
+        let mut batch = ContinuousTransitionBatch::new(8, 4, 2);
+        buf.sample(8, &mut batch);
+        assert_eq!(batch.size, 3);
+
+        let (cl, al, alpha_l, _) = agent.train_step(&batch);
+        assert!(cl.is_finite() && al.is_finite() && alpha_l.is_finite());
     }
 
     #[test]

@@ -231,6 +231,7 @@ impl TD3 {
         if n == 0 {
             return (0.0, None);
         }
+        let batch = &batch.valid_rows();
 
         let _obs_dim = self.config.obs_dim;
         let act_dim = self.config.act_dim;
@@ -385,6 +386,30 @@ mod tests {
                 i,
                 a
             );
+        }
+    }
+
+    #[test]
+    fn td3_train_step_handles_partially_filled_batch() {
+        let mut agent = TD3::new(make_config());
+        let mut buf = ContinuousReplayBuffer::new(100, 4, 2);
+        for i in 0..3 {
+            let v = i as f32 * 0.1;
+            buf.push(&[v; 4], &[0.1, -0.1], 1.0, &[v + 0.1; 4], i == 2);
+        }
+
+        // The batch holds 8 rows but only 3 transitions are available.
+        let mut batch = ContinuousTransitionBatch::new(8, 4, 2);
+        buf.sample(8, &mut batch);
+        assert_eq!(batch.size, 3);
+
+        // Run enough steps to include a delayed actor update.
+        for _ in 0..4 {
+            let (critic_loss, actor_loss) = agent.train_step(&batch);
+            assert!(critic_loss.is_finite());
+            if let Some(actor_loss) = actor_loss {
+                assert!(actor_loss.is_finite());
+            }
         }
     }
 

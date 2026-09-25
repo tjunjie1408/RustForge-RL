@@ -652,6 +652,50 @@ mod reductions {
     }
 
     #[test]
+    fn argmax_axis_rejects_nan_instead_of_panicking() {
+        let t = Tensor::from_vec(vec![1.0, f32::NAN, 3.0, 4.0, 2.0, 0.0], &[2, 3]);
+        match t.argmax_axis(1) {
+            Err(TensorError::NonFinite { op }) => assert_eq!(op, "argmax_axis"),
+            other => panic!("expected NonFinite error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn argmax_axis_accepts_infinities() {
+        let t = Tensor::from_vec(vec![f32::NEG_INFINITY, -1.0, f32::INFINITY, 2.0], &[2, 2]);
+        assert_eq!(t.argmax_axis(1).unwrap(), vec![1, 0]);
+    }
+
+    #[test]
+    fn gather_rejects_out_of_range_index_in_every_build() {
+        let t = Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], &[2, 3]);
+        match t.gather(1, &[0, 3]) {
+            Err(TensorError::IndexOutOfBounds { op, index, size }) => {
+                assert_eq!((op.as_str(), index, size), ("gather", 3, 3));
+            }
+            other => panic!("expected IndexOutOfBounds, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn scatter_add_rejects_out_of_range_index_and_short_values() {
+        let values = Tensor::from_vec(vec![1.0, 2.0], &[2, 1]);
+        assert!(matches!(
+            Tensor::scatter_add(&[2, 3], 1, &[0, 5], &values),
+            Err(TensorError::IndexOutOfBounds {
+                index: 5,
+                size: 3,
+                ..
+            })
+        ));
+        let short = Tensor::from_vec(vec![1.0], &[1, 1]);
+        assert!(matches!(
+            Tensor::scatter_add(&[2, 3], 1, &[0, 1], &short),
+            Err(TensorError::ShapeMismatch { .. })
+        ));
+    }
+
+    #[test]
     fn var_known_values() {
         // Values: [2, 4, 4, 4, 5, 5, 7, 9], mean=5, var=4
         let t = Tensor::from_vec(vec![2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0], &[8]);

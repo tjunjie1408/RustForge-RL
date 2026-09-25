@@ -1,3 +1,7 @@
+use smallvec::SmallVec;
+
+use crate::runtime::event::MetricValue;
+
 pub(crate) fn derive_seed(base_seed: u64, stream_id: u64) -> u64 {
     let mut value =
         base_seed.wrapping_add(0x9E37_79B9_7F4A_7C15_u64.wrapping_mul(stream_id.wrapping_add(1)));
@@ -41,6 +45,16 @@ impl EpisodeBoundary {
             Self::None | Self::Truncated | Self::StepLimit => 0.0,
         }
     }
+}
+
+/// Removes non-finite values from an episode record.
+///
+/// Persistence rejects a whole record containing NaN or infinity, so one
+/// diverged loss would otherwise discard the episode reward as well. Consumers
+/// treat a missing optional metric as a gap.
+pub(crate) fn finite_values(mut values: SmallVec<[MetricValue; 8]>) -> SmallVec<[MetricValue; 8]> {
+    values.retain(|value| value.value.is_finite());
+    values
 }
 
 #[cfg(test)]

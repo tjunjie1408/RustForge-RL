@@ -42,6 +42,16 @@ pub enum TensorError {
         data_len: usize,
         shape_elements: usize,
     },
+
+    /// An index is outside the valid range of the indexed axis.
+    IndexOutOfBounds {
+        op: String,
+        index: usize,
+        size: usize,
+    },
+
+    /// An operation received NaN where an ordering is required.
+    NonFinite { op: String },
 }
 
 impl fmt::Display for TensorError {
@@ -84,6 +94,16 @@ impl fmt::Display for TensorError {
                     "Data length {} does not match shape product {}",
                     data_len, shape_elements
                 )
+            }
+            TensorError::IndexOutOfBounds { op, index, size } => {
+                write!(
+                    f,
+                    "Index {} is out of bounds for '{}' on an axis of size {}",
+                    index, op, size
+                )
+            }
+            TensorError::NonFinite { op } => {
+                write!(f, "Operation '{}' encountered NaN", op)
             }
         }
     }
