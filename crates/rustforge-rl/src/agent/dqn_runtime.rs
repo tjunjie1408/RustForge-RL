@@ -11,21 +11,16 @@ use rustforge_nn::Module;
 use rustforge_tensor::Tensor;
 use smallvec::{smallvec, SmallVec};
 
+use super::live_runtime::{throughput, LiveHooks, RewardWindow, StepDecision, StepPosition};
 use super::{DQNConfig, EpsilonGreedy, DQN};
 use crate::buffer::{PrioritizedReplayBuffer, ReplayBuffer, TransitionBatch};
 use crate::env::{Environment, IntoTensorBuffer};
 use crate::metrics::{AgentLogger, CsvLogger, EpisodeMetrics};
-use crate::runtime::control::{ControlObservation, StopMode, TrainerControl};
-use crate::runtime::event::{
-    EpisodeSummary, MetricValue, StatusChanged, TrainingEvent, TrainingStarted,
-};
-use crate::runtime::persistence::{
-    MetricRecord, MetricSink, PersistenceEvent, PersistenceStatus, PersistenceTracker,
-};
-use crate::runtime::progress::{ProgressPublisher, ProgressScalar, ProgressUpdate};
+use crate::runtime::event::MetricValue;
+use crate::runtime::progress::ProgressScalar;
 use crate::runtime::trainer::{
     MetricDescriptor, MetricId, MetricKind, MetricRole, StopReason, Trainer, TrainerCapabilities,
-    TrainerContext, TrainerError, TrainerMetadata, TrainerStatus, TrainingSummary,
+    TrainerContext, TrainerError, TrainerMetadata, TrainingSummary,
 };
 use crate::training::{episode_done, replay_done};
 
@@ -142,10 +137,15 @@ struct StepState {
     elapsed: Duration,
 }
 
-enum StepDecision {
-    Continue,
-    GracefulStop,
-    ForceStop,
+impl StepState {
+    fn position(&self) -> StepPosition {
+        StepPosition {
+            global_step: self.global_step,
+            episode: self.episode,
+            episode_step: self.episode_step,
+            elapsed: self.elapsed,
+        }
+    }
 }
 
 trait DqnHooks {
@@ -202,156 +202,13 @@ impl DqnHooks for HeadlessHooks {
     }
 }
 
-struct LiveHooks {
-    events: Box<dyn crate::runtime::event::TrainingEventPublisher>,
-    progress: ProgressPublisher,
-    control: TrainerControl,
-    metrics: Box<dyn MetricSink>,
-    metadata: TrainerMetadata,
-    status: TrainerStatus,
-    persistence: PersistenceTracker,
-    persistence_status: PersistenceStatus,
-}
-
-impl LiveHooks {
-    fn new(context: TrainerContext, metadata: TrainerMetadata) -> Self {
-        Self {
-            events: context.events,
-            progress: context.progress,
-            control: context.control,
-            metrics: context.metrics,
-            persistence_status: context.persistence,
-            metadata,
-            status: TrainerStatus::Running,
-            persistence: PersistenceTracker::new(),
-        }
-    }
-
-    fn publish(&self, event: TrainingEvent) {
-        let _ = self.events.publish(event);
-    }
-
-    fn publish_status(&mut self, status: TrainerStatus) {
-        if self.status != status {
-            self.status = status;
-            self.publish(TrainingEvent::StatusChanged(StatusChanged { status }));
-        }
-    }
-
-    fn publish_resolutions(&self, observation: &ControlObservation) {
-        for resolution in &observation.resolutions {
-            self.publish(TrainingEvent::ControlApplied(*resolution));
-        }
-    }
-
-    fn progress_scalars(state: StepState) -> SmallVec<[ProgressScalar; 8]> {
-        let mut scalars = smallvec![
-            ProgressScalar {
-                metric: REWARD_EPISODE,
-                value: f64::from(state.episode_reward),
-            },
-            ProgressScalar {
-                metric: EXPLORATION_EPSILON,
-                value: f64::from(state.epsilon),
-            },
-            ProgressScalar {
-                metric: REPLAY_BUFFER_SIZE,
-                value: state.replay_size as f64,
-            },
-            ProgressScalar {
-                metric: STEPS_PER_SECOND,
-                value: throughput(state.global_step, state.elapsed),
-            },
-        ];
-        if let Some(loss) = state.latest_loss.filter(|loss| loss.is_finite()) {
-            scalars.push(ProgressScalar {
-                metric: LOSS_TD,
-                value: f64::from(loss),
-            });
-        }
-        scalars
-    }
-
-    fn publish_progress(&self, state: StepState) {
-        self.progress.publish(ProgressUpdate {
-            status: self.status,
-            global_step: state.global_step,
-            episode: state.episode,
-            episode_step: state.episode_step,
-            elapsed: state.elapsed,
-            scalars: Self::progress_scalars(state),
-        });
-    }
-
-    fn observe_controls(&mut self, state: StepState) -> StepDecision {
-        let observation = self.control.observe(state.global_step, false);
-        self.publish_resolutions(&observation);
-        match observation.stop_mode {
-            StopMode::Force => {
-                self.publish_status(TrainerStatus::Stopping);
-                self.publish_progress(state);
-                return StepDecision::ForceStop;
-            }
-            StopMode::Graceful => {
-                self.publish_status(TrainerStatus::Stopping);
-                self.publish_progress(state);
-                return StepDecision::GracefulStop;
-            }
-            StopMode::None => {}
-        }
-
-        if observation.effective_paused {
-            self.publish_status(TrainerStatus::Paused);
-            self.publish_progress(state);
-            let resumed = self.control.wait_while_paused(state.global_step, false);
-            self.publish_resolutions(&resumed);
-            match resumed.stop_mode {
-                StopMode::Force => {
-                    self.publish_status(TrainerStatus::Stopping);
-                    self.publish_progress(state);
-                    return StepDecision::ForceStop;
-                }
-                StopMode::Graceful => {
-                    self.publish_status(TrainerStatus::Stopping);
-                    self.publish_progress(state);
-                    return StepDecision::GracefulStop;
-                }
-                StopMode::None => self.publish_status(TrainerStatus::Running),
-            }
-        }
-        self.publish_progress(state);
-        StepDecision::Continue
-    }
-
-    fn record_persistence(&mut self, result: Result<(), crate::runtime::persistence::MetricError>) {
-        let transition = match result {
-            Ok(()) => self.persistence.record_recovered(),
-            Err(error) => self.persistence.record_failure(error.message),
-        };
-        match transition {
-            Some(PersistenceEvent::Failed(failure)) => {
-                self.publish(TrainingEvent::PersistenceError(failure));
-            }
-            Some(PersistenceEvent::Recovered(recovery)) => {
-                self.publish(TrainingEvent::PersistenceRecovered(recovery));
-            }
-            None => {}
-        }
-        self.persistence_status.store(self.persistence.summary());
-    }
-}
-
 impl DqnHooks for LiveHooks {
     fn started(&mut self) {
-        self.publish(TrainingEvent::Started(TrainingStarted {
-            run_id: self.metadata.run_id.clone(),
-            algorithm: self.metadata.algorithm.clone(),
-            environment: self.metadata.environment.clone(),
-        }));
+        self.publish_started();
     }
 
     fn after_step(&mut self, state: StepState) -> StepDecision {
-        self.observe_controls(state)
+        self.observe_controls(state.position(), step_scalars(state))
     }
 
     fn episode_completed(
@@ -363,24 +220,46 @@ impl DqnHooks for LiveHooks {
         elapsed: Duration,
     ) {
         let values = episode_values(metrics, rolling_average, replay_size, elapsed);
-        self.publish(TrainingEvent::EpisodeCompleted(EpisodeSummary {
-            episode: metrics.episode as u64,
+        let position = StepPosition {
             global_step: metrics.global_step as u64,
-            length: episode_length,
-            metrics: values.clone(),
-        }));
-        let result = self.metrics.emit(&MetricRecord {
             episode: metrics.episode as u64,
-            global_step: metrics.global_step as u64,
-            values,
-        });
-        self.record_persistence(result);
+            episode_step: episode_length,
+            elapsed,
+        };
+        self.publish_episode(position, values);
     }
 
     fn flush(&mut self) {
-        let result = self.metrics.flush();
-        self.record_persistence(result);
+        self.flush_metrics();
     }
+}
+
+fn step_scalars(state: StepState) -> SmallVec<[ProgressScalar; 8]> {
+    let mut scalars = smallvec![
+        ProgressScalar {
+            metric: REWARD_EPISODE,
+            value: f64::from(state.episode_reward),
+        },
+        ProgressScalar {
+            metric: EXPLORATION_EPSILON,
+            value: f64::from(state.epsilon),
+        },
+        ProgressScalar {
+            metric: REPLAY_BUFFER_SIZE,
+            value: state.replay_size as f64,
+        },
+        ProgressScalar {
+            metric: STEPS_PER_SECOND,
+            value: throughput(state.global_step, state.elapsed),
+        },
+    ];
+    if let Some(loss) = state.latest_loss.filter(|loss| loss.is_finite()) {
+        scalars.push(ProgressScalar {
+            metric: LOSS_TD,
+            value: f64::from(loss),
+        });
+    }
+    scalars
 }
 
 fn train_dqn_core<E, H>(
@@ -411,7 +290,7 @@ where
     let mut per_tree_indices = vec![0; batch_size];
     let mut global_step = 0usize;
     let mut completed_episodes = 0usize;
-    let mut rewards_window = Vec::with_capacity(100);
+    let mut rewards_window = RewardWindow::new(100);
     let mut stop_reason = StopReason::Completed;
     hooks.started();
 
@@ -521,11 +400,7 @@ where
             }
         }
 
-        if rewards_window.len() == 100 {
-            rewards_window.remove(0);
-        }
-        rewards_window.push(episode_reward);
-        let rolling_average = rewards_window.iter().sum::<f32>() / rewards_window.len() as f32;
+        let rolling_average = rewards_window.push(episode_reward);
         let metrics = EpisodeMetrics {
             episode,
             reward: episode_reward,
@@ -686,15 +561,6 @@ fn episode_values(
         });
     }
     values
-}
-
-fn throughput(global_step: u64, elapsed: Duration) -> f64 {
-    let seconds = elapsed.as_secs_f64();
-    if seconds > 0.0 {
-        global_step as f64 / seconds
-    } else {
-        0.0
-    }
 }
 
 #[cfg(test)]

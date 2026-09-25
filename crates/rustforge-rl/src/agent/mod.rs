@@ -10,6 +10,7 @@ mod dqn_runtime;
 pub mod dqn_train;
 pub mod epsilon_greedy;
 pub mod gaussian_policy;
+mod live_runtime;
 mod on_policy_runtime;
 pub mod ppo;
 mod ppo_runtime;
