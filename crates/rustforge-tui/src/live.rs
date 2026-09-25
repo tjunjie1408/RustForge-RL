@@ -173,6 +173,7 @@ pub async fn run_live(
     app.set_target_reward(options.target_reward);
     app.set_total_episodes(Some(options.total_episodes));
     app.set_run_metadata(options.run_metadata(&metadata));
+    app.set_trainer_status(Some(source.progress_snapshot().status));
 
     let mut system = SystemSampler::new();
     app.set_system_snapshot(system.sample());
@@ -187,6 +188,7 @@ pub async fn run_live(
     let mut terminal_events = TerminalEventLoop::new(EventCadence::default());
     let mut stop_requested = false;
     let mut final_state = outcome.load().is_some();
+    app.set_finished(final_state);
     let mut source_open = true;
     let ui_result: anyhow::Result<()> = async {
         terminal
@@ -201,6 +203,7 @@ pub async fn run_live(
                     if !final_state && !stop_requested {
                         control.request_graceful_stop();
                         stop_requested = true;
+                        app.set_stop_requested(true);
                     }
                 }
             },
@@ -214,10 +217,12 @@ pub async fn run_live(
                         LiveInput::GracefulStop => {
                             control.request_graceful_stop();
                             stop_requested = true;
+                            app.set_stop_requested(true);
                         }
                         LiveInput::ForceStop => {
                             control.request_force_stop();
                             stop_requested = true;
+                            app.set_stop_requested(true);
                         }
                         LiveInput::Acknowledge => break,
                         LiveInput::Ignored => {}
@@ -225,6 +230,9 @@ pub async fn run_live(
                 }
                 AppEvent::Terminal(_) | AppEvent::SourcePoll => {}
                 AppEvent::ProgressSample => {
+                    if !final_state {
+                        app.set_trainer_status(Some(source.progress_snapshot().status));
+                    }
                     let mut insights = source.progress(Some(options.total_episodes), Instant::now());
                     let rewards: Vec<_> = app.episodes().iter().map(|row| f64::from(row.reward)).collect();
                     insights.alerts = reward_alerts(&rewards, app.target_reward(), 20, 0.25);
@@ -234,6 +242,8 @@ pub async fn run_live(
                     app.set_system_snapshot(system.sample());
                     if let Some(final_outcome) = outcome.load() {
                         final_state = true;
+                        app.set_finished(true);
+                        app.set_trainer_status(Some(final_outcome.status));
                         app.set_source_state(match final_outcome.status {
                             TrainerStatus::Failed => MonitorSourceState::SourceError,
                             TrainerStatus::Completed | TrainerStatus::Stopped => MonitorSourceState::Completed,

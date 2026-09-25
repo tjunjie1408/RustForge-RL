@@ -6,6 +6,7 @@ use crate::history::BoundedHistory;
 use crate::metrics::{MetricLabels, MetricRow};
 use crate::source::csv::{CsvDiagnostic, CsvSourcePoll, MonitorSourceState};
 use crate::system::SystemSnapshot;
+use rustforge_rl::runtime::trainer::TrainerStatus;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -150,6 +151,9 @@ pub struct AppState {
     alert_target_error: Option<String>,
     total_episodes: Option<u64>,
     monitor_insights: MonitorInsights,
+    trainer_status: Option<TrainerStatus>,
+    stop_requested: bool,
+    finished: bool,
 }
 
 impl AppState {
@@ -176,6 +180,9 @@ impl AppState {
             alert_target_error: None,
             total_episodes: None,
             monitor_insights: MonitorInsights::default(),
+            trainer_status: None,
+            stop_requested: false,
+            finished: false,
         }
     }
 
@@ -417,5 +424,31 @@ impl AppState {
 
     pub fn set_monitor_insights(&mut self, insights: MonitorInsights) {
         self.monitor_insights = insights;
+    }
+
+    /// Authoritative trainer status for live sessions; `None` for read-only monitors.
+    pub fn trainer_status(&self) -> Option<TrainerStatus> {
+        self.trainer_status
+    }
+
+    pub fn set_trainer_status(&mut self, status: Option<TrainerStatus>) {
+        self.trainer_status = status;
+    }
+
+    pub fn stop_requested(&self) -> bool {
+        self.stop_requested
+    }
+
+    pub fn set_stop_requested(&mut self, requested: bool) {
+        self.stop_requested = requested;
+    }
+
+    /// True once the live trainer has published its final outcome.
+    pub fn finished(&self) -> bool {
+        self.finished
+    }
+
+    pub fn set_finished(&mut self, finished: bool) {
+        self.finished = finished;
     }
 }

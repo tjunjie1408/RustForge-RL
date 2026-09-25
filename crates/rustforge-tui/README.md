@@ -30,6 +30,21 @@ The monitor can attach before the file exists, follow a growing file, or open a
 completed file. EOF is shown as `IDLE`; it is not treated as proof that training
 completed.
 
+## Layout
+
+- **Header:** run identity (`algorithm · environment`, or the monitored file),
+  a status badge, and view tabs. Live sessions show the trainer status
+  (`RUNNING`, `PAUSED`, `STOPPING`, `STOPPED`, `COMPLETED`, `FAILED`); monitor
+  sessions show the source state (`WAITING`, `FOLLOWING`, `IDLE`, ...).
+- **Progress line:** progress bar and ETA when the episode total is known,
+  followed by steps/s, episodes/min, and elapsed time.
+- **Overview:** reward chart (raw points plus a 100-episode rolling average),
+  training KPIs with loss and policy-signal sparklines, system resources, and
+  the newest events with alerts first.
+- **Footer:** key hints that follow the live state (`p pause`/`p resume`,
+  `q force stop` after a stop request, `Enter exit` once training ends) and the
+  active chart range.
+
 ## Keys
 
 ```text

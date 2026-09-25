@@ -4,7 +4,10 @@ use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::style::Color;
 use ratatui::Terminal;
-use rustforge_tui::app::{AppMode, AppState, RunMetadata, View};
+use std::time::Duration;
+
+use rustforge_rl::runtime::trainer::TrainerStatus;
+use rustforge_tui::app::{AppMode, AppState, MonitorInsights, RunMetadata, View};
 use rustforge_tui::metrics::{parse_line, MetricLabels};
 use rustforge_tui::source::csv::{
     CsvDiagnostic, CsvDiagnosticKind, CsvSourcePoll, MonitorSourceState,
@@ -89,7 +92,8 @@ fn charts_view_contains_reward_average_loss_and_exploration() {
     let output = text(&rendered(&app, 110, 34));
 
     assert!(output.contains("CHARTS"));
-    assert!(output.contains("Reward + rolling avg"));
+    assert!(output.contains("Reward"));
+    assert!(output.contains("rolling avg 100"));
     assert!(output.contains("Loss"));
     assert!(output.contains("Exploration / epsilon"));
 }
@@ -105,7 +109,7 @@ fn live_charts_use_descriptor_labels_and_skip_unassigned_optional_panels() {
         throughput: "Steps per second".into(),
     });
     let output = text(&rendered(&app, 110, 34));
-    assert!(output.contains("Episode reward + rolling avg"));
+    assert!(output.contains("Episode reward"));
     assert!(output.contains("PPO policy loss"));
     assert!(output.contains("PPO policy entropy"));
 
@@ -116,7 +120,7 @@ fn live_charts_use_descriptor_labels_and_skip_unassigned_optional_panels() {
         throughput: "Steps per second".into(),
     });
     let without_optional = text(&rendered(&app, 110, 34));
-    assert!(without_optional.contains("Episode reward + rolling avg"));
+    assert!(without_optional.contains("Episode reward"));
     assert!(!without_optional.contains("PPO policy loss"));
     assert!(!without_optional.contains("PPO policy entropy"));
 }
@@ -135,7 +139,8 @@ fn details_and_events_views_render_only_known_facts() {
 
     app.set_view(View::Events);
     let events = text(&rendered(&app, 100, 28));
-    assert!(events.contains("EVENTS / ACTIVITY"));
+    assert!(events.contains("EVENTS"));
+    assert!(events.contains("source activity"));
     assert!(events.contains("Attached"));
     assert!(events.contains("attached to metrics file"));
     assert!(!events.contains("TrainingStarted"));
@@ -175,4 +180,120 @@ fn no_color_and_ascii_modes_do_not_depend_on_terminal_color_or_unicode() {
         .content
         .iter()
         .all(|cell| cell.fg == Color::Reset && cell.bg == Color::Reset));
+}
+
+fn live_app() -> AppState {
+    let mut app = AppState::new(AppMode::Live, 128, 32);
+    app.set_live_controls_available(true);
+    app.set_run_metadata(RunMetadata {
+        algorithm: Some("dqn".into()),
+        environment: Some("cartpole".into()),
+        ..RunMetadata::default()
+    });
+    app.apply_csv_poll(CsvSourcePoll {
+        rows: vec![
+            parse_line("0,10,0.8,1.0,10").unwrap(),
+            parse_line("1,30,0.4,0.5,30").unwrap(),
+        ],
+        state: MonitorSourceState::Following,
+        reset: false,
+        diagnostics: Vec::new(),
+    });
+    app.set_trainer_status(Some(TrainerStatus::Running));
+    app
+}
+
+#[test]
+fn live_header_badge_and_footer_hints_follow_trainer_state() {
+    let mut app = live_app();
+    let running = text(&rendered(&app, 110, 30));
+    assert!(running.contains("dqn · cartpole"));
+    assert!(running.contains("RUNNING"));
+    assert!(running.contains("p pause"));
+    assert!(running.contains("q stop"));
+
+    app.set_trainer_status(Some(TrainerStatus::Paused));
+    let paused = text(&rendered(&app, 110, 30));
+    assert!(paused.contains("PAUSED"));
+    assert!(paused.contains("p resume"));
+    assert!(!paused.contains("IDLE"));
+
+    app.set_trainer_status(Some(TrainerStatus::Running));
+    app.set_stop_requested(true);
+    let stopping = text(&rendered(&app, 110, 30));
+    assert!(stopping.contains("STOPPING"));
+    assert!(stopping.contains("q force stop"));
+    assert!(!stopping.contains("p pause"));
+
+    app.set_trainer_status(Some(TrainerStatus::Stopped));
+    app.set_finished(true);
+    let stopped = text(&rendered(&app, 110, 30));
+    assert!(stopped.contains("STOPPED"));
+    assert!(!stopped.contains("COMPLETED"));
+    assert!(stopped.contains("Enter exit"));
+
+    app.set_trainer_status(Some(TrainerStatus::Failed));
+    assert!(text(&rendered(&app, 110, 30)).contains("FAILED"));
+}
+
+#[test]
+fn live_controls_are_not_advertised_without_the_capability() {
+    let mut app = live_app();
+    app.set_live_controls_available(false);
+    let output = text(&rendered(&app, 110, 30));
+    assert!(!output.contains("p pause"));
+    assert!(output.contains("q stop"));
+}
+
+#[test]
+fn progress_line_shows_bar_counts_and_eta_until_finished() {
+    let mut app = live_app();
+    app.set_total_episodes(Some(200));
+    app.set_monitor_insights(MonitorInsights {
+        elapsed: Duration::from_secs(65),
+        steps_per_second: Some(1_834.0),
+        episodes_per_minute: Some(12.5),
+        progress_fraction: Some(0.5),
+        eta: Some(Duration::from_secs(90)),
+        ..MonitorInsights::default()
+    });
+    let running = text(&rendered(&app, 120, 30));
+    assert!(running.contains("50.0%"));
+    assert!(running.contains("ep 100/200"));
+    assert!(running.contains("ETA 00:01:30"));
+    assert!(running.contains("1834 steps/s"));
+    assert!(running.contains("00:01:05 elapsed"));
+
+    app.set_finished(true);
+    assert!(!text(&rendered(&app, 120, 30)).contains("ETA 00"));
+}
+
+#[test]
+fn charts_label_axes_with_episode_and_value_ticks() {
+    let mut app = sample_app();
+    app.set_view(View::Charts);
+    let output = text(&rendered(&app, 110, 34));
+    assert!(output.contains("ep 0"));
+    assert!(output.contains("latest"));
+    // Rewards span 10..=30, so the padded value axis reaches beyond both ends.
+    assert!(output.contains("31.0"));
+    assert!(output.contains("9.0"));
+}
+
+#[test]
+fn overview_includes_reward_chart_and_monitor_identity() {
+    let app = sample_app();
+    let output = text(&rendered(&app, 110, 34));
+    assert!(output.contains("rolling avg 100"));
+    assert!(output.contains("DQN · CartPole-v1"));
+}
+
+#[test]
+fn narrow_footer_drops_hints_instead_of_overlapping_range() {
+    let app = sample_app();
+    let buffer = rendered(&app, 60, 18);
+    let last_row: String = (0..60).map(|x| buffer[(x, 17)].symbol()).collect();
+    assert!(last_row.contains("q quit"));
+    assert!(last_row.trim_end().ends_with("range: last 100"));
+    assert!(last_row.contains("  range: last 100"));
 }

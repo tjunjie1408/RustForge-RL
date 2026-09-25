@@ -1,13 +1,16 @@
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::Style;
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
+use ratatui::style::{Color, Style};
 use ratatui::symbols::Marker;
-use ratatui::text::Span;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Axis, Chart, Dataset, GraphType, Paragraph};
 use ratatui::Frame;
 
 use crate::analytics::{downsample_min_max, rolling_average};
 use crate::app::AppState;
+use crate::ui::format;
 use crate::ui::theme::Theme;
+
+const TREND_WINDOW: usize = 100;
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: Theme) {
     let labels = app.metric_labels();
@@ -19,7 +22,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: Theme) {
         .direction(Direction::Vertical)
         .constraints(constraints)
         .split(area);
-    render_reward(frame, sections[0], app, theme, &labels.episode_reward);
+    render_reward(frame, sections[0], app, theme);
     let mut panel = 1;
     if let Some(label) = labels.primary_loss.as_deref() {
         render_single(
@@ -29,7 +32,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: Theme) {
             theme,
             label,
             |row| row.primary_loss.map(f64::from),
-            theme.warning,
+            theme.series_loss,
         );
         panel += 1;
     }
@@ -41,62 +44,66 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: Theme) {
             theme,
             label,
             |row| row.policy_signal.map(f64::from),
-            theme.success,
+            theme.series_policy,
         );
     }
 }
 
-fn render_reward(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: Theme, label: &str) {
-    let title = format!(" {label} + rolling avg ");
+/// Reward series plus its trailing average; shared by the overview and charts views.
+pub(super) fn render_reward(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: Theme) {
+    let label = app.metric_labels().episode_reward.as_str();
+    let title = format!(" {label} ");
     let raw: Vec<(f64, Option<f64>)> = app
         .chart_rows()
         .into_iter()
         .map(|row| (row.episode as f64, finite(f64::from(row.reward))))
         .collect();
-    if raw.is_empty() {
+    let finite_points: Vec<(f64, f64)> =
+        raw.iter().filter_map(|(x, y)| y.map(|y| (*x, y))).collect();
+    if finite_points.is_empty() {
         render_no_data(frame, area, app, theme, &title);
         return;
     }
-    let rewards: Vec<f64> = raw.iter().map(|(_, value)| value.unwrap_or(0.0)).collect();
-    let averages = rolling_average(&rewards, 100);
-    let average_points: Vec<(f64, Option<f64>)> = raw
+    let values: Vec<f64> = finite_points.iter().map(|(_, y)| *y).collect();
+    let trend_points: Vec<(f64, Option<f64>)> = finite_points
         .iter()
-        .zip(averages)
+        .zip(rolling_average(&values, TREND_WINDOW))
         .map(|((x, _), average)| (*x, Some(average)))
         .collect();
     let cap = chart_point_cap(area);
     let reward = flatten(downsample_min_max(&raw, cap));
-    let average = flatten(downsample_min_max(&average_points, cap));
-    let all_values = reward.iter().chain(average.iter()).map(|(_, value)| *value);
-    let x_bounds = bounds(reward.iter().map(|(x, _)| *x));
-    let y_bounds = bounds(all_values);
+    let trend = flatten(downsample_min_max(&trend_points, cap));
+    let x_bounds = x_bounds(finite_points.iter().map(|(x, _)| *x));
+    let y_bounds = bounds(reward.iter().chain(trend.iter()).map(|(_, y)| *y));
+
+    let (dot, line) = if theme.ascii {
+        ("*", "--")
+    } else {
+        ("•", "━━")
+    };
+    let trend_label = if area.width >= 60 {
+        format!(" rolling avg {TREND_WINDOW} ")
+    } else {
+        format!(" avg {TREND_WINDOW} ")
+    };
+    let legend = Line::from(vec![
+        Span::styled(dot, Style::default().fg(theme.series_raw)),
+        Span::styled(" raw  ", theme.muted_style()),
+        Span::styled(line, Style::default().fg(theme.series_trend)),
+        Span::styled(trend_label, theme.muted_style()),
+    ])
+    .alignment(Alignment::Right);
+    // Raw rewards are noisy, so draw them as points and let the trend carry the line.
     let datasets = vec![
-        Dataset::default()
-            .name(label)
-            .marker(if app.ascii() {
-                Marker::Dot
-            } else {
-                Marker::Braille
-            })
-            .graph_type(GraphType::Line)
-            .style(Style::default().fg(theme.warning))
-            .data(&reward),
-        Dataset::default()
-            .name("rolling avg (100)")
-            .marker(if app.ascii() {
-                Marker::Dot
-            } else {
-                Marker::Braille
-            })
-            .graph_type(GraphType::Line)
-            .style(Style::default().fg(theme.accent))
-            .data(&average),
+        dataset(&reward, theme.series_raw, theme).graph_type(GraphType::Scatter),
+        dataset(&trend, theme.series_trend, theme),
     ];
     frame.render_widget(
         Chart::new(datasets)
-            .block(theme.block(&title, app.ascii()))
-            .x_axis(axis("episode", x_bounds, theme))
-            .y_axis(axis(label, y_bounds, theme)),
+            .block(theme.block(title, theme.ascii).title_top(legend))
+            .x_axis(x_axis(x_bounds, theme))
+            .y_axis(y_axis(y_bounds, theme))
+            .legend_position(None),
         area,
     );
 }
@@ -109,7 +116,7 @@ fn render_single<F>(
     theme: Theme,
     label: &str,
     value: F,
-    color: ratatui::style::Color,
+    color: Color,
 ) where
     F: Fn(&crate::metrics::MetricRow) -> Option<f64>,
 {
@@ -124,47 +131,91 @@ fn render_single<F>(
         render_no_data(frame, area, app, theme, &title);
         return;
     }
-    let x_bounds = bounds(segments.iter().flatten().map(|(x, _)| *x));
+    let latest = segments
+        .last()
+        .and_then(|segment| segment.last())
+        .map(|(_, y)| *y);
+    let x_bounds = x_bounds(segments.iter().flatten().map(|(x, _)| *x));
     let y_bounds = bounds(segments.iter().flatten().map(|(_, y)| *y));
     let datasets: Vec<Dataset<'_>> = segments
         .iter()
-        .enumerate()
-        .map(|(index, points)| {
-            Dataset::default()
-                .name(if index == 0 { label } else { "" })
-                .marker(if app.ascii() {
-                    Marker::Dot
-                } else {
-                    Marker::Braille
-                })
-                .graph_type(GraphType::Line)
-                .style(Style::default().fg(color))
-                .data(points)
-        })
+        .map(|points| dataset(points, color, theme))
         .collect();
+    let mut block = theme.block(title, theme.ascii);
+    if let Some(latest) = latest {
+        block = block.title_top(
+            Line::from(vec![
+                Span::styled("latest ", theme.muted_style()),
+                Span::styled(
+                    format!("{} ", format::compact(latest)),
+                    Style::default().fg(color),
+                ),
+            ])
+            .alignment(Alignment::Right),
+        );
+    }
     frame.render_widget(
         Chart::new(datasets)
-            .block(theme.block(&title, app.ascii()))
-            .x_axis(axis("episode", x_bounds, theme))
-            .y_axis(axis(label, y_bounds, theme)),
+            .block(block)
+            .x_axis(x_axis(x_bounds, theme))
+            .y_axis(y_axis(y_bounds, theme))
+            .legend_position(None),
         area,
     );
+}
+
+fn dataset<'a>(points: &'a [(f64, f64)], color: Color, theme: Theme) -> Dataset<'a> {
+    Dataset::default()
+        .marker(if theme.ascii {
+            Marker::Dot
+        } else {
+            Marker::Braille
+        })
+        .graph_type(GraphType::Line)
+        .style(Style::default().fg(color))
+        .data(points)
 }
 
 fn render_no_data(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: Theme, title: &str) {
+    let message = if app.episodes().is_empty() {
+        "Waiting for the first completed episode…"
+    } else {
+        "No finite data in this range"
+    };
+    let message = if theme.ascii {
+        message.replace('…', "...")
+    } else {
+        message.to_owned()
+    };
     frame.render_widget(
-        Paragraph::new("No finite data")
-            .style(Style::default().fg(theme.muted))
-            .block(theme.block(title, app.ascii())),
+        Paragraph::new(message)
+            .style(theme.muted_style())
+            .alignment(Alignment::Center)
+            .block(theme.block(title.to_owned(), app.ascii())),
         area,
     );
 }
 
-fn axis<'a>(title: &'a str, bounds: [f64; 2], theme: Theme) -> Axis<'a> {
+fn x_axis<'a>(bounds: [f64; 2], theme: Theme) -> Axis<'a> {
     Axis::default()
-        .title(Span::styled(title, Style::default().fg(theme.muted)))
-        .style(Style::default().fg(theme.muted))
+        .style(Style::default().fg(theme.border))
         .bounds(bounds)
+        .labels([
+            Span::styled(format!("ep {:.0}", bounds[0]), theme.muted_style()),
+            Span::styled(format!("{:.0}", bounds[1]), theme.muted_style()),
+        ])
+}
+
+fn y_axis<'a>(bounds: [f64; 2], theme: Theme) -> Axis<'a> {
+    let middle = (bounds[0] + bounds[1]) / 2.0;
+    Axis::default()
+        .style(Style::default().fg(theme.border))
+        .bounds(bounds)
+        .labels_alignment(Alignment::Right)
+        .labels(
+            [bounds[0], middle, bounds[1]]
+                .map(|value| Span::styled(format::compact(value), theme.muted_style())),
+        )
 }
 
 fn chart_point_cap(area: Rect) -> usize {
@@ -213,22 +264,36 @@ fn finite(value: f64) -> Option<f64> {
     value.is_finite().then_some(value)
 }
 
+/// Episode axis spans exactly the data so the edge labels are real episode numbers.
+fn x_bounds(values: impl Iterator<Item = f64>) -> [f64; 2] {
+    let [minimum, maximum] = extent(values).unwrap_or([0.0, 1.0]);
+    if minimum == maximum {
+        [minimum - 1.0, maximum + 1.0]
+    } else {
+        [minimum, maximum]
+    }
+}
+
 fn bounds(values: impl Iterator<Item = f64>) -> [f64; 2] {
-    let mut minimum = f64::INFINITY;
-    let mut maximum = f64::NEG_INFINITY;
-    for value in values.filter(|value| value.is_finite()) {
-        minimum = minimum.min(value);
-        maximum = maximum.max(value);
-    }
-    if !minimum.is_finite() || !maximum.is_finite() {
+    let Some([minimum, maximum]) = extent(values) else {
         return [0.0, 1.0];
-    }
+    };
     if minimum == maximum {
         let padding = minimum.abs().max(1.0) * 0.05;
         return [minimum - padding, maximum + padding];
     }
     let padding = (maximum - minimum) * 0.05;
     [minimum - padding, maximum + padding]
+}
+
+fn extent(values: impl Iterator<Item = f64>) -> Option<[f64; 2]> {
+    let mut minimum = f64::INFINITY;
+    let mut maximum = f64::NEG_INFINITY;
+    for value in values.filter(|value| value.is_finite()) {
+        minimum = minimum.min(value);
+        maximum = maximum.max(value);
+    }
+    (minimum.is_finite() && maximum.is_finite()).then_some([minimum, maximum])
 }
 
 #[cfg(test)]
@@ -259,5 +324,12 @@ mod tests {
         assert_eq!(bounds([f64::NAN, f64::INFINITY].into_iter()), [0.0, 1.0]);
         let extreme = bounds([-1.0e12, 1.0e12].into_iter());
         assert!(extreme[0] < -1.0e12 && extreme[1] > 1.0e12);
+    }
+
+    #[test]
+    fn episode_axis_is_unpadded_and_widens_single_points() {
+        assert_eq!(x_bounds([3.0, 10.0].into_iter()), [3.0, 10.0]);
+        assert_eq!(x_bounds([4.0].into_iter()), [3.0, 5.0]);
+        assert_eq!(x_bounds(std::iter::empty()), [0.0, 1.0]);
     }
 }
