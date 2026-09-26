@@ -57,6 +57,10 @@ impl SumTree {
 
     /// Samples a leaf node based on the given cumulative sum `s`.
     /// Returns a tuple `(tree_idx, priority, data_idx)`.
+    ///
+    /// While any leaf has a positive priority, the returned leaf has a
+    /// positive priority too, even if `s` lies outside `[0, total]` or the
+    /// stored sums have drifted from repeated `f32` updates.
     pub fn get(&self, mut s: f32) -> (usize, f32, usize) {
         let mut parent_idx = 0;
 
@@ -69,7 +73,16 @@ impl SumTree {
                 break;
             }
 
-            if s <= self.tree[left_child_idx] {
+            let left_sum = self.tree[left_child_idx];
+            let go_left = if left_sum <= 0.0 {
+                false
+            } else if self.tree[right_child_idx] <= 0.0 {
+                true
+            } else {
+                s <= left_sum
+            };
+
+            if go_left {
                 parent_idx = left_child_idx;
             } else {
                 s -= self.tree[left_child_idx];
@@ -146,5 +159,37 @@ mod tests {
         let (_, p, d) = tree.get(80.0);
         assert_eq!(d, 3);
         assert_eq!(p, 40.0);
+    }
+
+    #[test]
+    fn drifted_sums_never_select_an_unfilled_leaf() {
+        // Two filled leaves (data 0, 1) and two never-written leaves (data 2, 3).
+        let mut tree = SumTree::new(4);
+        tree.add(1.0);
+        tree.add(1.0);
+        // Simulate accumulated f32 drift: the root exceeds the true sum (2.0).
+        tree.tree[0] += 1e-3;
+
+        for s in [2.0005, 2.001, tree.total_priority()] {
+            let (_, priority, data_idx) = tree.get(s);
+            assert!(priority > 0.0, "s={s} selected an empty leaf");
+            assert!(
+                data_idx < tree.size(),
+                "s={s} selected data index {data_idx}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_zero_query_skips_an_empty_left_subtree() {
+        // Only the right half is filled: data 0, 1 are empty after overwriting.
+        let mut tree = SumTree::new(4);
+        for priority in [1.0, 1.0, 1.0, 1.0] {
+            tree.add(priority);
+        }
+        tree.update(3, 0.0);
+        tree.update(4, 0.0);
+        let (_, priority, _) = tree.get(0.0);
+        assert!(priority > 0.0);
     }
 }

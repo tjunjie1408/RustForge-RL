@@ -238,4 +238,37 @@ mod tests {
         // Due to stratification, the high-priority item will definitely be picked in its segment.
         // The test is mostly to ensure it runs without panic.
     }
+
+    #[test]
+    fn sampling_under_priority_churn_never_returns_unfilled_slots() {
+        use rand::{Rng, SeedableRng};
+
+        let (capacity, batch_size) = (4_096usize, 64usize);
+        for seed in [0u64, 1, 2, 5] {
+            let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+            let mut buf = PrioritizedReplayBuffer::with_seed(capacity, 1, 0.6, seed);
+            let mut batch = TransitionBatch::new(batch_size, 1);
+            let mut weights = Tensor::zeros(&[batch_size, 1]);
+            let mut tree_indices = vec![0; batch_size];
+            for step in 0..2_000usize {
+                buf.push(&[0.0], 0, 1.0, &[0.0], false);
+                if step < batch_size {
+                    continue;
+                }
+                buf.sample(batch_size, 0.4, &mut batch, &mut weights, &mut tree_indices);
+                for &tree_idx in &tree_indices {
+                    let data_idx = tree_idx - (capacity - 1);
+                    assert!(
+                        data_idx < buf.len(),
+                        "seed {seed} step {step}: slot {data_idx}"
+                    );
+                }
+                assert!(weights.to_vec().iter().all(|w| w.is_finite()));
+                let td: Vec<f32> = (0..batch_size)
+                    .map(|_| rng.gen_range(-50.0..50.0))
+                    .collect();
+                buf.update_priorities(&tree_indices, &td);
+            }
+        }
+    }
 }
