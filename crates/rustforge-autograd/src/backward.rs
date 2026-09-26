@@ -26,8 +26,11 @@ use crate::variable::Variable;
 
 /// Performs reverse-mode AD from the given output variable.
 ///
-/// After this call, all `Variable`s with `requires_grad = true` that contribute
-/// to the output will have their `.grad()` populated with the computed gradient.
+/// After this call, every leaf `Variable` (one without a grad function) with
+/// `requires_grad = true` that contributes to the output has the computed
+/// gradient added to its `.grad()`. Repeated calls keep accumulating into
+/// leaves until they are zeroed. Gradients of intermediate results are
+/// consumed during the pass and are not retained.
 ///
 /// ## Panics
 /// Panics if `output` is not a scalar (single-element tensor).
@@ -54,17 +57,20 @@ pub fn backward(output: &Variable) {
         // Extract the gradient and grad_fn info, releasing the borrow before accumulation.
         // This avoids borrowing conflicts since accumulate_grad needs borrow_mut.
         let grad_result = {
-            let inner = var.inner.borrow();
-            match (&inner.grad, &inner.grad_fn) {
-                (Some(grad), Some(grad_fn)) => {
-                    let g = grad.clone();
-                    let inputs = grad_fn.inputs();
-                    let input_grads = grad_fn.backward(&g);
-                    Some((inputs, input_grads))
-                }
-                _ => None,
-            }
-        }; // immutable borrow released here
+            let mut inner = var.inner.borrow_mut();
+            // Non-leaf gradients are consumed, not retained: a later backward
+            // over the same graph must start them from zero, or earlier
+            // contributions would be propagated to the leaves a second time.
+            // Leaves (no grad_fn) keep accumulating across calls.
+            let grad = match inner.grad_fn {
+                Some(_) => inner.grad.take(),
+                None => None,
+            };
+            grad.map(|grad| {
+                let grad_fn = inner.grad_fn.as_ref().expect("checked above");
+                (grad_fn.inputs(), grad_fn.backward(&grad))
+            })
+        }; // mutable borrow released here
 
         if let Some((inputs, input_grads)) = grad_result {
             for (input_var, input_grad) in inputs.into_iter().zip(input_grads) {

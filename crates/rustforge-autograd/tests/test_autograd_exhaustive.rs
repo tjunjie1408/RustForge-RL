@@ -1001,3 +1001,35 @@ mod optimizer_stress {
         assert!(w2.grad().is_none());
     }
 }
+
+mod repeated_backward {
+    use super::*;
+
+    #[test]
+    fn second_backward_on_same_graph_accumulates_leaf_gradients_linearly() {
+        // h = 3w, y = 2h  =>  dy/dw = 6 per backward call.
+        let w = Variable::new(Tensor::from_vec(vec![1.0], &[1]), true);
+        let y = &(&w * 3.0) * 2.0;
+
+        y.backward();
+        assert_abs_diff_eq!(w.grad().unwrap().item(), 6.0, epsilon = 1e-6);
+
+        // A second backward adds another 6, not the compounded 18.
+        y.backward();
+        assert_abs_diff_eq!(w.grad().unwrap().item(), 12.0, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn two_losses_sharing_a_subgraph_each_contribute_once() {
+        // Shared trunk h = w², heads a = 2h and b = 3h.
+        let w = Variable::new(Tensor::from_vec(vec![2.0], &[1]), true);
+        let h = w.pow(2.0);
+        let a = &h * 2.0;
+        let b = &h * 3.0;
+
+        a.backward();
+        b.backward();
+        // d(a + b)/dw = (2 + 3) * 2w = 20.
+        assert_abs_diff_eq!(w.grad().unwrap().item(), 20.0, epsilon = 1e-5);
+    }
+}

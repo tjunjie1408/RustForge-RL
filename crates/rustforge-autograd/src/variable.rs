@@ -182,8 +182,11 @@ impl Variable {
     /// Runs reverse-mode automatic differentiation from this variable.
     ///
     /// This should be called on a **scalar** variable (the loss).
-    /// After calling `backward()`, all variables with `requires_grad = true`
-    /// in the computation graph will have their `.grad()` populated.
+    /// After calling `backward()`, every leaf variable with
+    /// `requires_grad = true` in the computation graph has the gradient added
+    /// to its `.grad()`. Intermediate results do not retain a gradient, so
+    /// calling `backward()` again (or on another loss sharing part of the
+    /// graph) adds each contribution exactly once.
     ///
     /// ## Panics
     /// Panics if this variable is not a scalar (single element).
