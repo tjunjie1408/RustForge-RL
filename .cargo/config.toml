@@ -1,0 +1,4 @@
+# Prefer dependency versions compatible with the workspace `rust-version`
+# (Cargo 1.84+). Older Cargo versions ignore this table.
+[resolver]
+incompatible-rust-versions = "fallback"

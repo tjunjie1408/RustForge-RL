@@ -3,6 +3,7 @@ name = "rustforge-autograd"
 description = "Automatic differentiation engine for RustForge RL"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 
 [features]
 dhat-heap = ["dhat"]

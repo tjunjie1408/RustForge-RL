@@ -3,6 +3,7 @@ name = "rustforge-tensor"
 description = "High-performance tensor computation engine for RustForge RL"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 

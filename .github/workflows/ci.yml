@@ -38,6 +38,23 @@ jobs:
     - name: Run Clippy
       run: cargo clippy --workspace --all-targets --all-features --exclude rustforge-python -- -D warnings
 
+  # Keep the declared `rust-version` honest. Cargo.lock stays at format v3 and
+  # .cargo/config.toml makes dependency resolution prefer MSRV-compatible versions.
+  msrv:
+    name: MSRV (Rust 1.75)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v5
+
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@1.75
+
+    - name: Cache cargo registry
+      uses: Swatinem/rust-cache@v2
+
+    - name: Check workspace on the declared MSRV
+      run: cargo check --workspace --all-targets --locked --exclude rustforge-python
+
   test:
     name: Test on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}

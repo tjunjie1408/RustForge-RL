@@ -74,7 +74,7 @@ pub(crate) fn reduce_grad_for_broadcast(grad: &Tensor, original_shape: &[usize])
     // Build padded shape on stack for ndim <= 8, heap fallback otherwise
     let padded: smallvec::SmallVec<[usize; 8]> = {
         let mut p = smallvec::SmallVec::new();
-        p.extend(std::iter::repeat_n(1usize, pad_len));
+        p.extend(std::iter::repeat(1usize).take(pad_len));
         p.extend_from_slice(orig_shape);
         p
     };

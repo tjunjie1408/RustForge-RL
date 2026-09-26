@@ -3,6 +3,7 @@ name = "rustforge-rl"
 description = "Reinforcement learning algorithms for RustForge RL"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 rustforge-tensor = { path = "../rustforge-tensor" }
