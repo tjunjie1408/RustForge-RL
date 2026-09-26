@@ -11,7 +11,7 @@ try:
 except ImportError as exc:  # pragma: no cover
     raise ImportError(
         "The Gymnasium bridge requires the 'gymnasium' package. "
-        "Install it with: pip install 'rustforge[gym]'"
+        "Install it with: pip install 'rustforge-rl[gym]'"
     ) from exc
 
 from . import _core

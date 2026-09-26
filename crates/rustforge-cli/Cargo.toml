@@ -5,6 +5,9 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Command-line trainer and terminal training console for RustForge RL"
 
 [dependencies]
 anyhow = "1.0.102"

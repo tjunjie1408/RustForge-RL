@@ -24,6 +24,8 @@ edition = "2021"
 authors = ["RustForge Contributors"]
 license = "MIT OR Apache-2.0"
 rust-version = "1.75"
+repository = "https://github.com/tjunjie1408/RustForge-RL"
+homepage = "https://github.com/tjunjie1408/RustForge-RL"
 
 [workspace.dependencies]
 # Numerical computation
