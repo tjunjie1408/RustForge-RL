@@ -16,8 +16,8 @@
   <img src="https://img.shields.io/badge/language-Rust-orange?style=flat-square&logo=rust" alt="Rust">
   <img src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue?style=flat-square" alt="License">
   <img src="https://img.shields.io/badge/status-Phase%205%20Python%20Bindings%20Live-brightgreen?style=flat-square" alt="Status">
-  <img src="https://img.shields.io/badge/Rust%20tests-804%20passing-brightgreen?style=flat-square" alt="Rust Tests">
-  <img src="https://img.shields.io/badge/Python%20tests-31%20passing-brightgreen?style=flat-square" alt="Python Tests">
+  <a href="https://github.com/tjunjie1408/RustForge-RL/actions/workflows/ci.yml"><img src="https://github.com/tjunjie1408/RustForge-RL/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://pypi.org/project/rustforge-rl/"><img src="https://img.shields.io/pypi/v/rustforge-rl?style=flat-square" alt="PyPI"></a>
 </p>
 
 ---
@@ -87,7 +87,8 @@ A PyTorch-style tensor library built on top of [`ndarray`](https://github.com/ru
 - **Native environments** exposed to Python: CartPole, GridWorld, MountainCar, MountainCarContinuous, Pendulum
 - **DQN agent**: `DQN.train(...)` natively, then `predict(obs)` from Python
 - **Gymnasium bridge**: `rustforge.make("CartPole")` returns a `gymnasium.Env` whose `reset`/`step` yield `float32` NumPy observations
-- **Typed**: ships `_core.pyi` type stubs + a `py.typed` marker; covered by a dedicated CI job (31 pytest)
+- **Typed**: ships `_core.pyi` type stubs + a `py.typed` marker; covered by a dedicated CI job
+- **Wheels**: one abi3 wheel per platform (CPython ≥ 3.9) for Linux x86_64/aarch64, macOS universal2, and Windows x86_64
 
 ### 📊 Native terminal training console — ✅ Complete
 
@@ -157,7 +158,7 @@ Each layer only depends on the layer below it, ensuring clean separation of conc
 ```bash
 # Clone the repository
 git clone https://github.com/tjunjie1408/RustForge-RL.git
-cd rustforge-rl
+cd RustForge-RL
 
 # Build the entire workspace
 cargo build
@@ -218,11 +219,20 @@ let weights = (& attention / 8.0_f32.sqrt()).softmax(1).unwrap();
 
 ### Python (via PyO3 bindings)
 
+Install the published package (import name `rustforge`):
+
+```bash
+pip install rustforge-rl            # native environments + DQN
+pip install "rustforge-rl[gym]"     # plus the Gymnasium bridge
+```
+
+Or build from source for development:
+
 ```bash
 cd crates/rustforge-python
 python -m venv .venv
 # Windows: .venv\Scripts\Activate.ps1   |   Unix: source .venv/bin/activate
-pip install "maturin>=1.7,<2.0" pytest "gymnasium>=0.29" "numpy>=1.21"
+pip install "maturin>=1.9,<2.0" pytest "gymnasium>=0.29" "numpy>=1.21"
 maturin develop
 ```
 
@@ -255,7 +265,7 @@ action = agent.predict([float(x) for x in obs])
 | **Phase 4** | PPO + Continuous Control | ✅ Complete |
 | **Phase 4** | SAC + TD3 | ✅ Complete |
 | **Phase 5** | Python Bindings (PyO3) | ✅ Complete |
-| **Phase 5** | Training Dashboard | 📋 Planned (next) |
+| **Phase 5** | Terminal Training Console (`rustforge run` / `monitor`) | ✅ Complete |
 | **Phase 5** | Benchmarks vs SB3 | ✅ Complete (DQN/CartPole; ~22× faster) |
 | **Phase 5** | GPU Support (wgpu) | 📋 Planned |
 
@@ -345,7 +355,7 @@ We welcome contributions of all kinds! RustForge RL is in its early stages, maki
 ```bash
 # Fork and clone
 git clone https://github.com/tjunjie1408/RustForge-RL.git
-cd rustforge-rl
+cd RustForge-RL
 
 # Create a feature branch
 git checkout -b feat/your-feature

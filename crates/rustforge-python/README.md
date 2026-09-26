@@ -3,13 +3,24 @@
 PyO3 bindings to the RustForge RL framework: native environments and a DQN agent,
 plus a Gymnasium-compatible adapter.
 
+## Install
+
+```bash
+pip install rustforge-rl            # native environments + DQN
+pip install "rustforge-rl[gym]"     # plus the Gymnasium bridge
+```
+
+The distribution is named `rustforge-rl`; the import name is `rustforge`.
+Wheels are abi3 (one per platform, CPython ≥ 3.9) for Linux x86_64/aarch64,
+macOS universal2, and Windows x86_64.
+
 ## Install (development)
 
 ```bash
 cd crates/rustforge-python
 python -m venv .venv
 # Windows: .venv\Scripts\Activate.ps1   |   Unix: source .venv/bin/activate
-pip install "maturin>=1.7,<2.0" pytest "gymnasium>=0.29" "numpy>=1.21"
+pip install "maturin>=1.9,<2.0" pytest "gymnasium>=0.29" "numpy>=1.21"
 maturin develop
 ```
 

@@ -100,6 +100,6 @@ jobs:
         run: |
           python -m venv .venv
           source .venv/bin/activate
-          pip install "maturin>=1.7,<2.0" pytest "gymnasium>=0.29" "numpy>=1.21"
+          pip install "maturin>=1.9,<2.0" pytest "gymnasium>=0.29" "numpy>=1.21"
           maturin develop
           pytest -v
