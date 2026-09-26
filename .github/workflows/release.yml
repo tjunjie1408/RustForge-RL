@@ -17,16 +17,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # The binary target is `rustforge` (see crates/rustforge-cli/Cargo.toml).
           - os: ubuntu-latest
-            artifact: rustforge-cli-linux-x86_64
-            bin: target/release/rustforge-cli
+            artifact: rustforge-linux-x86_64
+            bin: target/release/rustforge
           - os: macos-latest
             # macos-latest runners are arm64 (macos-14+).
-            artifact: rustforge-cli-macos-arm64
-            bin: target/release/rustforge-cli
+            artifact: rustforge-macos-arm64
+            bin: target/release/rustforge
           - os: windows-latest
-            artifact: rustforge-cli-windows-x86_64.exe
-            bin: target/release/rustforge-cli.exe
+            artifact: rustforge-windows-x86_64.exe
+            bin: target/release/rustforge.exe
 
     steps:
     - uses: actions/checkout@v5
@@ -38,7 +39,7 @@ jobs:
       uses: Swatinem/rust-cache@v2
 
     - name: Build CLI (release)
-      run: cargo build --release -p rustforge-cli --bin rustforge-cli
+      run: cargo build --release --locked -p rustforge-cli --bin rustforge
 
     # Give each platform's binary a distinct, descriptive name so the three
     # matrix jobs don't overwrite each other's asset on the release.
