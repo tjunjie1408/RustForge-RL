@@ -213,20 +213,23 @@ impl AppState {
 
     pub fn apply(&mut self, action: Action) {
         match action {
-            Action::NextView => self.view = self.view.next(),
-            Action::PreviousView => self.view = self.view.previous(),
+            Action::NextView => self.set_view(self.view.next()),
+            Action::PreviousView => self.set_view(self.view.previous()),
             Action::NextRange => self.chart_range = self.chart_range.next(),
             Action::PreviousRange => self.chart_range = self.chart_range.previous(),
             Action::ScrollUp(amount) => {
-                self.scroll_offset = self.scroll_offset.saturating_add(amount);
                 self.set_follow(false);
+                self.scroll_offset = self
+                    .scroll_offset
+                    .saturating_add(amount)
+                    .min(self.scroll_limit());
             }
             Action::ScrollDown(amount) => {
                 self.scroll_offset = self.scroll_offset.saturating_sub(amount);
             }
             Action::JumpToFirst => {
-                self.scroll_offset = self.episodes.len().saturating_sub(1);
                 self.set_follow(false);
+                self.scroll_offset = self.scroll_limit();
             }
             Action::JumpToLatest => {
                 self.scroll_offset = 0;
@@ -301,6 +304,17 @@ impl AppState {
 
     pub fn set_view(&mut self, view: View) {
         self.view = view;
+        self.scroll_offset = self.scroll_offset.min(self.scroll_limit());
+    }
+
+    /// Largest useful scroll offset for the current view: the oldest visible
+    /// event or the last details line. Views without scrollable content return 0.
+    fn scroll_limit(&self) -> usize {
+        match self.view {
+            View::Events => self.activity_newest_first().count().saturating_sub(1),
+            View::RunDetails => crate::ui::details_line_count(self).saturating_sub(1),
+            View::Overview | View::Charts => 0,
+        }
     }
 
     pub fn source_state(&self) -> MonitorSourceState {

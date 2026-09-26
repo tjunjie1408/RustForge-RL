@@ -80,7 +80,8 @@ fn navigation_cycles_views_and_freezes_when_scrolling_history() {
     assert!(app.follow_live());
     app.apply(Action::ScrollUp(1));
     assert!(!app.follow_live());
-    assert_eq!(app.scroll_offset(), 1);
+    // The overview has nothing to scroll, so the offset stays at the top.
+    assert_eq!(app.scroll_offset(), 0);
     app.apply(Action::JumpToLatest);
     assert!(app.follow_live());
     assert_eq!(app.scroll_offset(), 0);
@@ -211,4 +212,40 @@ fn source_reset_clears_freeze() {
     });
     assert!(app.follow_live());
     assert_eq!(last_charted_episode(&app), Some(1));
+}
+
+#[test]
+fn event_scrolling_stops_at_the_oldest_entry() {
+    let mut app = AppState::new(AppMode::Monitor, 64, 16);
+    app.apply_csv_poll(poll(0..1, &["a", "b", "c"]));
+    app.set_view(View::Events);
+
+    app.apply(Action::ScrollUp(10));
+    assert_eq!(app.scroll_offset(), 2);
+    // One step down moves immediately instead of first unwinding the overshoot.
+    app.apply(Action::ScrollDown(1));
+    assert_eq!(app.scroll_offset(), 1);
+
+    app.apply(Action::JumpToFirst);
+    assert_eq!(app.scroll_offset(), 2);
+}
+
+#[test]
+fn switching_views_clamps_the_shared_scroll_offset() {
+    let mut app = AppState::new(AppMode::Monitor, 64, 64);
+    let messages: Vec<String> = (0..40).map(|index| format!("event {index}")).collect();
+    let messages: Vec<&str> = messages.iter().map(String::as_str).collect();
+    app.apply_csv_poll(poll(0..1, &messages));
+    app.set_view(View::Events);
+    app.apply(Action::ScrollUp(39));
+    assert_eq!(app.scroll_offset(), 39);
+
+    // Run details has far fewer lines than 40 events.
+    app.apply(Action::NextView);
+    assert_eq!(app.view(), View::Overview);
+    assert_eq!(app.scroll_offset(), 0);
+    app.set_view(View::RunDetails);
+    app.apply(Action::ScrollUp(1_000));
+    let limit = app.scroll_offset();
+    assert!(limit > 0 && limit < 39, "details limit {limit}");
 }

@@ -8,6 +8,21 @@ use crate::app::{AppMode, AppState};
 use crate::ui::theme::Theme;
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: Theme) {
+    frame.render_widget(
+        Paragraph::new(lines(app, theme))
+            .wrap(Wrap { trim: false })
+            .scroll((app.scroll_offset().min(u16::MAX as usize) as u16, 0))
+            .block(theme.block(" Run details ", app.ascii())),
+        area,
+    );
+}
+
+/// Number of logical lines in the details view, used to bound scrolling.
+pub(crate) fn line_count(app: &AppState) -> usize {
+    lines(app, Theme::for_app(app)).len()
+}
+
+fn lines(app: &AppState, theme: Theme) -> Vec<Line<'_>> {
     let metadata = app.run_metadata();
     let mode = match app.mode() {
         AppMode::Monitor => "read-only persisted metrics monitor",
@@ -44,13 +59,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: Theme) {
                 .map(|(label, value)| field(label, Some(value.clone()), theme)),
         );
     }
-    frame.render_widget(
-        Paragraph::new(lines)
-            .wrap(Wrap { trim: false })
-            .scroll((app.scroll_offset().min(u16::MAX as usize) as u16, 0))
-            .block(theme.block(" Run details ", app.ascii())),
-        area,
-    );
+    lines
 }
 
 fn section(title: &str, theme: Theme) -> Line<'_> {

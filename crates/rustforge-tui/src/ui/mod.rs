@@ -433,6 +433,10 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
         .split(vertical[1])[1]
 }
 
+pub(crate) fn details_line_count(app: &AppState) -> usize {
+    details::line_count(app)
+}
+
 pub(crate) fn source_state_label(state: MonitorSourceState) -> &'static str {
     match state {
         MonitorSourceState::Waiting => "WAITING",
