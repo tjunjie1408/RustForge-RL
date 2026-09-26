@@ -31,3 +31,9 @@ def test_dqn_train_mountaincar():
     agent = _core.DQN.train("mountaincar", episodes=2, max_steps=30)
     action = agent.predict([0.0, 0.0])
     assert action in (0, 1, 2)
+
+
+def test_dqn_unusable_log_path_raises_runtime_error(tmp_path):
+    missing = tmp_path / "missing-dir" / "log.csv"
+    with pytest.raises(RuntimeError, match="log"):
+        _core.DQN.train("cartpole", episodes=1, max_steps=5, log_path=str(missing))

@@ -104,20 +104,23 @@ pub(crate) fn train_dqn_headless<E>(
     episodes: usize,
     max_steps_per_episode: usize,
     log_path: Option<&str>,
-) -> DQN
+) -> Result<DQN, TrainerError>
 where
     E: Environment,
     E::Act: TryFrom<usize>,
     <E::Act as TryFrom<usize>>::Error: Debug,
 {
-    let logger = log_path.map(|path| CsvLogger::new(path).expect("Failed to create CSV logger"));
+    let logger = log_path
+        .map(|path| {
+            CsvLogger::new(path).map_err(|error| TrainerError {
+                message: format!("failed to create DQN CSV log at {path}: {error}"),
+            })
+        })
+        .transpose()?;
     let mut hooks = HeadlessHooks { logger };
     let result = train_dqn_core(env, config, episodes, max_steps_per_episode, &mut hooks);
     hooks.flush();
-    // The legacy entry point returns the agent directly, so failures stay panics here.
-    result
-        .unwrap_or_else(|error| panic!("DQN training failed: {error}"))
-        .agent
+    result.map(|result| result.agent)
 }
 
 struct DqnRunResult {

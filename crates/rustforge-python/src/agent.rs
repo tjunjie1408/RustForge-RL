@@ -1,9 +1,9 @@
 //! Python wrapper for the DQN agent.
 
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
-use rustforge_rl::agent::{train_dqn, DQNConfig, DQN};
+use rustforge_rl::agent::{try_train_dqn, DQNConfig, DQN};
 use rustforge_rl::env::{CartPole, GridWorld, MountainCar};
 
 /// Trained Deep Q-Network agent.
@@ -22,6 +22,7 @@ impl PyDQN {
     /// Train a DQN on a built-in discrete environment and return the trained agent.
     ///
     /// `env_name` must be one of `"cartpole"`, `"gridworld"`, `"mountaincar"`.
+    /// Raises `RuntimeError` if the log file cannot be created or training diverges.
     #[staticmethod]
     #[pyo3(signature = (
         env_name,
@@ -69,15 +70,15 @@ impl PyDQN {
 
         let path = log_path.as_deref();
         let inner = match env_name {
-            "cartpole" => train_dqn(
+            "cartpole" => try_train_dqn(
                 CartPole::with_max_steps(max_steps),
                 config,
                 episodes,
                 max_steps,
                 path,
             ),
-            "gridworld" => train_dqn(GridWorld::new(), config, episodes, max_steps, path),
-            "mountaincar" => train_dqn(
+            "gridworld" => try_train_dqn(GridWorld::new(), config, episodes, max_steps, path),
+            "mountaincar" => try_train_dqn(
                 MountainCar::with_max_steps(max_steps),
                 config,
                 episodes,
@@ -85,12 +86,15 @@ impl PyDQN {
                 path,
             ),
             _ => unreachable!("env_name validated above"),
-        };
+        }
+        .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
 
         Ok(PyDQN { inner, obs_dim })
     }
 
     /// Greedy action for an observation (argmax over Q-values).
+    ///
+    /// Raises `RuntimeError` if the network's Q-values are NaN.
     fn predict(&self, obs: Vec<f32>) -> PyResult<usize> {
         if obs.len() != self.obs_dim {
             return Err(PyValueError::new_err(format!(
@@ -99,7 +103,9 @@ impl PyDQN {
                 obs.len()
             )));
         }
-        Ok(self.inner.select_greedy_action(&obs))
+        self.inner
+            .try_select_greedy_action(&obs)
+            .map_err(|error| PyRuntimeError::new_err(format!("cannot select an action: {error}")))
     }
 
     /// Number of completed training steps.

@@ -149,3 +149,39 @@ fn dqn_cartpole_training_smoke_runs_with_per() {
     let agent = train_dqn(env, config, 2, 25, None);
     assert!(agent.config().use_per);
 }
+
+fn poison_q_network(agent: &DQN) {
+    for parameter in agent.q_net().parameters() {
+        let shape = parameter.shape();
+        let count = shape.iter().product();
+        parameter.set_data(Tensor::from_vec(vec![f32::NAN; count], &shape));
+    }
+}
+
+#[test]
+fn greedy_action_reports_diverged_q_values_as_an_error() {
+    let dqn = DQN::new(DQNConfig::default());
+    assert!(dqn.try_select_greedy_action(&[0.0; 4]).unwrap() < 2);
+
+    poison_q_network(&dqn);
+    let error = dqn.try_select_greedy_action(&[0.0; 4]).unwrap_err();
+    assert!(error.to_string().contains("NaN"), "{error}");
+}
+
+#[test]
+fn try_train_dqn_reports_an_unusable_log_path_instead_of_panicking() {
+    let missing_dir = std::env::temp_dir()
+        .join("rustforge-missing-dir-for-test")
+        .join("nested")
+        .join("log.csv");
+    let error = rustforge_rl::agent::try_train_dqn(
+        CartPole::with_max_steps(10),
+        DQNConfig::default(),
+        1,
+        10,
+        Some(missing_dir.to_str().unwrap()),
+    )
+    .err()
+    .expect("an unusable log path must be reported");
+    assert!(error.message.contains("log"), "{}", error.message);
+}

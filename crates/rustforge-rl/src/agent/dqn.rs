@@ -35,7 +35,7 @@ use rustforge_autograd::optimizer::adam::Adam;
 use rustforge_autograd::{Optimizer, Variable};
 use rustforge_nn::loss::mse_loss;
 use rustforge_nn::{Linear, Module, ReLU, Sequential};
-use rustforge_tensor::Tensor;
+use rustforge_tensor::{Tensor, TensorError};
 
 use crate::buffer::TransitionBatch;
 
@@ -156,14 +156,25 @@ impl DQN {
     ///
     /// ## Returns
     /// The greedy action index.
+    ///
+    /// ## Panics
+    /// Panics if the Q-values contain NaN (a diverged network). Use
+    /// [`try_select_greedy_action`](Self::try_select_greedy_action) to handle
+    /// that case as an error.
     pub fn select_greedy_action(&self, state: &[f32]) -> usize {
+        self.try_select_greedy_action(state)
+            .unwrap_or_else(|error| panic!("greedy DQN action selection failed: {error}"))
+    }
+
+    /// Fallible form of [`select_greedy_action`](Self::select_greedy_action).
+    ///
+    /// Returns [`TensorError::NonFinite`] when the Q-values contain NaN.
+    pub fn try_select_greedy_action(&self, state: &[f32]) -> Result<usize, TensorError> {
         let state_tensor = Tensor::from_vec(state.to_vec(), &[1, self.config.obs_dim]);
         let state_var = Variable::from_tensor(state_tensor);
         let q_values = no_grad(|| self.q_net.forward(&state_var));
         let q_data = q_values.data();
-        q_data
-            .argmax_axis(1)
-            .expect("argmax failed in select_greedy_action")[0]
+        Ok(q_data.argmax_axis(1)?[0])
     }
 
     /// Performs a single training step on a batch of transitions.
@@ -289,10 +300,9 @@ impl DQN {
 
         // ── 6. Periodically update target network (hard copy) ──
         self.train_steps += 1;
-        if self
-            .train_steps
-            .is_multiple_of(self.config.target_update_freq)
-        {
+        let freq = self.config.target_update_freq;
+        // `freq == 0` disables target updates (and avoids a division by zero).
+        if freq != 0 && self.train_steps % freq == 0 {
             self.update_target();
         }
 

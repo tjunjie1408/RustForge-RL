@@ -26,7 +26,7 @@ pub use a2c::{A2CConfig, ActorCriticNet, A2C};
 pub use a2c_runtime::{cartpole_a2c_config, A2cTrainerAdapter};
 pub use dqn::{DQNConfig, DQN};
 pub use dqn_runtime::DqnTrainerAdapter;
-pub use dqn_train::train_dqn;
+pub use dqn_train::{train_dqn, try_train_dqn};
 pub use epsilon_greedy::EpsilonGreedy;
 pub use gaussian_policy::{GaussianPolicy, GaussianPolicyNet};
 pub use ppo::{PPOConfig, PPOContinuous, PPOContinuousConfig, PPODiscrete, PPODiscreteConfig};

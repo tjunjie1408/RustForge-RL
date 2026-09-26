@@ -296,7 +296,9 @@ impl TD3 {
         self.train_steps += 1;
 
         // ── Delayed actor update ──
-        let actor_loss_val = if self.train_steps.is_multiple_of(self.config.policy_delay) {
+        let delay = self.config.policy_delay;
+        // `delay == 0` disables actor updates (and avoids a division by zero).
+        let actor_loss_val = if delay != 0 && self.train_steps % delay == 0 {
             self.actor_optimizer.zero_grad();
 
             let actor_actions_raw = self.actor.forward(&states_var); // [-1, 1]
