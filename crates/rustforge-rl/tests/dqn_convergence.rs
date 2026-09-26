@@ -69,8 +69,11 @@ fn dqn_converges_on_cartpole() {
     let mut replay = ReplayBuffer::new(BUFFER_SIZE, OBS_DIM);
     let mut batch = TransitionBatch::new(BATCH_SIZE, OBS_DIM);
 
-    let logger =
-        CsvLogger::new("target/dqn_convergence_metrics.csv").expect("Failed to create CSV logger");
+    let logger = CsvLogger::new(concat!(
+        env!("CARGO_TARGET_TMPDIR"),
+        "/dqn_convergence_metrics.csv"
+    ))
+    .expect("Failed to create CSV logger");
 
     let mut global_step = 0usize;
     let mut rewards: Vec<f32> = Vec::with_capacity(MAX_EPISODES);
@@ -196,8 +199,11 @@ fn dqn_per_converges_on_cartpole() {
     let mut per_weights = Tensor::zeros(&[BATCH_SIZE, 1]);
     let mut per_tree_indices = vec![0; BATCH_SIZE];
 
-    let logger = CsvLogger::new("target/dqn_per_convergence_metrics.csv")
-        .expect("Failed to create CSV logger");
+    let logger = CsvLogger::new(concat!(
+        env!("CARGO_TARGET_TMPDIR"),
+        "/dqn_per_convergence_metrics.csv"
+    ))
+    .expect("Failed to create CSV logger");
 
     let mut global_step = 0usize;
     let mut rewards: Vec<f32> = Vec::with_capacity(MAX_EPISODES);
