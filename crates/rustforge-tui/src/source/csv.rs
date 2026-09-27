@@ -1,10 +1,13 @@
-//! Robust incremental reader for the persisted DQN CSV v1 format.
+//! Robust incremental reader for persisted metrics CSV files.
+//!
+//! The format is detected from the header; see [`super::format`].
 
 use std::fs::{self, File, Metadata};
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
-use crate::metrics::{parse_line, MetricRow, DQN_CSV_V1_HEADER};
+use super::format::{sb3_monitor_env_id, CsvFormat, ParsedLine, RowParser, UNSUPPORTED_HEADER};
+use crate::metrics::{MetricLabels, MetricRow};
 
 const MAX_READ_BYTES_PER_POLL: u64 = 1024 * 1024;
 const MAX_CSV_LINE_BYTES: usize = 64 * 1024;
@@ -53,13 +56,15 @@ pub struct CsvSourcePoll {
     pub diagnostics: Vec<CsvDiagnostic>,
 }
 
-/// Incrementally follows one DQN CSV v1 file.
+/// Incrementally follows one metrics CSV file.
 pub struct CsvSource {
     path: PathBuf,
     offset: u64,
     pending: Vec<u8>,
     next_line: u64,
     header_valid: Option<bool>,
+    parser: Option<RowParser>,
+    environment: Option<String>,
     identity: Option<FileIdentity>,
     anchor_offset: u64,
     anchor: Vec<u8>,
@@ -77,6 +82,8 @@ impl CsvSource {
             pending: Vec::new(),
             next_line: 1,
             header_valid: None,
+            parser: None,
+            environment: None,
             identity: None,
             anchor_offset: 0,
             anchor: Vec::new(),
@@ -89,6 +96,21 @@ impl CsvSource {
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Format detected from the current file's header, if any.
+    pub fn format(&self) -> Option<CsvFormat> {
+        self.parser.as_ref().map(RowParser::format)
+    }
+
+    /// Display labels for the detected format's columns.
+    pub fn metric_labels(&self) -> Option<MetricLabels> {
+        self.parser.as_ref().map(RowParser::labels)
+    }
+
+    /// Environment ID recorded in an SB3 monitor file's metadata line.
+    pub fn environment(&self) -> Option<&str> {
+        self.environment.as_deref()
     }
 
     pub fn poll(&mut self) -> CsvSourcePoll {
@@ -277,42 +299,38 @@ impl CsvSource {
                 }
 
                 match self.header_valid {
+                    // SB3 monitor files start with a `#{json}` metadata line.
+                    None if line.starts_with('#') => {
+                        if let Some(environment) = sb3_monitor_env_id(line) {
+                            self.environment = Some(environment);
+                        }
+                    }
                     None => {
-                        let valid = line.trim() == DQN_CSV_V1_HEADER;
+                        self.parser = RowParser::detect(line);
+                        let valid = self.parser.is_some();
                         self.header_valid = Some(valid);
                         if !valid {
                             severe_error = true;
                             poll.diagnostics.push(diagnostic(
                                 CsvDiagnosticKind::HeaderMismatch,
                                 Some(line_number),
-                                format!("expected CSV header `{DQN_CSV_V1_HEADER}`"),
+                                UNSUPPORTED_HEADER,
                             ));
                         }
                     }
                     Some(false) => {}
                     Some(true) => {
-                        if line.split(',').count() != 5 {
-                            poll.diagnostics.push(diagnostic(
+                        let Some(parser) = self.parser.as_mut() else {
+                            continue;
+                        };
+                        match parser.parse(line) {
+                            ParsedLine::Row(row) => poll.rows.push(row),
+                            ParsedLine::Skip => {}
+                            ParsedLine::Malformed(message) => poll.diagnostics.push(diagnostic(
                                 CsvDiagnosticKind::MalformedRow,
                                 Some(line_number),
-                                "expected exactly five CSV fields",
-                            ));
-                        } else if let Some(row) = parse_line(line) {
-                            if row.reward.is_finite() {
-                                poll.rows.push(row);
-                            } else {
-                                poll.diagnostics.push(diagnostic(
-                                    CsvDiagnosticKind::MalformedRow,
-                                    Some(line_number),
-                                    "reward must be finite",
-                                ));
-                            }
-                        } else {
-                            poll.diagnostics.push(diagnostic(
-                                CsvDiagnosticKind::MalformedRow,
-                                Some(line_number),
-                                "invalid DQN CSV v1 metric row",
-                            ));
+                                message,
+                            )),
                         }
                     }
                 }
@@ -334,6 +352,8 @@ impl CsvSource {
         self.pending.clear();
         self.next_line = 1;
         self.header_valid = None;
+        self.parser = None;
+        self.environment = None;
         self.anchor_offset = 0;
         self.anchor.clear();
         self.discarding_oversized_line = false;

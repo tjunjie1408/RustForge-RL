@@ -6,6 +6,8 @@ pub const DQN_CSV_V1_HEADER: &str = "episode,reward,avg_loss,epsilon,global_step
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MetricLabels {
+    /// What one row counts, such as "Episode" or "Update".
+    pub episode: String,
     pub episode_reward: String,
     pub primary_loss: Option<String>,
     pub policy_signal: Option<String>,
@@ -15,15 +17,28 @@ pub struct MetricLabels {
 impl MetricLabels {
     pub fn dqn_monitor_defaults() -> Self {
         Self {
+            episode: "Episode".into(),
             episode_reward: "Reward".into(),
             primary_loss: Some("Loss".into()),
             policy_signal: Some("Exploration / epsilon".into()),
             throughput: "Steps/sec".into(),
         }
     }
+
+    /// Short status-bar form of [`episode`](Self::episode).
+    pub fn episode_short(&self) -> String {
+        if self.episode == "Episode" {
+            "ep".into()
+        } else {
+            self.episode.to_lowercase()
+        }
+    }
 }
 
 /// One reducer-facing row mapped from either persisted or live metrics.
+///
+/// `episode` is the row's position on the x axis; its unit is
+/// [`MetricLabels::episode`].
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct MetricRow {
     pub episode: u64,

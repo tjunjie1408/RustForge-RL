@@ -59,6 +59,7 @@ impl LiveMetricRoles {
 
     fn labels(&self) -> MetricLabels {
         MetricLabels {
+            episode: "Episode".into(),
             episode_reward: self.episode_reward.label.clone(),
             primary_loss: self
                 .primary_loss

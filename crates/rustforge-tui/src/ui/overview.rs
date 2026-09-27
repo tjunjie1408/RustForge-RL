@@ -90,7 +90,7 @@ fn training_lines(app: &AppState, theme: Theme, inner_width: usize) -> Vec<Line<
 
     let mut lines = vec![
         kpi(
-            "Episode",
+            &app.metric_labels().episode,
             latest.map(|row| format::grouped(row.episode)),
             theme,
         ),

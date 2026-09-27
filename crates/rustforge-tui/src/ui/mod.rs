@@ -197,7 +197,10 @@ fn render_progress(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: The
                 })
                 .unwrap_or_else(|| (theme.dash().into(), theme.dash().into()));
             groups.push(vec![
-                Span::styled(" ep ", theme.muted_style()),
+                Span::styled(
+                    format!(" {} ", app.metric_labels().episode_short()),
+                    theme.muted_style(),
+                ),
                 Span::styled(episode, theme.text_style()),
             ]);
             groups.push(vec![

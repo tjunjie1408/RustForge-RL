@@ -103,6 +103,7 @@ fn live_charts_use_descriptor_labels_and_skip_unassigned_optional_panels() {
     let mut app = sample_app();
     app.set_view(View::Charts);
     app.set_metric_labels(MetricLabels {
+        episode: "Episode".into(),
         episode_reward: "Episode reward".into(),
         primary_loss: Some("PPO policy loss".into()),
         policy_signal: Some("PPO policy entropy".into()),
@@ -114,6 +115,7 @@ fn live_charts_use_descriptor_labels_and_skip_unassigned_optional_panels() {
     assert!(output.contains("PPO policy entropy"));
 
     app.set_metric_labels(MetricLabels {
+        episode: "Episode".into(),
         episode_reward: "Episode reward".into(),
         primary_loss: None,
         policy_signal: None,

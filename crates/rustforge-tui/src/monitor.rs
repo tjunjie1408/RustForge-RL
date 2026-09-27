@@ -85,10 +85,9 @@ pub async fn run_monitor(options: MonitorOptions) -> anyhow::Result<()> {
     app.set_total_episodes(options.total_episodes);
     app.set_run_metadata(RunMetadata {
         metrics_path: Some(options.metrics_path.clone()),
-        schema_version: Some("dqn-csv-v1".into()),
         ..RunMetadata::default()
     });
-    app.apply_csv_poll(source.poll());
+    apply_source_poll(&mut app, &mut source);
     let mut tracker = MonitorTracker::new(&app, Instant::now());
     app.set_monitor_insights(tracker.update(&app, Instant::now()));
 
@@ -109,7 +108,7 @@ pub async fn run_monitor(options: MonitorOptions) -> anyhow::Result<()> {
             },
             AppEvent::Terminal(_) => {}
             AppEvent::SourcePoll => {
-                app.apply_csv_poll(source.poll());
+                apply_source_poll(&mut app, &mut source);
                 app.set_monitor_insights(tracker.update(&app, Instant::now()));
             }
             AppEvent::ProgressSample => {
@@ -126,6 +125,32 @@ pub async fn run_monitor(options: MonitorOptions) -> anyhow::Result<()> {
 
     terminal.restore()?;
     Ok(())
+}
+
+/// Applies one poll and keeps labels and run metadata in step with the
+/// format detected from the file's header, which can change on replacement.
+pub fn apply_source_poll(app: &mut AppState, source: &mut CsvSource) {
+    app.apply_csv_poll(source.poll());
+    // SB3 rewrites progress.csv when new keys appear, so labels can change
+    // without the format changing.
+    if let Some(labels) = source.metric_labels() {
+        if &labels != app.metric_labels() {
+            app.set_metric_labels(labels);
+        }
+    }
+    let schema = source
+        .format()
+        .map(|format| format.schema_name().to_owned());
+    let environment = source.environment().map(str::to_owned);
+    let metadata = app.run_metadata();
+    if metadata.schema_version != schema || metadata.environment != environment {
+        let metadata = RunMetadata {
+            schema_version: schema,
+            environment,
+            ..metadata.clone()
+        };
+        app.set_run_metadata(metadata);
+    }
 }
 
 pub struct MonitorTracker {

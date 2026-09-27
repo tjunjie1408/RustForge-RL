@@ -93,7 +93,7 @@ A PyTorch-style tensor library built on top of [`ndarray`](https://github.com/ru
 ### 📊 Native terminal training console — ✅ Complete
 
 - Ratatui overview, charts, run details, and reliable event/activity views
-- `rustforge monitor <metrics.csv>` for completed or growing DQN CSV v1 files
+- `rustforge monitor <metrics.csv>` for completed or growing RustForge DQN CSV v1 files and Stable-Baselines3 `monitor.csv` / `progress.csv` logs (format detected from the header)
 - `rustforge run dqn` for in-process metrics plus pause/resume and graceful/force stop
 - Independent CSV persistence and collision-safe run manifests
 - ASCII and no-color accessibility modes
@@ -247,6 +247,30 @@ obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
 # Train a DQN natively, then act from Python
 agent = rustforge.DQN.train("cartpole", episodes=200)
 action = agent.predict([float(x) for x in obs])
+```
+
+### Watch Stable-Baselines3 training in the terminal
+
+`rustforge monitor` follows SB3 logs as they are written, with no code changes
+beyond the logging SB3 already supports. Download the `rustforge` binary for
+your platform from the [latest release](https://github.com/tjunjie1408/RustForge-RL/releases/latest),
+or build it with `cargo install --git https://github.com/tjunjie1408/RustForge-RL rustforge-cli`.
+
+```python
+import gymnasium as gym
+from stable_baselines3 import PPO
+from stable_baselines3.common.logger import configure
+from stable_baselines3.common.monitor import Monitor
+
+env = Monitor(gym.make("CartPole-v1"), "logs/monitor.csv")  # one row per episode
+model = PPO("MlpPolicy", env)
+model.set_logger(configure("logs", ["stdout", "csv"]))       # logs/progress.csv
+model.learn(100_000)
+```
+
+```bash
+rustforge monitor logs/monitor.csv    # every episode's reward
+rustforge monitor logs/progress.csv   # rolling mean reward, loss, exploration/entropy
 ```
 
 ---

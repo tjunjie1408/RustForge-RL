@@ -1090,6 +1090,7 @@ dependencies = [
  "ratatui",
  "rustforge-rl",
  "serde",
+ "serde_json",
  "sysinfo",
  "tokio",
 ]

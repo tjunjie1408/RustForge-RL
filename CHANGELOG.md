@@ -7,6 +7,19 @@ contain breaking changes.
 
 ## [Unreleased]
 
+### Added
+
+- `rustforge monitor` follows Stable-Baselines3 logs: `Monitor` wrapper files
+  (`monitor.csv`, one row per episode) and CSV logger files (`progress.csv`,
+  with loss and exploration or entropy panels). The format is detected from
+  the header.
+
+### Fixed
+
+- Prioritized replay no longer samples unfilled buffer slots when the sum
+  tree's floating-point totals drift, which could turn DQN training with
+  `--use-per` into NaN Q-values.
+
 ## [0.1.0] - 2026-09-27
 
 First public release.

@@ -17,7 +17,7 @@ pub struct Cli {
 pub enum Commands {
     /// Train an agent without an interactive terminal.
     Train(TrainArgs),
-    /// Inspect a completed or actively written DQN CSV v1 file.
+    /// Inspect a completed or actively written metrics CSV file.
     Monitor(MonitorArgs),
     /// Train an agent with the native live terminal console.
     Run(RunArgs),
@@ -59,7 +59,8 @@ pub struct TrainArgs {
 
 #[derive(Debug, Args)]
 pub struct MonitorArgs {
-    /// DQN CSV v1 file to load and follow.
+    /// Metrics CSV to load and follow: RustForge DQN CSV v1, or a
+    /// Stable-Baselines3 monitor.csv or progress.csv (detected from the header).
     pub metrics: PathBuf,
     #[arg(long)]
     pub no_color: bool,
