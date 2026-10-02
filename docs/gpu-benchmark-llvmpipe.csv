@@ -1,0 +1,16 @@
+# adapter: AdapterInfo { name: "llvmpipe (LLVM 19.1.7, 256 bits)", vendor: 65541, device: 0, device_type: Cpu, driver: "", driver_info: "", backend: Gl }
+# GPU buffers reused; upload/download and pipeline initialization excluded
+# CPU Tensor::matmul includes output allocation; three trials, alternating GPU order
+n,iterations,trial,cpu_ms,naive_ms,tiled_ms
+32,10,0,0.001352,0.104446,0.119695
+32,10,1,0.001217,0.091744,0.138101
+32,10,2,0.001242,0.136697,0.135860
+64,10,0,0.010893,0.387967,0.550602
+64,10,1,0.007929,0.278123,0.638390
+64,10,2,0.007056,0.309186,0.779277
+128,10,0,0.050537,1.770470,2.456971
+128,10,1,0.055414,0.860938,2.512093
+128,10,2,0.054282,0.910287,1.998122
+256,10,0,0.403843,7.877113,19.119314
+256,10,1,0.452321,10.164455,18.947593
+256,10,2,0.433126,7.510970,17.215314

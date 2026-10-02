@@ -25,6 +25,8 @@
 
 pub mod display;
 pub mod error;
+#[cfg(feature = "gpu")]
+pub mod gpu;
 pub mod ops;
 pub mod random;
 pub mod shape;

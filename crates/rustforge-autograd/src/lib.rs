@@ -47,6 +47,8 @@
 //! graph nodes and skip the tensor copies those nodes would save.
 
 pub mod backward;
+#[cfg(feature = "gpu")]
+pub mod gpu;
 mod grad_mode;
 pub mod graph;
 pub mod ops;

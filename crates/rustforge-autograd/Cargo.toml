@@ -11,6 +11,11 @@ homepage.workspace = true
 
 [features]
 dhat-heap = ["dhat"]
+gpu = ["rustforge-tensor/gpu"]
+
+[[example]]
+name = "gpu_training"
+required-features = ["gpu"]
 
 [dependencies]
 rustforge-tensor = { path = "../rustforge-tensor" }
