@@ -9,7 +9,19 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 
+[features]
+gpu = ["dep:bincode", "rustforge-nn/gpu", "rustforge-autograd/gpu", "rustforge-tensor/gpu"]
+
+[[example]]
+name = "gpu_dqn_checkpoint"
+required-features = ["gpu"]
+
+[[example]]
+name = "gpu_dqn_training"
+required-features = ["gpu"]
+
 [dependencies]
+bincode = { workspace = true, optional = true }
 rustforge-tensor = { path = "../rustforge-tensor" }
 rustforge-autograd = { path = "../rustforge-autograd" }
 rustforge-nn = { path = "../rustforge-nn" }

@@ -69,3 +69,6 @@ pub use noisy_linear::NoisyLinear;
 pub use normalization::LayerNorm;
 pub use sequential::Sequential;
 pub use serialization::{load_parameters, save_parameters};
+
+#[cfg(feature = "gpu")]
+pub mod gpu;

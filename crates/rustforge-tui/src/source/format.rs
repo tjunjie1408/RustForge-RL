@@ -101,7 +101,8 @@ impl RowParser {
                     reward,
                     length,
                 }
-            } else if let Some(total_steps) = find("time/total_timesteps") {
+            } else {
+                let total_steps = find("time/total_timesteps")?;
                 let first = |keys: &[(&str, &'static str)]| {
                     keys.iter()
                         .find_map(|(key, label)| find(key).map(|index| (index, *label)))
@@ -115,8 +116,6 @@ impl RowParser {
                     loss: first(LOSS_KEYS),
                     signal: first(SIGNAL_KEYS),
                 })
-            } else {
-                return None;
             }
         };
         Some(Self {

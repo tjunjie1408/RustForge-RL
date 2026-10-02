@@ -38,3 +38,8 @@ pub use sac::{SACConfig, SAC};
 pub use schedule::LRSchedule;
 pub use td3::{TD3Config, TD3};
 pub use utils::{clamp_var, elementwise_min_var, hard_update, soft_update};
+
+#[cfg(feature = "gpu")]
+pub mod gpu_dqn;
+#[cfg(feature = "gpu")]
+pub use gpu_dqn::{GpuDqn, GpuDqnBatch, GpuDqnError};

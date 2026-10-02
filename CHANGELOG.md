@@ -9,12 +9,58 @@ contain breaking changes.
 
 ### Added
 
+- Optional `rustforge-tensor/gpu` backend: reusable `GpuContext`, rank-two
+  `f32` WGSL matrix multiplication, a runnable example, and adapter-required
+  CPU parity tests. CPU tensor operations and training stay on their existing
+  backend.
+- Persistent `GpuTensor` buffers with explicit upload/download, device
+  ownership checks, and chained device matrix products. `matmul_into`
+  reuses output storage without intermediate tensor transfers; cloned
+  contexts share their device.
+- Tiled GPU matrix multiplication, copy-free transposed products, device
+  addition/multiplication/ReLU, and hierarchical full sum/mean reductions.
+  An explicit kernel selector and release benchmark compare the tiled and
+  reference paths. CPU/software adapters retain the reference kernel by
+  default, following measured software-adapter results.
+
+- Optional `rustforge-autograd/gpu`: device-resident reverse-mode variables
+  with matrix/elementwise/reduction gradients, immutable forward snapshots,
+  leaf accumulation and no-grad inference. Momentum SGD keeps parameter and
+  optimizer state on device. Numerical gradient tests and deterministic linear
+  regression validate the foundation; CPU neural-network modules and RL agents
+  still use their existing backend.
+
+- Optional `rustforge-nn/gpu`: seeded Linear, ReLU and Sequential modules,
+  explicit feature-bias broadcasting with device gradients, and supplied
+  parameter uploads. GPU Adam retains bias-corrected moments on the device.
+  CPU parity tests cover complete model gradients and optimizer updates;
+  a seeded nonlinear MLP example verifies supervised convergence.
+
+- Optional `rustforge-rl/gpu`: seeded uniform-replay DQN and Double DQN,
+  reusable device replay batches, detached Bellman targets, frozen target
+  snapshots with hard synchronization, and device Adam training. Typed u32
+  GPU action selection/gather and scatter gradients avoid index readbacks
+  during training. CPU parity tests and a deterministic two-state environment
+  verify bootstrapping and learned policy behavior. Prioritized replay and
+  CLI/runtime integration remain pending.
+
+- Versioned GPU DQN checkpoints save online/frozen-target parameters,
+  Adam moments/hyperparameters and training clocks. Host validation precedes
+  device uploads, saves replace completed files atomically, and failed restores
+  preserve the live agent. Bit-identical resume tests cover target delay and
+  synchronization cadence; the new checkpoint example demonstrates continuation.
+  GPU Adam exposes validated snapshot/restore APIs. GPU DQN rejects training
+  under no-grad to keep optimizer state consistent with successful updates.
+
 - `rustforge monitor` follows Stable-Baselines3 logs: `Monitor` wrapper files
   (`monitor.csv`, one row per episode) and CSV logger files (`progress.csv`,
   with loss and exploration or entropy panels). The format is detected from
   the header.
 
 ### Fixed
+
+- The locked backtrace dependencies now support the declared Rust 1.75 MSRV.
+- The SB3 log format detector passes the current strict Clippy check.
 
 - Prioritized replay no longer samples unfilled buffer slots when the sum
   tree's floating-point totals drift, which could turn DQN training with

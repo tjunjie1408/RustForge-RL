@@ -9,6 +9,13 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 
+[features]
+gpu = ["rustforge-autograd/gpu", "rustforge-tensor/gpu"]
+
+[[example]]
+name = "gpu_mlp_training"
+required-features = ["gpu"]
+
 [dependencies]
 rustforge-tensor = { path = "../rustforge-tensor" }
 rustforge-autograd = { path = "../rustforge-autograd" }

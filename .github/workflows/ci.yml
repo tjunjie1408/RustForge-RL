@@ -53,7 +53,7 @@ jobs:
       uses: Swatinem/rust-cache@v2
 
     - name: Check workspace on the declared MSRV
-      run: cargo check --workspace --all-targets --locked --exclude rustforge-python
+      run: cargo check --workspace --all-targets --all-features --locked --exclude rustforge-python
 
   test:
     name: Test on ${{ matrix.os }}
@@ -103,3 +103,43 @@ jobs:
           pip install "maturin>=1.9,<2.0" pytest "gymnasium>=0.29" "numpy>=1.21"
           maturin develop
           pytest -v
+
+  gpu:
+    name: GPU shader parity (software Vulkan)
+    runs-on: ubuntu-latest
+    env:
+      XDG_RUNTIME_DIR: /tmp/rustforge-xdg
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install software Vulkan adapter
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers
+          mkdir -p "$XDG_RUNTIME_DIR"
+          chmod 700 "$XDG_RUNTIME_DIR"
+      - name: Run adapter-required numerical parity tests
+        run: cargo test --locked -p rustforge-tensor --features gpu --test gpu_matmul -- --include-ignored --nocapture
+      - name: Verify device buffer reuse without intermediate transfers
+        run: cargo test --locked -p rustforge-tensor --features gpu --lib gpu::tests::persistent_operations_avoid_transfers_and_reuse_storage -- --include-ignored
+      - name: Run GPU example
+        run: cargo run --locked -p rustforge-tensor --features gpu --example gpu_matmul
+      - name: Verify GPU autograd, momentum SGD and Adam
+        run: cargo test --locked -p rustforge-autograd --features gpu --test gpu_autograd -- --include-ignored
+      - name: Verify GPU graph lifetime
+        run: cargo test --locked -p rustforge-autograd --features gpu --lib gpu::tests -- --include-ignored
+      - name: Run deterministic GPU training
+        run: cargo run --locked -p rustforge-autograd --features gpu --example gpu_training
+      - name: Verify GPU neural-network modules and CPU training parity
+        run: cargo test --locked -p rustforge-nn --features gpu --test gpu_modules -- --include-ignored
+      - name: Run seeded GPU MLP with Adam
+        run: cargo run --locked -p rustforge-nn --features gpu --example gpu_mlp_training
+      - name: Verify GPU DQN targets, updates and RL convergence
+        run: cargo test --locked -p rustforge-rl --features gpu --test gpu_dqn -- --include-ignored
+      - name: Run seeded GPU Double DQN environment example
+        run: cargo run --locked -p rustforge-rl --features gpu --example gpu_dqn_training
+      - name: Verify GPU DQN checkpoint rollback and exact resume
+        run: cargo test --locked -p rustforge-rl --features gpu --test gpu_checkpoint -- --include-ignored
+      - name: Run GPU checkpoint and resume example
+        run: cargo run --locked -p rustforge-rl --features gpu --example gpu_dqn_checkpoint -- "$RUNNER_TEMP/gpu-dqn-resume.chk"

@@ -291,7 +291,97 @@ rustforge monitor logs/progress.csv   # rolling mean reward, loss, exploration/e
 | **Phase 5** | Python Bindings (PyO3) | ✅ Complete |
 | **Phase 5** | Terminal Training Console (`rustforge run` / `monitor`) | ✅ Complete |
 | **Phase 5** | Benchmarks vs SB3 | ✅ Complete (DQN/CartPole; ~22× faster) |
-| **Phase 5** | GPU Support (wgpu) | 📋 Planned |
+| **Phase 5** | GPU Support (wgpu) | 🚧 Device tensors, autograd, neural-network modules and GPU DQN/Double DQN and checkpoint/resume implemented; CLI/runtime and hardware validation next |
+
+### GPU development
+
+The optional `rustforge-tensor/gpu` feature provides a reusable
+`rustforge_tensor::gpu::GpuContext` and explicit `f32` matrix multiplication:
+
+```bash
+cargo run --locked -p rustforge-tensor --features gpu --example gpu_matmul
+cargo test --locked -p rustforge-tensor --features gpu --test gpu_matmul -- --include-ignored
+```
+
+A working compute adapter and graphics driver are required; Mesa software
+adapters can run these commands on machines without a physical GPU. These
+adapter-required tests are ignored in ordinary test runs and exercised
+explicitly by the dedicated GPU CI job. Missing adapters fail the explicit
+test run rather than silently skipping it.
+
+The backend supports persistent `GpuTensor` storage: upload inputs once, chain
+products on the device, and download only when CPU data is needed.
+`GpuContext::matmul_into` reuses an existing output buffer; cloned contexts
+share a device, and tensors from unrelated devices are rejected.
+
+```rust
+use rustforge_tensor::{gpu::GpuContext, Tensor};
+
+let context = GpuContext::new()?;
+let input = context.upload(&Tensor::ones(&[2, 3]))?;
+let weights = context.upload(&Tensor::ones(&[3, 2]))?;
+let projection = context.upload(&Tensor::eye(2))?;
+let hidden = context.matmul_device(&input, &weights)?;
+let mut output = context.zeros(&[2, 2])?;
+context.matmul_into(&hidden, &projection, &mut output)?;
+let result = context.download(&output)?;
+```
+
+Transfers support scalars and arbitrary tensor ranks. Matrix multiplication
+supports rank-two rectangular operands, 8×8 tiled workgroup caching, and
+`matmul_t` / `t_matmul` without transposed copies. Device-only addition,
+multiplication, ReLU, full sum and mean can feed subsequent device operations.
+Binary elementwise operations require identical shapes. Explicit feature-vector
+bias broadcasting is available; general broadcasting and axis reductions are
+not implemented yet.
+
+The direct matrix kernel remains the default on CPU/software adapters; other
+adapters use the tiled kernel. `with_matmul_kernel` explicitly selects either
+for comparison. The release benchmark includes adapter metadata and verifies
+measured outputs:
+
+```bash
+cargo run --locked --release -p rustforge-tensor --features gpu --example gpu_benchmark -- 10
+```
+
+On this cloud machine's Mesa software adapter, the direct kernel was faster
+than the tiled kernel, and native CPU multiplication was faster than either.
+These measurements exclude GPU transfers and do not establish physical GPU
+performance or training speedups. Existing CPU operations and autograd remain
+unchanged. The optional `rustforge-autograd/gpu` API now supports reverse-mode
+GPU gradients and device-resident momentum SGD and Adam:
+
+```bash
+cargo run --locked -p rustforge-autograd --features gpu --example gpu_training
+```
+
+The deterministic linear regression example checks convergence. GPU Linear,
+ReLU and Sequential modules support a seeded nonlinear model with Adam:
+
+```bash
+cargo run --locked -p rustforge-nn --features gpu --example gpu_mlp_training
+```
+
+Uniform-replay GPU DQN and Double DQN are available through
+`rustforge-rl/gpu`. The seeded example collects transitions from a two-state
+environment, trains with bootstrapped targets, and verifies its greedy policy:
+
+```bash
+cargo run --locked -p rustforge-rl --features gpu --example gpu_dqn_training
+```
+
+Target parameters remain frozen between hard synchronizations. Replay batches
+can be uploaded once and reused; a training step downloads only its loss.
+GPU checkpoints preserve online/target parameters, Adam moments and the update
+clock. The resume example verifies identical continued updates:
+
+```bash
+cargo run --locked -p rustforge-rl --features gpu --example gpu_dqn_checkpoint -- /tmp/gpu-dqn-resume.chk
+```
+
+Replay, environment and exploration state are external to this checkpoint.
+Prioritized replay and CLI/runtime device selection remain upcoming work.
+See [the GPU implementation plan](docs/gpu-development.md) and its saved benchmark.
 
 ---
 
@@ -413,7 +503,7 @@ cargo clippy --workspace
 | Testing | Built-in + [approx](https://github.com/brendanzab/approx) |
 | Python Bindings | [PyO3](https://pyo3.rs/) 0.25 + [maturin](https://www.maturin.rs/) |
 | Terminal Console | [Ratatui](https://ratatui.rs/) + Crossterm |
-| Future: GPU | [wgpu](https://wgpu.rs/) |
+| Optional GPU backend | [wgpu](https://wgpu.rs/) |
 
 ---
 
