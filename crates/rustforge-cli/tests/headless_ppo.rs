@@ -15,6 +15,7 @@ fn headless_a2c_cartpole_writes_generic_jsonl_metrics() {
     let _ = std::fs::remove_file(&output);
 
     rustforge_cli::commands::train::execute(TrainArgs {
+        execution: Default::default(),
         algorithm: Algorithm::A2c,
         env: Environment::Cartpole,
         episodes: 1,
@@ -40,6 +41,7 @@ fn headless_reinforce_cartpole_writes_five_finite_generic_jsonl_metrics() {
     let _ = std::fs::remove_file(&output);
 
     rustforge_cli::commands::train::execute(TrainArgs {
+        execution: Default::default(),
         algorithm: Algorithm::Reinforce,
         env: Environment::Cartpole,
         episodes: 2,
@@ -93,6 +95,7 @@ fn invalid_reinforce_combinations_fail_before_creating_output() {
         let output = temporary_output(suffix);
         let _ = std::fs::remove_file(&output);
         let error = rustforge_cli::commands::train::execute(TrainArgs {
+            execution: Default::default(),
             algorithm: Algorithm::Reinforce,
             env,
             episodes: 1,
@@ -120,6 +123,7 @@ fn invalid_a2c_combinations_fail_before_creating_output() {
         let output = temporary_output(suffix);
         let _ = std::fs::remove_file(&output);
         let error = rustforge_cli::commands::train::execute(TrainArgs {
+            execution: Default::default(),
             algorithm: Algorithm::A2c,
             env,
             episodes: 1,
@@ -146,6 +150,7 @@ fn headless_ppo_cartpole_writes_generic_jsonl_metrics() {
     }
 
     rustforge_cli::commands::train::execute(TrainArgs {
+        execution: Default::default(),
         algorithm: Algorithm::Ppo,
         env: Environment::Cartpole,
         episodes: 1,
@@ -184,6 +189,7 @@ fn explicit_headless_output_is_not_overwritten_without_permission() {
         std::fs::write(&output, "keep me").unwrap();
 
         let error = rustforge_cli::commands::train::execute(TrainArgs {
+            execution: Default::default(),
             algorithm,
             env: Environment::Cartpole,
             episodes: 1,
@@ -208,6 +214,7 @@ fn headless_dqn_preserves_the_exact_csv_v1_boundary() {
     }
 
     rustforge_cli::commands::train::execute(TrainArgs {
+        execution: Default::default(),
         algorithm: Algorithm::Dqn,
         env: Environment::Cartpole,
         episodes: 1,

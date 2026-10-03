@@ -91,19 +91,34 @@ impl EpsilonGreedy {
     /// ## Returns
     /// The selected action index.
     pub fn select_action(&mut self, q_values: &Tensor, step: usize, num_actions: usize) -> usize {
-        let eps = self.epsilon(step);
-
-        if self.rng.gen::<f32>() < eps {
-            // Explore: random action
-            self.rng.gen_range(0..num_actions)
-        } else {
-            // Exploit: argmax of Q-values
+        self.select_action_with(step, num_actions, || {
             let flat = q_values.to_vec();
-            flat.iter()
-                .enumerate()
-                .max_by(|(_, a), (_, b)| a.total_cmp(b))
-                .map(|(idx, _)| idx)
-                .unwrap_or(0)
+            Ok::<usize, std::convert::Infallible>(
+                flat.iter()
+                    .enumerate()
+                    .max_by(|(_, a), (_, b)| a.total_cmp(b))
+                    .map(|(idx, _)| idx)
+                    .unwrap_or(0),
+            )
+        })
+        .unwrap()
+    }
+
+    /// Selects exploration on CPU, calling the fallible greedy policy only
+    /// when needed. Device policies can return one index without downloading Q-values.
+    pub fn select_action_with<F, Error>(
+        &mut self,
+        step: usize,
+        num_actions: usize,
+        greedy: F,
+    ) -> Result<usize, Error>
+    where
+        F: FnOnce() -> Result<usize, Error>,
+    {
+        if self.rng.gen::<f32>() < self.epsilon(step) {
+            Ok(self.rng.gen_range(0..num_actions))
+        } else {
+            greedy()
         }
     }
 }
@@ -113,6 +128,33 @@ impl EpsilonGreedy {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lazy_greedy_selection_preserves_seeded_actions_and_propagates_errors() {
+        let q = Tensor::from_vec(vec![1., 5., 3.], &[3]);
+        let mut direct = EpsilonGreedy::with_seed(1., 0.05, 100, 42);
+        let mut lazy = EpsilonGreedy::with_seed(1., 0.05, 100, 42);
+        for step in 0..200 {
+            assert_eq!(
+                direct.select_action(&q, step, 3),
+                lazy.select_action_with(step, 3, || Ok::<_, ()>(1)).unwrap()
+            );
+        }
+        let mut random = EpsilonGreedy::with_seed(1., 1., 1, 42);
+        assert!(
+            random
+                .select_action_with(0, 3, || -> Result<usize, ()> {
+                    panic!("random actions do not evaluate policy")
+                })
+                .unwrap()
+                < 3
+        );
+        let mut greedy = EpsilonGreedy::with_seed(0., 0., 1, 42);
+        assert_eq!(
+            greedy.select_action_with(0, 3, || Err::<usize, _>("device failed")),
+            Err("device failed")
+        );
+    }
 
     #[test]
     fn test_epsilon_decay() {

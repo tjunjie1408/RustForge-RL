@@ -41,8 +41,8 @@ contain breaking changes.
   snapshots with hard synchronization, and device Adam training. Typed u32
   GPU action selection/gather and scatter gradients avoid index readbacks
   during training. CPU parity tests and a deterministic two-state environment
-  verify bootstrapping and learned policy behavior. Prioritized replay and
-  CLI/runtime integration remain pending.
+  verify bootstrapping and learned policy behavior. Prioritized GPU replay
+  remains pending.
 
 - Versioned GPU DQN checkpoints save online/frozen-target parameters,
   Adam moments/hyperparameters and training clocks. Host validation precedes
@@ -52,12 +52,25 @@ contain breaking changes.
   GPU Adam exposes validated snapshot/restore APIs. GPU DQN rejects training
   under no-grad to keep optimizer state consistent with successful updates.
 
+- Optional `rustforge-cli/gpu` adds `--device cpu|gpu` to headless and live
+  training, with GPU DQN `--resume` and `--checkpoint` routing through full
+  training-state files. Agents are constructed inside their owning worker;
+  CPU remains the default. GPU requests reject unsupported algorithms, PER and
+  builds without support. Saves occur on completion or controlled stop; replay,
+  environment and exploration state restart on resume. The live display and
+  manifest record the selected backend.
+
 - `rustforge monitor` follows Stable-Baselines3 logs: `Monitor` wrapper files
   (`monitor.csv`, one row per episode) and CSV logger files (`progress.csv`,
   with loss and exploration or entropy panels). The format is detected from
   the header.
 
 ### Fixed
+
+- GPU contexts cache process compute resources while preserving separate tensor
+  ownership scopes. This avoids wgpu 0.19 EGL display, context-lock and queue
+  conflicts when checkpoint inspection and training workers coexist.
+
 
 - The locked backtrace dependencies now support the declared Rust 1.75 MSRV.
 - The SB3 log format detector passes the current strict Clippy check.

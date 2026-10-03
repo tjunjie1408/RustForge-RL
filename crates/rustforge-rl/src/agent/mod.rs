@@ -6,6 +6,7 @@
 pub mod a2c;
 mod a2c_runtime;
 pub mod dqn;
+mod dqn_backend;
 mod dqn_runtime;
 pub mod dqn_train;
 pub mod epsilon_greedy;
@@ -25,6 +26,7 @@ pub mod utils;
 pub use a2c::{A2CConfig, ActorCriticNet, A2C};
 pub use a2c_runtime::{cartpole_a2c_config, A2cTrainerAdapter};
 pub use dqn::{DQNConfig, DQN};
+pub use dqn_backend::{DqnDevice, DqnRuntimeOptions};
 pub use dqn_runtime::DqnTrainerAdapter;
 pub use dqn_train::{train_dqn, try_train_dqn};
 pub use epsilon_greedy::EpsilonGreedy;

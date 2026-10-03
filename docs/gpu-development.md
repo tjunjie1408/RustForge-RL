@@ -2,7 +2,7 @@
 
 The README roadmap identifies GPU support with wgpu as the next unfinished
 Phase 5 milestone. This plan delivers that work incrementally; stages 1–3
-stage 4a/4b/4c autograd, module and DQN integration, and stage 5a checkpoints
+stage 4a/4b/4c autograd, module and DQN integration, and stages 5a/5b checkpoints and runtime integration
 are complete.
 
 ## Implementation stages
@@ -16,15 +16,16 @@ are complete.
 | 4b | Neural-network modules and optimizer coverage | Complete: seeded GPU Linear/ReLU/Sequential, feature-bias gradients, resident Adam, CPU model/update parity and nonlinear supervised convergence |
 | 4c | RL training integration | Complete: GPU DQN/Double DQN, typed resident action selection/gather, frozen target synchronization, CPU update parity and deterministic environment convergence |
 | 5a | GPU checkpoint and resume | Complete: versioned online/target/Adam state, validated atomic file replacement and bit-identical resumed updates with target cadence preserved |
-| 5b | Runtime and CLI integration | Next: explicit CPU/GPU DQN device selection and checkpoint routing, preserving CPU defaults and existing file compatibility; physical GPU benchmarking remains pending |
+| 5b | Runtime and CLI integration | Complete: explicit CPU/GPU DQN device selection, worker-owned agents, checkpoint routing, controls, CSV compatibility and selected-backend display; physical GPU benchmarking remains pending |
 
 ## Architecture decisions
 
 - The `gpu` feature belongs to `rustforge-tensor`, at the bottom of the
   dependency graph. Default builds do not enable wgpu.
-- `GpuContext` owns the device, queue, cached matmul pipeline, and adapter
-  metadata. Callers should reuse it rather than initialize a device for each
-  multiplication.
+- `GpuContext` establishes a tensor ownership scope over the process compute
+  device, queue, cached pipelines and adapter metadata. Device resources are
+  initialized once and retained until process exit; buffers and ownership
+  scopes are released with their owners.
 - `GpuContext::matmul` accepts CPU tensors and returns a CPU tensor. It
   explicitly uploads, dispatches, and downloads; existing tensor methods and
   autograd behavior are preserved. This is an independently usable compute
@@ -39,8 +40,9 @@ are complete.
   on device, although small dispatch parameter buffers and bindings are still
   allocated per operation. Zero inner dimensions clear reused output storage.
 - Context clones share the same device state through `Arc`. Tensor ownership
-  uses identity of that state, not adapter metadata, so different devices on
-  the same adapter cannot mix. Tensors retain their device until dropped.
+  uses identity of that scope, not adapter metadata, so independently created
+  contexts cannot mix tensors even though they share compute resources.
+  Tensors retain their ownership scope until dropped.
   No reference cycle links device state back to tensors.
 - Device tensors do not implement `Clone` and expose no raw buffers. Exclusive
   mutable borrowing of outputs prevents safe callers from aliasing them with
@@ -356,7 +358,7 @@ inferred or invented.
 | Typed GPU action indices and gather gradients | Unassigned | Implemented and locally validated |
 | GPU Adam snapshot and restore | Unassigned | Implemented and locally validated |
 | GPU DQN checkpoint/resume | Unassigned | Implemented and locally validated (5a) |
-| GPU CLI/runtime integration | Unassigned | Next implementation stage (5b) |
+| GPU CLI/runtime integration | Unassigned | Complete (5b): shared DQN loop, worker construction, explicit backend selection, checkpoint routing and control verification |
 
 
 ## Stage 4a usage and validation
@@ -614,12 +616,105 @@ The RL crate now directly declares the already-locked bincode workspace
 package as an optional GPU dependency. No new package versions were resolved;
 CPU parameter-file behavior stays unchanged.
 
-## Next implementation: stage 5b
+## Stage 5b walkthrough: runtime and CLI integration
 
-Integrate explicit device selection into the DQN training runtime and CLI,
-preserving CPU defaults and existing CPU checkpoint compatibility. GPU resume
-must route through the complete training-state checkpoint API and retain target
-cadence; backend construction should occur inside the owning training worker.
-Replay/environment/exploration persistence and deterministic stochastic replay
-need separate design and validation. Physical-GPU measurements are still
-needed before making a throughput or end-to-end acceleration claim.
+`DqnTrainerAdapter::with_options(DqnRuntimeOptions)` selects `DqnDevice::Cpu`
+(default) or `Gpu`. The adapter contains environment/configuration/paths, which
+are safe to send to the training worker. The shared loop constructs the agent
+and its ownership scope inside that worker; no `Rc` GPU model crosses threads.
+The existing CPU `train_dqn` and `try_train_dqn` APIs still return CPU DQN agents.
+CPU parameter persistence and file formats are unchanged.
+
+Both `rustforge train dqn` and `rustforge run dqn` accept `--device cpu|gpu`.
+Enable `rustforge-cli/gpu` when building the GPU CLI. GPU algorithms other than
+DQN, prioritized replay, and missing compile-time support return explicit errors
+before opening metrics files. There is no implicit CPU-agent fallback. The wgpu
+adapter can be software; selected-backend display does not imply physical GPU
+hardware. Live configuration and manifests record the requested backend and
+checkpoint paths. Resumed configuration is labeled as coming from the checkpoint
+instead of displaying fresh-run defaults as if they were restored settings.
+
+`--resume` routes through `GpuDqn::load_checkpoint`, with the saved configuration,
+online/target parameters, Adam state and update clock intact. The selected
+environment must match the observation and action dimensions. Replay, environment,
+exploration RNG, episode counters and environment-step counters restart. The
+original warmup (128 transitions), batch size (32), epsilon schedule, bootstrapping,
+CSV schema and runtime metric IDs remain shared across backends. GPU exploration
+uses a lazy greedy callback: random action decisions stay on CPU; greedy decisions
+read back one typed index. Sampled replay batches are uploaded once per update.
+
+`--checkpoint` saves full GPU state after normal completion or either controlled
+stop. Saves atomically replace the requested path, which may be the resume path.
+Failed initialization, resume or training does not save partial state; checkpoint
+write failures fail the run. Pause/resume and graceful/force stop use existing live
+controls. The interactive checkpoint key is still unsupported, so metadata keeps
+that capability disabled. Checkpoint paths must differ from headless metrics and
+stay outside explicit live output directories to avoid artifact replacement.
+
+```bash
+cargo run --locked -p rustforge-cli --features gpu -- train dqn --device gpu --env gridworld --episodes 20 --no-log --checkpoint /tmp/gpu-dqn.chk
+cargo run --locked -p rustforge-cli --features gpu -- train dqn --device gpu --env gridworld --episodes 20 --no-log --resume /tmp/gpu-dqn.chk --checkpoint /tmp/gpu-dqn.chk
+# Requires an interactive terminal:
+cargo run --locked -p rustforge-cli --features gpu -- run dqn --device gpu --checkpoint /tmp/gpu-live.chk
+
+cargo test --locked -p rustforge-rl --features gpu --test gpu_runtime -- --include-ignored
+cargo test --locked -p rustforge-cli --features gpu --test device_selection -- --include-ignored
+```
+
+### Deviations from Plan (stage 5b)
+
+- Simultaneous caller-side checkpoint inspection and worker construction exposed
+  wgpu 0.19 EGL display teardown and independent context-lock failures. Sharing
+  one adapter also exposed queue-ID conflicts when requesting multiple devices.
+  `GpuContext::new` now initializes one process compute device and cached pipelines
+  under a lock, retaining those resources until exit. Each new context still has
+  an independent ownership scope and rejects foreign tensors; clones share their
+  scope. Buffers, graphs and optimizer state are released with their owners. This
+  intentionally changes compute-device lifetime and prevents repeated independent
+  device creation. Concurrent worker/inspection tests exercise this behavior.
+- CPU runtime checkpoint flags remain unavailable; the existing CPU library
+  parameter persistence API is preserved. GPU resume uses the complete GPU format
+  and rejects legacy CPU files. Complete experiment persistence and interactive
+  checkpoint commands remain separate work.
+- Hardware adapter selection, device-loss recovery and physical-GPU throughput
+  tuning are not added. All adapter-required checks ran on Mesa llvmpipe GL.
+
+### Issue Resolution Progress (stage 5b)
+
+| Work | Issue ID | Result |
+| --- | --- | --- |
+| Explicit device selection and worker construction | Unassigned | Complete, shared headless/live DQN loop with CPU default |
+| GPU checkpoint CLI routing and target cadence | Unassigned | Complete, resumed updates match uninterrupted updates; controlled stops preserve lag |
+| GPU lifecycle across workers and inspection | Unassigned | Complete, process compute resources with isolated ownership scopes |
+| Unsupported option and output-alias handling | Unassigned | Complete, errors precede output truncation/device construction |
+| Hardware performance and full experiment continuation | Unassigned | Pending |
+
+### Verification (stage 5b)
+
+| Check | Passing result | Delta from stage 5a |
+| --- | --- | --- |
+| Native workspace, all features, excluding Python bindings | 1,050 passed, 77 ignored, 0 failed | +6 ordinary tests; +4 adapter-required ignored tests |
+| Adapter-required GPU checks executed explicitly | 50 passed, 0 failed | Previous 46 +3 runtime worker tests +1 CLI checkpoint test |
+| Default-feature device/CLI/runtime checks | 13 passed, 0 failed | Includes 2 feature-unavailable rejection tests excluded by all-feature builds |
+| Python bindings | 32 passed, 0 failed | No API changes |
+| Workspace Clippy, all targets/all features, warnings denied | Passed | Runtime/CLI and test additions included |
+| Rust 1.75, workspace all targets/all features | Passed | Optional CLI GPU feature included |
+| Formatting and patch whitespace | Passed | `cargo fmt --all -- --check`, `git diff --check` |
+
+The six ordinary additions cover seeded lazy epsilon selection/error propagation,
+invalid runtime options before environment interaction, CLI flag parsing, rejected
+CLI device combinations before output truncation, checkpoint/metrics alias
+rejection, and live training-plan construction without initializing an adapter.
+Existing CLI fixtures add default execution options. The three adapter-required
+runtime tests cover actual worker ownership, exact resumed updates with restored
+hyperparameters, synchronization at the saved cadence, controlled stops, pause,
+invalid resume before environment interaction and checkpoint-save failure cleanup.
+The CLI GPU test checks full-state routing and unchanged CSV persistence. Remote
+CI and physical hardware results are not claimed.
+
+## Next implementation
+
+Validate on physical GPU hardware and measure real DQN training throughput,
+including replay uploads, action/loss synchronization and CPU environment work,
+before tuning kernels or claiming acceleration. Broader GPU agents, prioritized
+replay and complete replay/environment/RNG persistence remain separate milestones.

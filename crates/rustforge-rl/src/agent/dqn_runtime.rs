@@ -5,14 +5,12 @@ use std::fmt::Debug;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use rustforge_autograd::no_grad;
-use rustforge_autograd::Variable;
-use rustforge_nn::Module;
 use rustforge_tensor::Tensor;
 use smallvec::{smallvec, SmallVec};
 
+use super::dqn_backend::DqnBackend;
 use super::live_runtime::{throughput, LiveHooks, RewardWindow, StepDecision, StepPosition};
-use super::{DQNConfig, EpsilonGreedy, DQN};
+use super::{DQNConfig, DqnRuntimeOptions, EpsilonGreedy, DQN};
 use crate::buffer::{PrioritizedReplayBuffer, ReplayBuffer, TransitionBatch};
 use crate::env::{Environment, IntoTensorBuffer};
 use crate::metrics::{AgentLogger, CsvLogger, EpisodeMetrics};
@@ -40,6 +38,7 @@ pub struct DqnTrainerAdapter<E> {
     max_steps_per_episode: usize,
     environment: String,
     run_id: String,
+    options: DqnRuntimeOptions,
 }
 
 impl<E> DqnTrainerAdapter<E> {
@@ -58,7 +57,16 @@ impl<E> DqnTrainerAdapter<E> {
             max_steps_per_episode,
             environment: environment.into(),
             run_id: format!("dqn-{sequence}"),
+            options: DqnRuntimeOptions::default(),
         }
+    }
+}
+
+impl<E> DqnTrainerAdapter<E> {
+    /// Sets explicit execution options without constructing a device on the caller thread.
+    pub fn with_options(mut self, options: DqnRuntimeOptions) -> Self {
+        self.options = options;
+        self
     }
 }
 
@@ -91,6 +99,7 @@ where
             self.config,
             self.episodes,
             self.max_steps_per_episode,
+            &self.options,
             &mut hooks,
         );
         hooks.flush();
@@ -118,13 +127,20 @@ where
         })
         .transpose()?;
     let mut hooks = HeadlessHooks { logger };
-    let result = train_dqn_core(env, config, episodes, max_steps_per_episode, &mut hooks);
+    let result = train_dqn_core(
+        env,
+        config,
+        episodes,
+        max_steps_per_episode,
+        &DqnRuntimeOptions::default(),
+        &mut hooks,
+    );
     hooks.flush();
-    result.map(|result| result.agent)
+    result.and_then(|result| result.agent.into_cpu())
 }
 
 struct DqnRunResult {
-    agent: DQN,
+    agent: DqnBackend,
     summary: TrainingSummary,
 }
 
@@ -270,6 +286,7 @@ fn train_dqn_core<E, H>(
     config: DQNConfig,
     episodes: usize,
     max_steps_per_episode: usize,
+    options: &DqnRuntimeOptions,
     hooks: &mut H,
 ) -> Result<DqnRunResult, TrainerError>
 where
@@ -281,9 +298,21 @@ where
     let started = Instant::now();
     let obs_dim = E::Obs::DIM;
     let num_actions = config.num_actions;
+    if config.obs_dim != obs_dim {
+        return Err(TrainerError {
+            message: "DQN observation dimensions do not match the environment".into(),
+        });
+    }
     let batch_size = 32usize;
     let warmup_steps = 128usize;
-    let mut agent = DQN::new(config);
+    let mut agent = DqnBackend::new(config, options)?;
+    if agent.config().obs_dim != obs_dim || agent.config().num_actions != num_actions {
+        return Err(TrainerError {
+            message:
+                "DQN checkpoint observation/action dimensions do not match the selected environment"
+                    .into(),
+        });
+    }
     let mut explorer = EpsilonGreedy::new(1.0, 0.05, 2_000);
     let use_per = agent.config().use_per;
     let mut replay = ReplayBuffer::new(10_000, obs_dim);
@@ -310,11 +339,8 @@ where
         let mut force_after_episode = false;
 
         for step_index in 0..max_steps_per_episode {
-            let input = Tensor::from_vec(state_buf.clone(), &[1, obs_dim]);
-            let output = no_grad(|| agent.q_net().forward(&Variable::from_tensor(input)));
-            let q_values = output.data();
-            ensure_finite_q_values(&q_values, episode, global_step)?;
-            let action_idx = explorer.select_action(&q_values, global_step, num_actions);
+            let action_idx =
+                agent.select_action(&state_buf, &mut explorer, episode, global_step)?;
             let env_action = E::Act::try_from(action_idx).map_err(|error| TrainerError {
                 message: format!(
                     "DQN action index {action_idx} was rejected by the environment: {error:?}"
@@ -359,14 +385,14 @@ where
                         &mut per_weights,
                         &mut per_tree_indices,
                     );
-                    let (loss, td) = agent.train_step(&batch, Some(&per_weights));
+                    let (loss, td) = agent.train_step(&batch, Some(&per_weights))?;
                     if let Some(errors) = &td {
                         per_replay.update_priorities(&per_tree_indices[..batch.size], errors);
                     }
                     loss
                 } else {
                     replay.sample(batch_size, &mut batch);
-                    agent.train_step(&batch, None).0
+                    agent.train_step(&batch, None)?.0
                 };
                 latest_loss = Some(loss);
                 if loss.is_finite() {
@@ -437,6 +463,7 @@ where
         }
     }
 
+    agent.save(options)?;
     Ok(DqnRunResult {
         agent,
         summary: TrainingSummary::stopped(
@@ -449,7 +476,7 @@ where
 }
 
 /// Fails the run when the online network has diverged to NaN or infinite Q-values.
-fn ensure_finite_q_values(
+pub(super) fn ensure_finite_q_values(
     q_values: &Tensor,
     episode: usize,
     global_step: usize,

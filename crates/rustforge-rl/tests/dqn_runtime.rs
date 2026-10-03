@@ -294,3 +294,53 @@ fn force_stop_on_a_terminal_step_preserves_the_completed_episode() {
         .try_iter()
         .any(|event| matches!(event.event, TrainingEvent::EpisodeCompleted(_))));
 }
+
+#[test]
+fn unsupported_execution_options_fail_before_environment_interaction() {
+    use rustforge_rl::agent::{DqnDevice, DqnRuntimeOptions};
+    let options = DqnRuntimeOptions {
+        resume: Some("missing.chk".into()),
+        ..Default::default()
+    };
+    let adapter = DqnTrainerAdapter::new(ThreeStepEnv::new(), config(), 1, 10, "three-step")
+        .with_options(options);
+    let (context, events, _, _) = runtime();
+    assert!(Box::new(adapter)
+        .run(context)
+        .unwrap_err()
+        .message
+        .contains("require --device gpu"));
+    assert!(events.try_iter().next().is_none());
+    let mut per_config = config();
+    per_config.use_per = true;
+    let adapter = DqnTrainerAdapter::new(ThreeStepEnv::new(), per_config, 1, 10, "three-step")
+        .with_options(DqnRuntimeOptions {
+            device: DqnDevice::Gpu,
+            ..Default::default()
+        });
+    let (context, events, _, _) = runtime();
+    assert!(Box::new(adapter)
+        .run(context)
+        .unwrap_err()
+        .message
+        .contains("prioritized replay"));
+    assert!(events.try_iter().next().is_none());
+}
+
+#[cfg(not(feature = "gpu"))]
+#[test]
+fn gpu_request_without_feature_returns_error_instead_of_cpu_fallback() {
+    use rustforge_rl::agent::{DqnDevice, DqnRuntimeOptions};
+    let adapter = DqnTrainerAdapter::new(ThreeStepEnv::new(), config(), 1, 10, "three-step")
+        .with_options(DqnRuntimeOptions {
+            device: DqnDevice::Gpu,
+            ..Default::default()
+        });
+    let (context, events, _, _) = runtime();
+    assert!(Box::new(adapter)
+        .run(context)
+        .unwrap_err()
+        .message
+        .contains("--features gpu"));
+    assert!(events.try_iter().next().is_none());
+}
