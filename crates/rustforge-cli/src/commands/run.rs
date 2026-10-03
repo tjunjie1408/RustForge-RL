@@ -26,7 +26,7 @@ use rustforge_rl::runtime::trainer::{
 use rustforge_tui::live::{run_live, LiveOptions, LiveSession};
 use rustforge_tui::terminal::{preflight_current_terminal, preflight_current_terminal_size};
 
-use crate::cli::{Algorithm, Environment, RunArgs};
+use crate::cli::{Algorithm, Environment, ExecutionArgs, RunArgs};
 use crate::commands::train::{dqn_config, validate_algorithm_environment};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -69,6 +69,8 @@ struct TrainingPlan {
 
 pub async fn execute(args: RunArgs) -> anyhow::Result<()> {
     validate_algorithm_environment(args.algorithm, args.env, args.use_per)?;
+    args.execution
+        .runtime_options(args.algorithm, args.use_per)?;
     preflight_current_terminal().context("rustforge run requires an interactive terminal")?;
     preflight_current_terminal_size().context("terminal is too small for rustforge run")?;
 
@@ -76,12 +78,44 @@ pub async fn execute(args: RunArgs) -> anyhow::Result<()> {
         trainer,
         display_config,
         metrics,
-    } = training_plan(args.algorithm, args.env, args.episodes, args.use_per)?;
+    } = training_plan(
+        args.algorithm,
+        args.env,
+        args.episodes,
+        args.use_per,
+        &args.execution,
+    )?;
     let metadata = trainer.metadata();
+    if let Some(output) = &args.output {
+        crate::commands::train::validate_checkpoint_paths(
+            &args.execution,
+            Some(&output.join("metrics.csv")),
+        )?;
+        crate::commands::train::validate_checkpoint_paths(
+            &args.execution,
+            Some(&output.join("manifest.json")),
+        )?;
+        let directory = crate::commands::train::resolve_path(output)?;
+        for path in [&args.execution.resume, &args.execution.checkpoint]
+            .into_iter()
+            .flatten()
+        {
+            if crate::commands::train::resolve_path(path)?.starts_with(&directory) {
+                anyhow::bail!("checkpoint paths must be outside the live run output directory");
+            }
+        }
+    }
     let mut source_config = BTreeMap::from([
         ("episodes".into(), args.episodes.to_string()),
         ("environment".into(), metadata.environment.clone()),
     ]);
+    source_config.insert("device".into(), args.execution.device.label().into());
+    if let Some(path) = &args.execution.resume {
+        source_config.insert("resume".into(), path.display().to_string());
+    }
+    if let Some(path) = &args.execution.checkpoint {
+        source_config.insert("checkpoint".into(), path.display().to_string());
+    }
     if args.algorithm == Algorithm::Dqn {
         source_config.insert("use_per".into(), args.use_per.to_string());
     }
@@ -147,7 +181,7 @@ pub async fn execute(args: RunArgs) -> anyhow::Result<()> {
         manifest_path: artifacts.manifest_path().to_path_buf(),
         metrics_schema: metrics.schema().into(),
         seed: Some(2026),
-        device: Some("CPU".into()),
+        device: Some(args.execution.device.label().into()),
         configuration: display_config,
     };
     let result = run_live(
@@ -185,21 +219,36 @@ fn training_plan(
     env: Environment,
     episodes: usize,
     use_per: bool,
+    execution: &ExecutionArgs,
 ) -> anyhow::Result<TrainingPlan> {
     validate_algorithm_environment(algorithm, env, use_per)?;
+    let runtime_options = execution.runtime_options(algorithm, use_per)?;
     match (algorithm, env) {
         (Algorithm::Dqn, Environment::Cartpole) => {
             let max_steps = 500;
             let config = dqn_config(env, use_per);
-            let display_config = dqn_display_config(episodes, max_steps, &config);
+            let display_config = if execution.resume.is_some() {
+                vec![
+                    (
+                        "Agent configuration".into(),
+                        "Restored from checkpoint".into(),
+                    ),
+                    ("Replay / exploration".into(), "New run".into()),
+                ]
+            } else {
+                dqn_display_config(episodes, max_steps, &config)
+            };
             Ok(TrainingPlan {
-                trainer: Box::new(DqnTrainerAdapter::new(
-                    CartPole::with_max_steps(max_steps),
-                    config,
-                    episodes,
-                    max_steps,
-                    "cartpole",
-                )),
+                trainer: Box::new(
+                    DqnTrainerAdapter::new(
+                        CartPole::with_max_steps(max_steps),
+                        config,
+                        episodes,
+                        max_steps,
+                        "cartpole",
+                    )
+                    .with_options(runtime_options.clone()),
+                ),
                 display_config,
                 metrics: MetricFormat::DqnCsvV1,
             })
@@ -207,15 +256,28 @@ fn training_plan(
         (Algorithm::Dqn, Environment::Gridworld) => {
             let max_steps = 100;
             let config = dqn_config(env, use_per);
-            let display_config = dqn_display_config(episodes, max_steps, &config);
+            let display_config = if execution.resume.is_some() {
+                vec![
+                    (
+                        "Agent configuration".into(),
+                        "Restored from checkpoint".into(),
+                    ),
+                    ("Replay / exploration".into(), "New run".into()),
+                ]
+            } else {
+                dqn_display_config(episodes, max_steps, &config)
+            };
             Ok(TrainingPlan {
-                trainer: Box::new(DqnTrainerAdapter::new(
-                    GridWorld::new(),
-                    config,
-                    episodes,
-                    max_steps,
-                    "gridworld",
-                )),
+                trainer: Box::new(
+                    DqnTrainerAdapter::new(
+                        GridWorld::new(),
+                        config,
+                        episodes,
+                        max_steps,
+                        "gridworld",
+                    )
+                    .with_options(runtime_options.clone()),
+                ),
                 display_config,
                 metrics: MetricFormat::DqnCsvV1,
             })
@@ -368,9 +430,37 @@ mod tests {
     use super::training_plan;
     use crate::cli::{Algorithm, Environment};
 
+    #[cfg(feature = "gpu")]
+    #[test]
+    fn gpu_training_plan_builds_worker_configuration_without_initializing_adapter() {
+        let execution = crate::cli::ExecutionArgs {
+            device: crate::cli::Device::Gpu,
+            resume: Some("not-opened-on-caller.chk".into()),
+            checkpoint: Some("output.chk".into()),
+        };
+        let plan =
+            training_plan(Algorithm::Dqn, Environment::Gridworld, 1, false, &execution).unwrap();
+        assert_eq!(plan.metrics.schema(), "dqn-csv-v1");
+        assert!(plan.display_config.contains(&(
+            "Agent configuration".into(),
+            "Restored from checkpoint".into()
+        )));
+        assert!(!plan.trainer.metadata().capabilities.checkpoint); // Interactive checkpoint control remains unsupported.
+        assert!(
+            training_plan(Algorithm::Dqn, Environment::Gridworld, 1, true, &execution).is_err()
+        );
+    }
+
     #[test]
     fn training_plan_binds_ppo_runtime_and_jsonl_schema() {
-        let plan = training_plan(Algorithm::Ppo, Environment::Cartpole, 1, false).unwrap();
+        let plan = training_plan(
+            Algorithm::Ppo,
+            Environment::Cartpole,
+            1,
+            false,
+            &Default::default(),
+        )
+        .unwrap();
         let metadata = plan.trainer.metadata();
 
         assert_eq!(metadata.algorithm, "ppo-discrete");
@@ -386,7 +476,14 @@ mod tests {
 
     #[test]
     fn training_plan_binds_a2c_runtime_and_jsonl_schema() {
-        let plan = training_plan(Algorithm::A2c, Environment::Cartpole, 1, false).unwrap();
+        let plan = training_plan(
+            Algorithm::A2c,
+            Environment::Cartpole,
+            1,
+            false,
+            &Default::default(),
+        )
+        .unwrap();
         let metadata = plan.trainer.metadata();
 
         assert_eq!(metadata.algorithm, "a2c");
@@ -399,20 +496,39 @@ mod tests {
 
     #[test]
     fn training_plan_rejects_unsupported_a2c_combinations() {
-        let gridworld = training_plan(Algorithm::A2c, Environment::Gridworld, 1, false)
-            .err()
-            .expect("A2C GridWorld is rejected");
+        let gridworld = training_plan(
+            Algorithm::A2c,
+            Environment::Gridworld,
+            1,
+            false,
+            &Default::default(),
+        )
+        .err()
+        .expect("A2C GridWorld is rejected");
         assert!(gridworld.to_string().contains("only CartPole"));
 
-        let per = training_plan(Algorithm::A2c, Environment::Cartpole, 1, true)
-            .err()
-            .expect("A2C prioritized replay is rejected");
+        let per = training_plan(
+            Algorithm::A2c,
+            Environment::Cartpole,
+            1,
+            true,
+            &Default::default(),
+        )
+        .err()
+        .expect("A2C prioritized replay is rejected");
         assert!(per.to_string().contains("--use-per"));
     }
 
     #[test]
     fn training_plan_binds_reinforce_runtime_roles_and_jsonl_schema() {
-        let plan = training_plan(Algorithm::Reinforce, Environment::Cartpole, 1, false).unwrap();
+        let plan = training_plan(
+            Algorithm::Reinforce,
+            Environment::Cartpole,
+            1,
+            false,
+            &Default::default(),
+        )
+        .unwrap();
         let metadata = plan.trainer.metadata();
 
         assert_eq!(metadata.algorithm, "reinforce");

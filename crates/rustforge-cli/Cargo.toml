@@ -9,6 +9,10 @@ repository.workspace = true
 homepage.workspace = true
 description = "Command-line trainer and terminal training console for RustForge RL"
 
+[features]
+default = []
+gpu = ["rustforge-rl/gpu"]
+
 [dependencies]
 anyhow = "1.0.102"
 clap = { version = "4", features = ["derive"] }

@@ -143,3 +143,7 @@ jobs:
         run: cargo test --locked -p rustforge-rl --features gpu --test gpu_checkpoint -- --include-ignored
       - name: Run GPU checkpoint and resume example
         run: cargo run --locked -p rustforge-rl --features gpu --example gpu_dqn_checkpoint -- "$RUNNER_TEMP/gpu-dqn-resume.chk"
+      - name: Verify GPU runtime worker ownership, resume and controls
+        run: cargo test --locked -p rustforge-rl --features gpu --test gpu_runtime -- --include-ignored
+      - name: Verify GPU CLI checkpoint routing and CSV compatibility
+        run: cargo test --locked -p rustforge-cli --features gpu --test device_selection -- --include-ignored

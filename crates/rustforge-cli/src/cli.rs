@@ -39,8 +39,66 @@ pub enum Environment {
     Gridworld,
 }
 
+/// Training backend requested explicitly by the user.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub enum Device {
+    #[default]
+    Cpu,
+    Gpu,
+}
+
+impl Device {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Cpu => "CPU",
+            Self::Gpu => "GPU (wgpu)",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Args)]
+pub struct ExecutionArgs {
+    /// GPU currently supports DQN with uniform replay; requires the gpu feature.
+    #[arg(long, value_enum, default_value_t = Device::Cpu)]
+    pub device: Device,
+    /// Restore GPU DQN training state; replay, environment and exploration restart.
+    #[arg(long)]
+    pub resume: Option<PathBuf>,
+    /// Atomically save GPU DQN state on completion or controlled stop; replaces this file.
+    #[arg(long)]
+    pub checkpoint: Option<PathBuf>,
+}
+
+impl ExecutionArgs {
+    pub(crate) fn runtime_options(
+        &self,
+        algorithm: Algorithm,
+        use_per: bool,
+    ) -> anyhow::Result<rustforge_rl::agent::DqnRuntimeOptions> {
+        if algorithm != Algorithm::Dqn
+            && (self.device == Device::Gpu || self.resume.is_some() || self.checkpoint.is_some())
+        {
+            anyhow::bail!("--device gpu, --resume and --checkpoint are supported only by DQN");
+        }
+        let options = rustforge_rl::agent::DqnRuntimeOptions {
+            device: match self.device {
+                Device::Cpu => rustforge_rl::agent::DqnDevice::Cpu,
+                Device::Gpu => rustforge_rl::agent::DqnDevice::Gpu,
+            },
+            resume: self.resume.clone(),
+            checkpoint: self.checkpoint.clone(),
+        };
+        options
+            .validate(use_per)
+            .map_err(|error| anyhow::anyhow!(error))?;
+        Ok(options)
+    }
+}
+
 #[derive(Debug, Args)]
 pub struct TrainArgs {
+    #[command(flatten)]
+    pub execution: ExecutionArgs,
     #[arg(value_enum)]
     pub algorithm: Algorithm,
     #[arg(long, value_enum, default_value_t = Environment::Cartpole)]
@@ -74,6 +132,8 @@ pub struct MonitorArgs {
 
 #[derive(Debug, Args)]
 pub struct RunArgs {
+    #[command(flatten)]
+    pub execution: ExecutionArgs,
     #[arg(value_enum)]
     pub algorithm: Algorithm,
     #[arg(long, value_enum, default_value_t = Environment::Cartpole)]

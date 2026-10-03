@@ -5,7 +5,7 @@
 //! existing `Tensor::matmul` calls automatically.
 
 use std::fmt;
-use std::sync::{mpsc, Arc};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
 
 use wgpu::util::DeviceExt;
 
@@ -111,7 +111,8 @@ impl std::error::Error for GpuError {
 
 /// Reusable compute device with cached `f32` tensor operation pipelines.
 ///
-/// Construction is relatively expensive; reuse a context for multiple calls.
+/// The process compute device is initialized once; each new context establishes
+/// a separate tensor ownership scope. Clone a context to share that scope.
 /// A software adapter may be selected on machines without hardware graphics.
 /// Cloning a context shares the same device and accepts the same tensors.
 #[derive(Clone)]
@@ -121,6 +122,21 @@ pub struct GpuContext {
 }
 
 struct DeviceState {
+    resources: Arc<DeviceResources>,
+    #[cfg(test)]
+    transfers: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    tensor_allocations: std::sync::atomic::AtomicUsize,
+}
+
+impl std::ops::Deref for DeviceState {
+    type Target = DeviceResources;
+    fn deref(&self) -> &Self::Target {
+        &self.resources
+    }
+}
+
+struct DeviceResources {
     device: wgpu::Device,
     queue: wgpu::Queue,
     pipeline: wgpu::ComputePipeline,
@@ -130,10 +146,6 @@ struct DeviceState {
     reduction_pipeline: wgpu::ComputePipeline,
     indices_pipeline: wgpu::ComputePipeline,
     adapter_info: wgpu::AdapterInfo,
-    #[cfg(test)]
-    transfers: std::sync::atomic::AtomicUsize,
-    #[cfg(test)]
-    tensor_allocations: std::sync::atomic::AtomicUsize,
 }
 
 /// Owned, contiguous `f32` tensor storage on a specific compute device.
@@ -169,12 +181,46 @@ impl GpuTensor {
 }
 
 impl GpuContext {
-    /// Requests a headless adapter and creates cached compute pipelines.
+    /// Creates an isolated tensor ownership scope on the process compute device.
+    /// Device/queue/pipelines are initialized once and retained for the process
+    /// lifetime. Separate contexts reject each other's tensors; clones share a scope.
     pub fn new() -> Result<Self, GpuError> {
-        pollster::block_on(Self::initialize())
+        // wgpu 0.19 EGL instances may share a display, while repeated adapter
+        // enumeration creates separate locks for the same GL context. Multiple
+        // devices requested from one adapter also alias queue IDs. Initialize
+        // one compute device and share its thread-safe resources instead.
+        static RESOURCES: OnceLock<Arc<DeviceResources>> = OnceLock::new();
+        static INITIALIZE: Mutex<()> = Mutex::new(());
+        let resources = if let Some(resources) = RESOURCES.get() {
+            Arc::clone(resources)
+        } else {
+            let _guard = INITIALIZE.lock().unwrap_or_else(|error| error.into_inner());
+            if let Some(resources) = RESOURCES.get() {
+                Arc::clone(resources)
+            } else {
+                let resources = Arc::new(pollster::block_on(Self::initialize())?);
+                let _ = RESOURCES.set(Arc::clone(&resources));
+                resources
+            }
+        };
+        let matmul_kernel = if resources.adapter_info.device_type == wgpu::DeviceType::Cpu {
+            MatmulKernel::Naive
+        } else {
+            MatmulKernel::Tiled
+        };
+        Ok(Self {
+            matmul_kernel,
+            inner: Arc::new(DeviceState {
+                resources,
+                #[cfg(test)]
+                transfers: std::sync::atomic::AtomicUsize::new(0),
+                #[cfg(test)]
+                tensor_allocations: std::sync::atomic::AtomicUsize::new(0),
+            }),
+        })
     }
 
-    async fn initialize() -> Result<Self, GpuError> {
+    async fn initialize() -> Result<DeviceResources, GpuError> {
         let instance = wgpu::Instance::default();
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -215,30 +261,16 @@ impl GpuContext {
         let (ops_layout, elementwise_pipeline, reduction_pipeline) =
             operations::create_pipelines(&device);
         let indices_pipeline = indices::create_pipeline(&device, &ops_layout);
-        // Shared-memory barriers are expensive on software adapters. Preserve
-        // the direct kernel there; callers can override this choice explicitly.
-        let matmul_kernel = if adapter_info.device_type == wgpu::DeviceType::Cpu {
-            MatmulKernel::Naive
-        } else {
-            MatmulKernel::Tiled
-        };
-        Ok(Self {
-            matmul_kernel,
-            inner: Arc::new(DeviceState {
-                device,
-                queue,
-                pipeline,
-                naive_pipeline,
-                ops_layout,
-                elementwise_pipeline,
-                reduction_pipeline,
-                indices_pipeline,
-                adapter_info,
-                #[cfg(test)]
-                transfers: std::sync::atomic::AtomicUsize::new(0),
-                #[cfg(test)]
-                tensor_allocations: std::sync::atomic::AtomicUsize::new(0),
-            }),
+        Ok(DeviceResources {
+            device,
+            queue,
+            pipeline,
+            naive_pipeline,
+            ops_layout,
+            elementwise_pipeline,
+            reduction_pipeline,
+            indices_pipeline,
+            adapter_info,
         })
     }
 

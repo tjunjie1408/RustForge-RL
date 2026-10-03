@@ -23,6 +23,9 @@ use crate::cli::{Algorithm, Environment, TrainArgs};
 
 pub fn execute(args: TrainArgs) -> anyhow::Result<()> {
     validate_algorithm_environment(args.algorithm, args.env, args.use_per)?;
+    let runtime_options = args
+        .execution
+        .runtime_options(args.algorithm, args.use_per)?;
     let explicit_output = args.output.is_some();
     let output = args.output.unwrap_or_else(|| match args.algorithm {
         Algorithm::Dqn => "target/cli_train_dqn.csv".into(),
@@ -30,18 +33,22 @@ pub fn execute(args: TrainArgs) -> anyhow::Result<()> {
         Algorithm::A2c => "target/cli_train_a2c.jsonl".into(),
         Algorithm::Reinforce => "target/cli_train_reinforce.jsonl".into(),
     });
+    validate_checkpoint_paths(&args.execution, (!args.no_log).then_some(output.as_path()))?;
     let (trainer, metric_format): (Box<dyn Trainer>, HeadlessMetricFormat) =
         match (args.algorithm, args.env) {
             (Algorithm::Dqn, Environment::Cartpole) => {
                 println!("Training DQN on CartPole for {} episodes...", args.episodes);
                 (
-                    Box::new(DqnTrainerAdapter::new(
-                        CartPole::with_max_steps(500),
-                        dqn_config(args.env, args.use_per),
-                        args.episodes,
-                        500,
-                        "cartpole",
-                    )),
+                    Box::new(
+                        DqnTrainerAdapter::new(
+                            CartPole::with_max_steps(500),
+                            dqn_config(args.env, args.use_per),
+                            args.episodes,
+                            500,
+                            "cartpole",
+                        )
+                        .with_options(runtime_options.clone()),
+                    ),
                     HeadlessMetricFormat::DqnCsvV1,
                 )
             }
@@ -51,13 +58,16 @@ pub fn execute(args: TrainArgs) -> anyhow::Result<()> {
                     args.episodes
                 );
                 (
-                    Box::new(DqnTrainerAdapter::new(
-                        GridWorld::new(),
-                        dqn_config(args.env, args.use_per),
-                        args.episodes,
-                        100,
-                        "gridworld",
-                    )),
+                    Box::new(
+                        DqnTrainerAdapter::new(
+                            GridWorld::new(),
+                            dqn_config(args.env, args.use_per),
+                            args.episodes,
+                            100,
+                            "gridworld",
+                        )
+                        .with_options(runtime_options.clone()),
+                    ),
                     HeadlessMetricFormat::DqnCsvV1,
                 )
             }
@@ -251,4 +261,53 @@ pub(crate) fn dqn_config(env: Environment, use_per: bool) -> DQNConfig {
         use_per,
         per_beta_annealing_steps: 20_000,
     }
+}
+
+/// Avoid replacing input checkpoints or metrics via an aliased metrics path.
+/// Reusing the resume path as the final checkpoint is intentionally supported.
+pub(crate) fn validate_checkpoint_paths(
+    execution: &crate::cli::ExecutionArgs,
+    metrics: Option<&Path>,
+) -> anyhow::Result<()> {
+    if let Some(metrics) = metrics {
+        let metrics = resolve_path(metrics)?;
+        for path in [&execution.resume, &execution.checkpoint]
+            .into_iter()
+            .flatten()
+        {
+            if resolve_path(path)? == metrics {
+                anyhow::bail!("metrics output must differ from --resume and --checkpoint paths");
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn resolve_path(path: &Path) -> anyhow::Result<std::path::PathBuf> {
+    // Canonicalize the longest existing prefix to account for symlinked parents.
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    let mut prefix = absolute.as_path();
+    let mut tail = Vec::new();
+    let base = loop {
+        match prefix.canonicalize() {
+            Ok(base) => break base,
+            Err(_) => {
+                if let Some(name) = prefix.file_name() {
+                    tail.push(name.to_os_string());
+                    prefix = prefix.parent().unwrap_or(Path::new("/"));
+                } else {
+                    anyhow::bail!("cannot resolve path {}", path.display());
+                }
+            }
+        }
+    };
+    let mut resolved = base;
+    for part in tail.into_iter().rev() {
+        resolved.push(part);
+    }
+    Ok(resolved)
 }

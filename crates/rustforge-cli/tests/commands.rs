@@ -65,3 +65,40 @@ fn unsupported_algorithms_and_invalid_inputs_fail_before_execution() {
     ])
     .is_err());
 }
+
+#[test]
+fn device_and_checkpoint_flags_parse_for_headless_and_live_commands() {
+    use rustforge_cli::cli::Device;
+    for command in ["train", "run"] {
+        let parsed = Cli::try_parse_from([
+            "rustforge",
+            command,
+            "dqn",
+            "--device",
+            "gpu",
+            "--resume",
+            "input.chk",
+            "--checkpoint",
+            "output.chk",
+        ])
+        .unwrap();
+        let execution = match parsed.command {
+            Commands::Train(args) => args.execution,
+            Commands::Run(args) => args.execution,
+            _ => unreachable!(),
+        };
+        assert_eq!(execution.device, Device::Gpu);
+        assert_eq!(execution.resume.unwrap().to_str().unwrap(), "input.chk");
+        assert_eq!(
+            execution.checkpoint.unwrap().to_str().unwrap(),
+            "output.chk"
+        );
+        let default = Cli::try_parse_from(["rustforge", command, "dqn"]).unwrap();
+        match default.command {
+            Commands::Train(args) => assert_eq!(args.execution.device, Device::Cpu),
+            Commands::Run(args) => assert_eq!(args.execution.device, Device::Cpu),
+            _ => unreachable!(),
+        }
+    }
+    assert!(Cli::try_parse_from(["rustforge", "train", "dqn", "--device", "cuda"]).is_err());
+}

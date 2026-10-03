@@ -9,6 +9,7 @@ async fn non_tty_run_fails_before_creating_output_or_starting_training() {
         std::fs::remove_dir_all(&output).unwrap();
     }
     let result = rustforge_cli::commands::run::execute(RunArgs {
+        execution: Default::default(),
         algorithm: Algorithm::Dqn,
         env: Environment::Cartpole,
         episodes: 1,
@@ -44,6 +45,7 @@ async fn invalid_ppo_combinations_fail_before_terminal_or_filesystem_side_effect
             std::fs::remove_dir_all(&output).unwrap();
         }
         let error = rustforge_cli::commands::run::execute(RunArgs {
+            execution: Default::default(),
             algorithm: Algorithm::Ppo,
             env,
             episodes: 1,
@@ -71,6 +73,7 @@ async fn valid_ppo_reaches_terminal_preflight_without_creating_artifacts() {
     }
 
     let error = rustforge_cli::commands::run::execute(RunArgs {
+        execution: Default::default(),
         algorithm: Algorithm::Ppo,
         env: Environment::Cartpole,
         episodes: 1,
@@ -117,6 +120,7 @@ async fn invalid_reinforce_combinations_fail_before_terminal_or_filesystem_side_
             std::fs::remove_dir_all(&output).unwrap();
         }
         let error = rustforge_cli::commands::run::execute(RunArgs {
+            execution: Default::default(),
             algorithm: Algorithm::Reinforce,
             env,
             episodes: 1,

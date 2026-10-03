@@ -97,7 +97,7 @@ A PyTorch-style tensor library built on top of [`ndarray`](https://github.com/ru
 - `rustforge run dqn` for in-process metrics plus pause/resume and graceful/force stop
 - Independent CSV persistence and collision-safe run manifests
 - ASCII and no-color accessibility modes
-- Recoverable checkpoints and process-restart resumption are not yet supported
+- GPU DQN can save and resume agent/optimizer state with `--device gpu --checkpoint <file>` / `--resume <file>`; replay, exploration and environment state restart
 
 ---
 
@@ -291,7 +291,7 @@ rustforge monitor logs/progress.csv   # rolling mean reward, loss, exploration/e
 | **Phase 5** | Python Bindings (PyO3) | ✅ Complete |
 | **Phase 5** | Terminal Training Console (`rustforge run` / `monitor`) | ✅ Complete |
 | **Phase 5** | Benchmarks vs SB3 | ✅ Complete (DQN/CartPole; ~22× faster) |
-| **Phase 5** | GPU Support (wgpu) | 🚧 Device tensors, autograd, neural-network modules and GPU DQN/Double DQN and checkpoint/resume implemented; CLI/runtime and hardware validation next |
+| **Phase 5** | GPU Support (wgpu) | 🚧 Device tensors, autograd, neural-network modules and GPU DQN/Double DQN and checkpoint/resume and CLI/runtime device selection implemented; hardware validation next |
 
 ### GPU development
 
@@ -380,7 +380,25 @@ cargo run --locked -p rustforge-rl --features gpu --example gpu_dqn_checkpoint -
 ```
 
 Replay, environment and exploration state are external to this checkpoint.
-Prioritized replay and CLI/runtime device selection remain upcoming work.
+The headless and live CLI support explicit GPU DQN selection:
+
+```bash
+cargo run --locked -p rustforge-cli --features gpu -- train dqn --device gpu --env gridworld --episodes 20 --no-log --checkpoint /tmp/gpu-dqn.chk
+cargo run --locked -p rustforge-cli --features gpu -- train dqn --device gpu --env gridworld --episodes 20 --no-log --resume /tmp/gpu-dqn.chk --checkpoint /tmp/gpu-dqn.chk
+# In an interactive terminal:
+cargo run --locked -p rustforge-cli --features gpu -- run dqn --device gpu --checkpoint /tmp/gpu-live.chk
+```
+
+CPU remains the default. Unsupported GPU algorithms, prioritized replay and
+builds without GPU support fail explicitly. Checkpoint saves atomically replace
+the requested file after completion or controlled stop. Resume retains the saved
+agent configuration and update cadence, checks the selected environment's
+observation/action dimensions, and starts new replay and exploration state.
+The live display records the selected backend; its checkpoint key remains
+unsupported. Keep checkpoint files outside a live run's output directory.
+The process compute device and pipelines are cached; distinct contexts retain
+separate tensor ownership scopes. Prioritized GPU replay and physical hardware
+performance validation remain upcoming work.
 See [the GPU implementation plan](docs/gpu-development.md) and its saved benchmark.
 
 ---
