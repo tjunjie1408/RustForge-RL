@@ -145,5 +145,41 @@ jobs:
         run: cargo run --locked -p rustforge-rl --features gpu --example gpu_dqn_checkpoint -- "$RUNNER_TEMP/gpu-dqn-resume.chk"
       - name: Verify GPU runtime worker ownership, resume and controls
         run: cargo test --locked -p rustforge-rl --features gpu --test gpu_runtime -- --include-ignored
-      - name: Verify GPU CLI checkpoint routing and CSV compatibility
+      - name: Verify GPU CLI checkpoint routing and CSV/JSONL compatibility
         run: cargo test --locked -p rustforge-cli --features gpu --test device_selection -- --include-ignored
+      - name: Verify GPU PPO categorical losses and gradients
+        run: cargo test --locked -p rustforge-rl --features gpu --test gpu_ppo_loss -- --include-ignored
+      - name: Run fixed GPU PPO objective example
+        run: cargo run --locked -p rustforge-rl --features gpu --example gpu_ppo_objective
+      - name: GPU PPO agent and environment rollouts
+        run: cargo test --locked -p rustforge-rl --features gpu --test gpu_ppo_agent -- --include-ignored
+      - name: Verify GPU PPO checkpoint codec without adapter allocation
+        run: cargo test --locked -p rustforge-rl --features gpu --lib gpu_ppo::agent::checkpoint
+      - name: GPU PPO checkpoint and runtime resume/controls
+        run: cargo test --locked -p rustforge-rl --features gpu --test gpu_ppo_checkpoint --test gpu_ppo_runtime -- --include-ignored
+      - name: GPU PPO environment learning example
+        run: cargo run --locked -p rustforge-rl --features gpu --example gpu_ppo_training
+      - name: Verify Gaussian operators and continuous PPO objective parity
+        run: cargo test --locked -p rustforge-rl --features gpu --test gpu_continuous_ppo -- --include-ignored
+      - name: Optimize fixed continuous GPU PPO minibatch
+        run: cargo run --locked -p rustforge-rl --features gpu --example gpu_continuous_ppo_objective
+      - name: Verify continuous GPU PPO agent sampling, rollout and updates
+        run: cargo test --locked -p rustforge-rl --features gpu --test gpu_continuous_agent -- --include-ignored
+      - name: Learn continuous target action from environment rollouts
+        run: cargo run --locked -p rustforge-rl --features gpu --example gpu_continuous_ppo_training
+      - name: Verify continuous PPO checkpoint codec without adapter allocation
+        run: cargo test --locked -p rustforge-rl --features gpu --lib gpu_ppo::continuous_agent::checkpoint
+      - name: Verify continuous GPU PPO checkpoint and runtime resume/controls
+        run: cargo test --locked -p rustforge-rl --features gpu --test gpu_continuous_checkpoint --test gpu_continuous_runtime -- --include-ignored
+      - name: Verify GPU A2C objectives, gradients and actual CPU Adam parity
+        run: cargo test --locked -p rustforge-rl --features gpu --test gpu_a2c_loss -- --include-ignored
+      - name: Optimize fixed GPU A2C objective
+        run: cargo run --locked -p rustforge-rl --features gpu --example gpu_a2c_objective
+      - name: Verify GPU A2C agent sampling, rollout/GAE and guarded updates
+        run: cargo test --locked -p rustforge-rl --features gpu --test gpu_a2c_agent -- --include-ignored
+      - name: Learn rewarding categorical action with GPU A2C
+        run: cargo run --locked -p rustforge-rl --features gpu --example gpu_a2c_training
+      - name: Verify GPU A2C checkpoint codec without adapter allocation
+        run: cargo test --locked -p rustforge-rl --features gpu --lib gpu_a2c::agent::checkpoint
+      - name: Verify GPU A2C checkpoint/runtime resume and control handling
+        run: cargo test --locked -p rustforge-rl --features gpu --test gpu_a2c_checkpoint --test gpu_a2c_runtime -- --include-ignored

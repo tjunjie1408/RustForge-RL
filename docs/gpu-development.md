@@ -2,8 +2,14 @@
 
 The README roadmap identifies GPU support with wgpu as the next unfinished
 Phase 5 milestone. This plan delivers that work incrementally; stages 1–3
-stage 4a/4b/4c autograd, module and DQN integration, and stages 5a/5b checkpoints and runtime integration
-are complete.
+stage 4a/4b/4c autograd, module and DQN integration, and stages 5a/5b/5c checkpoints, runtime integration and prioritized replay
+are complete. Stages 6a–6c add categorical PPO losses, rollout training and
+runtime/checkpoint integration. Stage 7a adds continuous Gaussian/PPO objectives;
+stage 7b adds continuous agent sampling, rollout/GAE and minibatch training.
+Stage 7c adds continuous runtime, Pendulum CLI routing and dual-optimizer checkpoints.
+Stage 8a adds categorical A2C objective and shared-network update parity; stage 8b
+adds owned agent sampling, CPU rollout/GAE and fresh-environment learning.
+Stage 8c adds A2C worker/CLI routing, checkpoints and runtime controls.
 
 ## Implementation stages
 
@@ -17,6 +23,17 @@ are complete.
 | 4c | RL training integration | Complete: GPU DQN/Double DQN, typed resident action selection/gather, frozen target synchronization, CPU update parity and deterministic environment convergence |
 | 5a | GPU checkpoint and resume | Complete: versioned online/target/Adam state, validated atomic file replacement and bit-identical resumed updates with target cadence preserved |
 | 5b | Runtime and CLI integration | Complete: explicit CPU/GPU DQN device selection, worker-owned agents, checkpoint routing, controls, CSV compatibility and selected-backend display; physical GPU benchmarking remains pending |
+| 5c | GPU prioritized experience replay | Complete: resident weighted TD loss, CPU priority feedback, CLI support and version-1 checkpoint compatibility |
+| 6a | GPU PPO loss foundation | Complete: stable categorical probability operators and gradients, clipped policy/value/entropy loss, CPU parity and fixed minibatch optimization |
+| 6b | GPU PPO agent training | Complete: actor/critic network, rollout collection/GAE, seeded categorical sampling, shuffled partial minibatches, resident Adam and environment validation |
+| 6c | GPU PPO runtime and checkpoints | Complete: worker-owned CPU/GPU selection, headless/live CartPole CLI, resumable model/Adam/configuration/clock, metrics and controls |
+| 7a | Continuous-policy GPU foundations | Complete: Gaussian densities/base entropy, supplied-noise reparameterization, continuous PPO loss/gradient/Adam parity and fixed objective optimization |
+| 7b | Continuous GPU PPO agent training | Complete: seeded Gaussian actor/value, caller-controlled RNGs, CPU rollout/GAE, shuffled partial minibatches and separate GPU Adam; hardware validation deferred |
+| 7c | Continuous GPU PPO runtime and checkpoints | Complete: worker-owned CPU/GPU agents, Pendulum headless/live CLI, distinct dual-Adam checkpoints and controls |
+| 8a | GPU A2C objective foundation | Complete: categorical actor/value/entropy objective, CPU/f64 gradient and actual seeded CPU A2C Adam parity, fixed-batch optimization |
+| 8b | GPU A2C agent training | Complete: owned network/Adam/clock, seeded sampling, CPU episode-local rollout/GAE, active-row CPU parity and environment learning |
+| 8c | GPU A2C runtime and checkpoints | Complete: worker-owned CPU/GPU agents, CartPole headless/live CLI, distinct shared-network/Adam checkpoints, metrics and controls |
+| 9a | GPU REINFORCE objective foundation | Next: categorical Monte Carlo policy loss, optional mean baseline and CPU gradient/update parity |
 
 ## Architecture decisions
 
@@ -67,7 +84,8 @@ are complete.
   ReLU, full sum/mean, and MSE. Scalar broadcasting is an explicit device
   primitive for reduction gradients. Explicit matrix + feature-vector bias
   broadcasting is also supported; general binary broadcasting, axis
-  reductions and softmax remain pending.
+  reductions remain pending; categorical softmax/log-softmax over matrix columns
+  are available in stage 6a.
 - Forward graphs hold immutable `Rc<GpuTensor>` snapshots. Optimizer steps
   replace leaf buffers, preserving earlier graphs and detached snapshots.
   No output backlinks create graph cycles. Backward walks the graph
@@ -118,7 +136,7 @@ are complete.
   synchronization validates all counts/shapes/owners before assignment and
   shares immutable buffers; later optimizer updates cannot mutate target data.
 - `rustforge-rl/gpu` enables a separate fallible `GpuDqn` using the existing
-  `DQNConfig` and CPU `TransitionBatch`. It supports uniform-replay vanilla
+  `DQNConfig` and CPU `TransitionBatch`. It supports uniform/prioritized-replay vanilla
   and Double DQN, a seeded two-layer Q-network and resident Adam. Target
   parameters are frozen and all Bellman target computation runs under
   `no_grad`. Hard synchronization follows successful training-step count;
@@ -131,8 +149,9 @@ are complete.
   rejects nonfinite loss without updating parameters/counters, and keeps
   predictions, target selection, TD targets, gradients and Adam state resident.
   Greedy environment interaction explicitly uploads one observation and
-  downloads one integer action. Configurations requesting prioritized replay
-  are rejected; the CLI/runtime and Python APIs continue to use CPU agents.
+  downloads one integer action. Weighted batches additionally return absolute
+  pre-update TD errors to CPU priority storage. The CLI/runtime explicitly
+  select CPU or GPU; Python APIs continue to use CPU agents.
 - `GpuAdam::state` downloads validated host moment snapshots including all
   hyperparameters and its global timestep. `restore_state` validates counts,
   shapes, finite first/second moments, nonnegative second moments and clock
@@ -627,7 +646,7 @@ CPU parameter persistence and file formats are unchanged.
 
 Both `rustforge train dqn` and `rustforge run dqn` accept `--device cpu|gpu`.
 Enable `rustforge-cli/gpu` when building the GPU CLI. GPU algorithms other than
-DQN, prioritized replay, and missing compile-time support return explicit errors
+DQN and missing compile-time support return explicit errors
 before opening metrics files. There is no implicit CPU-agent fallback. The wgpu
 adapter can be software; selected-backend display does not imply physical GPU
 hardware. Live configuration and manifests record the requested backend and
@@ -712,9 +731,992 @@ invalid resume before environment interaction and checkpoint-save failure cleanu
 The CLI GPU test checks full-state routing and unchanged CSV persistence. Remote
 CI and physical hardware results are not claimed.
 
-## Next implementation
+## Stage 5c walkthrough: GPU prioritized replay
 
-Validate on physical GPU hardware and measure real DQN training throughput,
-including replay uploads, action/loss synchronization and CPU environment work,
-before tuning kernels or claiming acceleration. Broader GPU agents, prioritized
-replay and complete replay/environment/RNG persistence remain separate milestones.
+`GpuDqn::train_step_with_weights(batch, Option<&Tensor>)` adds CPU-compatible
+weighted updates without changing the existing scalar-returning `train_step`
+API. `upload_batch_with_weights` retains immutable frozen importance weights in
+a reusable `GpuDqnBatch`; `train_device_batch_with_td_errors` returns the scalar
+loss and optional priority errors. With no weights, the old uniform path still
+reads back only the loss scalar.
+
+The weighted path computes `mean(w * (Q(s,a) - target)^2)` on the GPU. It divides
+by active batch size, matching CPU DQN; it does not normalize by the sum of
+weights. Priority errors are absolute, unweighted TD differences from before the
+optimizer update. Weights have shape `[capacity, 1]`, with enough active rows;
+only active values must be finite and nonnegative. Zero weights are allowed.
+Weight validation precedes device uploads; nonfinite TD differences or losses
+fail before gradients, optimizer state, parameters or training clocks change.
+Weights are frozen and Bellman targets remain detached.
+
+The shared runtime already implements stratified CPU PER, priority updates and
+beta annealing. Its GPU backend now uploads the sampled batch and weights and
+returns TD errors through that loop. Alpha remains 0.6; beta increases from 0.4
+to 1.0 using the saved `per_beta_annealing_steps` configuration and this run's
+environment-step counter. GPU PER configurations require a positive annealing
+length. Uniform configurations retain their previous validity rules.
+
+Both CLI modes accept `--device gpu --use-per`. GPU resume restores the checkpoint's
+PER setting and beta schedule even when the flag is omitted. Saved settings are
+authoritative; the live manifest labels a resumed command's flag as
+`requested_use_per`. Checkpoint version 1 already includes both fields, so no
+wire-format change is necessary. Existing uniform files remain readable; older
+binaries that reject PER configuration cannot load new PER files. Replay
+contents, priorities, maximum priority and sampler RNG remain outside the agent
+checkpoint and restart on resume.
+
+```bash
+cargo run --release --locked -p rustforge-cli --features gpu -- train dqn --device gpu --use-per --env gridworld --episodes 20 --no-log --checkpoint gpu-per.chk
+cargo run --release --locked -p rustforge-cli --features gpu -- train dqn --device gpu --env gridworld --episodes 20 --no-log --resume gpu-per.chk --checkpoint gpu-per.chk
+# In an interactive terminal:
+cargo run --release --locked -p rustforge-cli --features gpu -- run dqn --device gpu --use-per --checkpoint gpu-per-live.chk
+
+cargo test --locked -p rustforge-rl --features gpu --test gpu_dqn --test gpu_checkpoint --test gpu_runtime -- --include-ignored
+cargo test --locked -p rustforge-cli --features gpu --test device_selection -- --include-ignored
+```
+
+### Deviations from Plan (stage 5c)
+
+- Weighted loss composes existing device subtract/multiply/mean operations;
+  no new shader or autograd operator is needed. Absolute errors are calculated
+  from the explicit TD readback on CPU, where the priority tree lives.
+- Replay data and sampler state are not added to checkpoints. Bit-identical
+  continuation uses identical externally supplied batches/weights; fresh runtime
+  replay remains stochastic. Physical GPU performance testing stays deferred.
+
+### Issue Resolution Progress (stage 5c)
+
+| Work | Issue ID | Result |
+| --- | --- | --- |
+| Weighted GPU TD loss and reusable weights | Unassigned | Complete, CPU loss/gradient/update parity for vanilla and Double DQN |
+| CPU priority feedback from GPU errors | Unassigned | Complete, seeded stratified replay agrees with CPU across priority updates |
+| Headless/live CLI PER and resume | Unassigned | Complete, saved mode and beta settings restored through shared runtime |
+| Checkpoint compatibility and validation | Unassigned | Complete, version-1 codec accepts valid PER; zero annealing length and invalid weights rejected |
+| Physical GPU profiling and complete replay persistence | Unassigned | Deferred/separate milestones |
+
+### Verification (stage 5c)
+
+| Check | Result | Delta from stage 5b |
+| --- | --- | --- |
+| Native workspace, all features, excluding Python bindings | 1,051 passed, 83 ignored, 0 failed | +1 ordinary codec test; +6 adapter-required ignored tests |
+| GPU DQN, checkpoint and runtime suites executed | 16 passed, 0 failed | 8 DQN +4 checkpoint +4 runtime tests |
+| CLI device suite executed with ignored tests included | 4 passed, 0 failed | 2 driver-independent +2 adapter-required tests |
+| Default-feature device/CLI/runtime checks | 13 passed, 0 failed | Feature-unavailable rejection preserved |
+| Workspace Clippy, all targets/all features, warnings denied | Passed | Includes new weighted paths and fixtures |
+| Rust 1.75, workspace all targets/all features | Passed | Locked dependency versions unchanged |
+| Formatting and patch whitespace | Passed | `cargo fmt --all -- --check`, `git diff --check` |
+
+The ordinary addition round-trips PER configuration in the existing codec and
+checks uniform-file compatibility. Six adapter-required additions cover weighted
+CPU parity, seeded priority feedback, invalid/zero weights and TD overflow rollback,
+exact weighted checkpoint continuation, runtime restoration of saved PER settings,
+and CLI PER save/resume. Existing fixtures that rejected all PER requests now
+reject zero annealing lengths or check supported configurations. Previous tensor,
+autograd and NN GPU suites have no implementation changes in this stage; Python
+bindings have no API changes. GPU execution used Mesa llvmpipe GL; remote CI and
+physical GPU performance results are not claimed.
+
+## Stage 6a walkthrough: categorical PPO loss foundation
+
+Tensor device operations now support exponential, stable log-softmax over the
+columns of `[batch, actions]`, softmax, the log-softmax vector-Jacobian product,
+and a scalar nonfinite-value count. Log-softmax subtracts the row maximum before
+summing exponentials, avoiding exp/log cancellation for very unlikely actions.
+Empty batches retain their shape; an empty action axis is rejected. Nonfinite
+logits produce NaN across their entire row. Large finite differences outside the
+f32 representable range can still overflow; checked loss diagnostics reject them.
+
+`GpuVariable::exp` and `log_softmax` save immutable forward outputs for backward.
+Their derivatives are `g * exp(x)` and `g - exp(log_probs) * sum(g, actions)`.
+`softmax` composes these operators. `minimum` and `clamp` compose existing ReLU
+operations, matching CPU RL utilities exactly: minimum ties select the right
+operand; clamp passes gradient at the lower bound and stops it at the upper
+bound. General binary broadcasting and arbitrary axis reductions are unchanged.
+
+`agent::gpu_ppo::categorical_policy_loss` computes the gathered action log
+probabilities, importance ratios, clipped surrogate and mean categorical entropy.
+`discrete_ppo_loss` combines that objective with value MSE and entropy coefficients
+from `GpuPpoLossConfig`. Old log probabilities, advantages and returns are
+explicitly detached even when passed as trainable variables. The caller prepares
+advantages and typed action indices; reference shapes are `[batch, 1]` and must
+match a nonempty logits batch. All tensors must share the same ownership scope.
+Clip epsilon is finite in `[0, 1)`; value and entropy coefficients are finite and
+nonnegative.
+
+Constructing the loss graph performs no host readback. `GpuPpoLoss::checked_metrics`
+is an explicit validation/diagnostic boundary before applying optimizer updates.
+It downloads four scalar losses/entropy plus a scalar nonfinite-ratio indicator.
+Clipping can hide infinity in a finite surrogate, but the exp derivative can then
+produce NaN through `infinity * 0`; the ratio guard rejects this case. Callers must
+run the check before backward and optimizer updates. Low-level autograd operations
+still expose their ordinary shader floating-point behavior.
+
+The example uses seeded GPU Linear actor and critic heads, a fixed four-state
+minibatch, captured old policy probabilities and resident Adam. After 80 updates,
+verified software-adapter output is:
+
+```text
+Fixed GPU PPO minibatch: total loss 0.366946 -> -0.191857, value loss 0.000173
+```
+
+```bash
+cargo run --locked -p rustforge-rl --features gpu --example gpu_ppo_objective
+cargo test --locked -p rustforge-rl --features gpu --test gpu_ppo_loss -- --include-ignored
+cargo test --locked -p rustforge-tensor --features gpu --test gpu_matmul -- --include-ignored
+cargo test --locked -p rustforge-autograd --features gpu --test gpu_autograd -- --include-ignored
+```
+
+### Deviations from Plan (stage 6a)
+
+- PPO is split into loss foundations (6a), agent/rollout training (6b), and later
+  runtime/checkpoint integration. Existing GPU CLI device selection remains DQN
+  only. The fixed minibatch example validates loss optimization; environment
+  learning, sampling, GAE integration and end-to-end PPO remain stage 6b work.
+- Categorical kernels use a correctness-oriented sequential row scan per output
+  element, with quadratic work in the action count. Existing shared shader
+  bindings and dispatch bounds are reused. Parallel row reductions and fused
+  PPO kernels need later measurement; no speedup is claimed.
+- No separate clamp/minimum shader is added: matching CPU's composed boundary
+  gradient contract takes precedence. A device scalar finite-value guard is added
+  because clipping alone can mask invalid ratios.
+
+### Issue Resolution Progress (stage 6a)
+
+| Work | Issue ID | Result |
+| --- | --- | --- |
+| Stable categorical probabilities and device derivatives | Unassigned | Complete, extreme logits, singleton/empty batches and CPU/finite-difference validation |
+| Clipped surrogate, value loss and categorical entropy | Unassigned | Complete, CPU losses/gradients and four Adam updates agree |
+| Rollout reference detachment and invalid objective rejection | Unassigned | Complete, frozen reference gradients and overflow checks |
+| Fixed GPU actor/critic minibatch optimization | Unassigned | Complete, checked loss decreases with resident Adam |
+| PPO rollout, sampling, mini-batches and runtime | Unassigned | Next (6b and later integration) |
+
+### Verification (stage 6a)
+
+| Check | Passing result | Delta from stage 5c |
+| --- | --- | --- |
+| Native workspace, all features, excluding Python bindings | 1,052 passed, 90 ignored, 0 failed | +1 ordinary configuration test; +7 adapter-required tests |
+| Adapter-required GPU checks executed explicitly | 63 passed, 0 failed | 20 tensor +1 storage +15 autograd +1 graph +5 NN +19 RL +2 CLI |
+| Fixed GPU PPO minibatch example | Passed | Total loss 0.366946 to -0.191857; final value MSE 0.000173 |
+| Default-feature workspace/all-targets check | Passed | GPU example gated by required features; CPU APIs preserved |
+| Workspace Clippy, all targets/all features, warnings denied | Passed | Includes new operators, helper module and example |
+| Rust 1.75, workspace all targets/all features | Passed | No new dependencies or lockfile changes |
+| Formatting and patch whitespace | Passed | `cargo fmt --all -- --check`, `git diff --check` |
+
+The ordinary addition checks clip/coefficient configuration without a driver.
+Seven adapter-required additions cover stable tensor probabilities and backward
+shape/ownership errors (2), CPU/finite-difference autograd and immutable snapshots
+with no-grad/empty handling (2), complete PPO losses and optimizer parity,
+clipping boundary/tie gradients, and invalid objective validation (3). The existing
+storage/transfer unit now includes probability and finite-check operations before
+asserting no intermediate transfers. The existing graph-lifetime unit covers saved
+categorical outputs without graph cycles. DQN/PER, checkpoint, runtime and CLI
+GPU suites were rerun because the shared shader and autograd implementation changed.
+GPU execution used Mesa llvmpipe GL. Python APIs have no changes; physical hardware
+and remote CI results are not claimed.
+
+## Stage 6b: discrete PPO agent and environment rollouts
+
+`GpuPpoDiscrete` uses the CPU PPO shared-trunk architecture, parameter ordering
+and seeded initialization: Linear/ReLU trunk, categorical actor and scalar critic.
+Model parameters, gradients and Adam moments stay on device. Sampling downloads
+log probabilities and value at the environment boundary and consumes a caller-owned
+RNG. Training uses an independently supplied shuffle RNG, the CPU active-row
+advantage normalization, in-place epoch shuffles, exact partial minibatches and
+mean metrics over updates. `updates()` counts completed Adam steps.
+
+`collect_rollout_with_rng` accepts an environment, episode count, step limit,
+optional reset seed and sampling RNG. It calls the shared CPU `RolloutBuffer`/GAE
+for each episode before concatenating the results. True termination bootstraps
+zero; truncation and step limits bootstrap the critic at the final observation.
+There is no GAE propagation across resets. A reset seed is advanced per episode;
+callers control the seed for each subsequent rollout.
+
+Configuration, active input shapes, action bounds, finite values and normalized
+advantage overflow are checked before training mutations. Inactive capacity tails
+are ignored. Each minibatch checks losses/ratios before backward, then checks device
+gradients with scalar readbacks before Adam. Runtime failure retains earlier
+completed minibatch updates; the whole multi-epoch call is not transactional.
+Invalid observations, mismatched environment dimensions and action conversions
+return errors. Collection advances the environment and sampling RNG even if a
+later transition fails. CPU policy/GAE and host minibatch uploads are deliberate
+boundaries; device-native collection and fused training kernels are later work.
+
+```bash
+cargo run --locked -p rustforge-rl --features gpu --example gpu_ppo_training
+cargo test --locked -p rustforge-rl --features gpu --test gpu_ppo_agent -- --include-ignored
+```
+
+Verified software-adapter example output:
+
+```text
+GPU PPO bandit: rewarding action probability 0.046995 -> 0.995741; 60 Adam updates
+```
+
+### Deviations from Plan (stage 6b)
+
+- Multi-episode collection computes GAE in separate episode buffers and concatenates
+  batches, preserving bootstrap semantics across truncations. The environment
+  demonstration uses a one-step bandit; it verifies learning from fresh rollouts,
+  rather than claiming CartPole convergence or physical GPU performance.
+- The library agent is complete for this stage. GPU PPO live/headless runtime
+  selection and checkpoint persistence remain stage 6c; the CLI still routes GPU
+  requests only to DQN. No checkpoint/RNG persistence contract is added here.
+- Objective and gradient safety checks use explicit scalar readbacks per minibatch.
+  These checks prioritize numerical validity; profiling is deferred.
+
+### Issue Resolution Progress (stage 6b)
+
+| Work | Issue ID | Result |
+| --- | --- | --- |
+| Seeded shared actor/critic and categorical sampling | Unassigned | Complete, CPU parameters/forward and identical sampling streams agree |
+| CPU rollout and per-episode GAE integration | Unassigned | Complete, terminal/truncation/step-limit bootstrap tests |
+| Shuffled epochs and partial minibatches with resident Adam | Unassigned | Complete, CPU losses and updated policy/value agree over 18 updates |
+| Invalid inputs and numerical validation before updates | Unassigned | Complete, zero updates and unchanged parameters for rejected batches |
+| Deterministic environment learning | Unassigned | Complete, rewarding probability 4.7% to 99.6% in 60 updates |
+| GPU PPO runtime and checkpoint integration | Unassigned | Next (6c) |
+
+### Verification (stage 6b)
+
+| Check | Passing result | Delta from stage 6a |
+| --- | --- | --- |
+| Native workspace/all features, excluding Python | 1,052 passed, 94 ignored, 0 failed | +4 adapter-required agent tests; ordinary count unchanged |
+| PPO adapter-required tests explicitly executed | 7 passed, 0 failed | 4 new agent tests +3 existing loss tests rerun |
+| Seeded GPU PPO environment learning example | Passed | New example, 0.046995 to 0.995741 rewarding probability |
+| Workspace Clippy/all targets/all features, warnings denied | Passed | New agent, tests and example |
+| Rust 1.75 workspace/all targets/all features | Passed | No dependency or lockfile changes |
+| Default-feature workspace/all-targets check | Passed | GPU examples remain gated |
+| Formatting and patch whitespace | Passed | `cargo fmt --all -- --check`, `git diff --check` |
+
+The four new tests cover architecture/initialization and seeded sampling plus CPU
+training parity with inactive NaN tails and partial minibatches; terminal,
+truncation and step-limit GAE; environment learning; and invalid configuration,
+observations, active data, overflow, empty batches and disabled gradients. GPU
+execution used Mesa llvmpipe GL. The lower tensor/autograd/NN kernels did not
+change during stage 6b; their prior 63-check validation remains recorded under 6a.
+GPU CI now explicitly runs the four agent tests and environment-learning example.
+Python APIs are unchanged; physical GPU testing remains deferred.
+
+## Stage 6c: PPO runtime, CLI and training-state checkpoints
+
+`PpoDiscreteTrainerAdapter::with_options(PpoRuntimeOptions)` selects CPU (default)
+or GPU. Options are plain values; the runtime constructs the agent, context and
+checkpoint inside the owning worker. The shared PPO loop retains seeded action/
+shuffle streams, per-episode GAE, metrics, pause/resume, graceful stop and force
+stop. GPU model and loaded configuration must match the environment observation
+and discrete action dimensions before any reset. Saved gamma/lambda, epochs,
+minibatch size and learning rate are authoritative when resuming.
+
+CartPole supports GPU PPO in headless `train` and live `run`. The live plan uses
+the existing generic JSONL metrics schema and displays the requested device.
+Resume displays configuration as restored, rather than reporting fresh defaults.
+Unsupported algorithms, CPU checkpoint options, missing GPU builds, PER for PPO,
+unsupported environments and checkpoint/metrics path aliases are rejected through
+the existing validation paths. Interactive checkpoint requests remain unsupported;
+checkpoint files are written on successful completion or controlled stops.
+
+```bash
+cargo run --locked -p rustforge-cli --features gpu -- train ppo --device gpu --episodes 10 --checkpoint target/ppo.chk
+cargo run --locked -p rustforge-cli --features gpu -- train ppo --device gpu --episodes 10 --resume target/ppo.chk --checkpoint target/ppo.chk
+cargo run --locked -p rustforge-cli --features gpu -- run ppo --device gpu --episodes 10 --resume target/ppo.chk --checkpoint target/ppo.chk
+cargo test --locked -p rustforge-rl --features gpu --test gpu_ppo_checkpoint --test gpu_ppo_runtime -- --include-ignored
+```
+
+PPO checkpoint v1 begins with `RFGPUPPO` and a little-endian u32 version. The
+fixed-integer little-endian bincode payload includes discrete PPO configuration,
+six actor/critic tensors, Adam configuration and optional moments, and the update
+clock. DQN's `RFGPUDQN` format is unchanged. The complete file is bounded to 256
+MiB; oversized files, truncated/wrong-algorithm headers, unknown versions,
+trailing bytes, inconsistent shapes/counts, nonfinite values, negative variances,
+invalid hyperparameters, missing moments after updates, and clock/lr mismatches
+are rejected. Host validation precedes GPU tensor allocation and ndarray
+construction. A load creates a new agent; restore replaces the live agent only
+after success, so handles acquired before restore still reference the old model.
+
+Saves capture and validate all device state before creating a temporary file,
+sync and close it, and rename it in the destination directory. Validation errors
+preserve an existing checkpoint; failed I/O cleans up temporary files. Parent
+directories must exist. Resume restores model/Adam/configuration/update state,
+not experiment state: environment, rollout, RNG streams, moving reward window,
+run counters and metrics restart. Bit-identical continuation is verified only
+for identical input batches and caller-supplied shuffle streams. A force-stop
+mid-episode discards its untrained partial rollout and saves completed updates;
+a force-stop at the episode boundary completes that episode's training before
+saving. Failed runs do not replace the requested checkpoint.
+
+### Deviations from Plan (stage 6c)
+
+- PPO uses a separate checkpoint signature and validates its shared actor/critic
+  architecture. DQN checkpoint bytes and public APIs are preserved. PPO config
+  gains Clone/Debug/PartialEq/Serde implementations to support snapshots without
+  changing CPU training behavior.
+- Interactive checkpoint control is still unsupported, matching DQN runtime;
+  save-on-completion/controlled-stop is the concrete supported contract.
+- The runtime collects one episode per training batch to retain CPU PPO behavior.
+  Vectorized/multi-episode runtime collection and complete RNG/environment
+  persistence remain separate work.
+- Workspace validation exposed the existing unseeded CPU XOR test failing at
+  loss 0.2502. It now uses seeds 42/43 with unchanged convergence assertions;
+  verified loss is 0.000998. This is a test reproducibility repair.
+
+### Issue Resolution Progress (stage 6c)
+
+| Work | Issue ID | Result |
+| --- | --- | --- |
+| Worker-owned GPU PPO backend and saved configuration | Unassigned | Complete, resume/shape validation and CPU runtime regression checks |
+| Versioned PPO model/Adam checkpoint and atomic restore | Unassigned | Complete, bit-identical continuation and rejected malformed/failed saves |
+| Headless/live CLI routing and restored-config display | Unassigned | Complete, headless GPU CartPole save/resume and live-plan schema/display checks |
+| Metrics, pause/resume and controlled-stop semantics | Unassigned | Complete, finite JSONL, worker ownership and partial-rollout discard tests |
+| CPU XOR convergence reproducibility | Unassigned | Complete, fixed initialization with original assertions retained |
+| Continuous-policy GPU foundations | Unassigned | Next (7a) |
+
+### Verification (stage 6c)
+
+| Check | Passing result | Delta from stage 6b |
+| --- | --- | --- |
+| Native workspace/all features, excluding Python | 1,056 passed, 101 ignored, 0 failed | +3 checkpoint codec/validation/I/O tests; +1 runtime-options test; +7 adapter-required tests |
+| Adapter-required GPU RL regression tests executed | 21 passed, 0 failed | PPO loss 3 +agent 4 +checkpoint 2 +runtime 4; existing DQN checkpoint 4 +runtime 4 |
+| GPU CLI device-selection suite | 5 passed, 0 failed | 3 adapter-required (including new PPO save/resume), 2 ordinary validation tests |
+| Seeded CPU XOR convergence | Passed | Existing test modified, loss 0.000998; no test-count delta |
+| Workspace Clippy/all targets/all features, warnings denied | Passed | Includes checkpoint codec, runtime, CLI and tests |
+| Rust 1.75 workspace/all targets/all features | Passed | No new dependencies or lockfile changes |
+| Default-feature CLI/runtime tests and workspace check | 23 passed, 0 failed; check passed | CLI device validation 2 +headless 7 +PPO runtime 14 |
+| Formatting and patch whitespace | Passed | `cargo fmt --all -- --check`, `git diff --check` |
+
+Seven new adapter-required tests cover PPO exact checkpoint continuation,
+untrained/failed restore and save preservation (2); saved configuration/finite
+metrics, graceful/force stops, invalid resume/dimensions/observations and worker
+pause/resume (4); and CLI CartPole save/resume/JSONL output (1). Existing live-plan
+and device validation tests now cover PPO. The three new codec tests run without
+an adapter and exercise malformed metadata, file limits and atomic write cleanup.
+GPU CI explicitly runs the codec, PPO runtime/checkpoint and CLI suites. Execution
+used Mesa llvmpipe GL; physical hardware and interactive terminal rendering were
+not tested. Python APIs have no changes.
+
+## Stage 7a: continuous Gaussian operators and PPO objectives
+
+The tensor backend adds natural logarithm, stable tanh, numeric clipping for
+frozen inputs, action-column sums `[batch, actions] -> [batch, 1]`, and their
+column broadcast. GPU autograd adds log/tanh/exact-shape division/column-sum
+backward. Saved inputs/outputs are immutable snapshots; repeated backward,
+no-grad, empty tensors and graph lifetime retain their existing contracts.
+Column reduction uses a correctness-oriented sequential scan per row.
+Tanh uses a stable negative-exponential expression, saturating at infinities
+and preserving signed zero. Log returns -infinity for zero and NaN for negative
+or NaN inputs. Numeric detached clipping differs from the composed differentiable
+clamp: distribution parameter clipping retains CPU's boundary gradients.
+
+`GpuGaussianTransform::new(context, low, high)` validates finite strictly ordered
+bounds, finite positive scale and finite bias, and uploads frozen per-action
+constants once. The input/output probability calculations stay on device:
+
+- `log_prob_from_action(mean, raw_log_std, actions)` detaches stored actions,
+  reverses scaling, clamps normalized actions to `[-1+1e-6, 1-1e-6]`, applies
+  the inverse tanh, and evaluates diagonal Gaussian density plus tanh/scaling
+  Jacobian corrections. Finite out-of-bounds actions follow CPU's clipping rule.
+- `sample_with_noise(mean, raw_log_std, noise)` detaches supplied standard-normal
+  noise, reparameterizes, squashes/scales actions and retains gradients to both
+  distribution outputs. RNG ownership and actual noise generation are later
+  agent responsibilities.
+- Raw log std is differentiably clamped to `[-20, 2]`, matching CPU. The
+  `base_entropy` output is the analytic entropy of the unsquashed diagonal
+  Gaussian. It is not the exact entropy of the transformed action distribution.
+
+`continuous_ppo_loss(GpuContinuousPpoInputs, transform, clip_eps)` builds clipped
+policy and value MSE graphs with frozen actions, old log probabilities, advantages
+and returns. It intentionally returns separate losses: current CPU continuous
+PPO uses separate actor/critic Adam updates and does not apply the configured
+value/entropy coefficients. Checked metrics validate immutable snapshots of raw
+inputs/references, log densities, ratios and objective values using explicit
+scalar readbacks. This catches invalid inputs hidden by clipping and overflowing
+ratios hidden by a finite clipped loss. Call these diagnostics before backward;
+any future trainer must also validate gradients before optimizer updates.
+
+```bash
+cargo run --locked -p rustforge-rl --features gpu --example gpu_continuous_ppo_objective
+cargo test --locked -p rustforge-rl --features gpu --test gpu_continuous_ppo -- --include-ignored
+```
+
+Verified software-adapter fixed minibatch output after 80 actor/critic updates:
+
+```text
+Fixed continuous GPU PPO: policy -0.000000 -> -0.200000, value 0.979212 -> 0.000122
+```
+
+### Deviations from Plan (stage 7a)
+
+- CPU continuous PPO already uses tanh squashing and action scaling, so matching
+  its Gaussian/Jacobian/inverse-action behavior is included. Supplied-noise
+  reparameterization is also exposed to validate the new tanh gradients. There is
+  no full GPU Gaussian network/agent, environment trainer, RNG owner or runtime
+  routing in this stage; the example optimizes a fixed minibatch.
+- Base Gaussian entropy is diagnostic, with no entropy bonus or shared weighted
+  total objective, preserving current CPU continuous PPO's separate updates.
+- Boundary parity exposed a CPU precision problem: this Rust build's f32 atanh
+  evaluated the negative clamped endpoint as -7.219154 versus f64's -7.247733.
+  CPU stored-action inversion now uses f64 before converting to f32, making
+  endpoint densities symmetric and aligning the GPU's stable inverse. This
+  deliberately corrects near-boundary likelihoods for CPU Gaussian consumers
+  (continuous PPO/SAC); sample generation and action clipping conventions stay
+  the same. A new non-GPU test checks symmetry and the f64 density reference.
+- The inverse action is detached, so its device numeric clip/log composition
+  needs no atanh derivative. General inverse-hyperbolic autograd and fused
+  Gaussian kernels remain later work.
+
+### Issue Resolution Progress (stage 7a)
+
+| Work | Issue ID | Result |
+| --- | --- | --- |
+| Device log/tanh, division gradients and action-column reductions | Unassigned | Complete, CPU/f64 gradients, shapes, owners, empty tensors and snapshots |
+| Squashed/scaled Gaussian densities and base entropy | Unassigned | Complete, actual CPU GaussianPolicy parity including endpoints/outside bounds |
+| Reparameterized supplied-noise action/density gradients | Unassigned | Complete, f64 finite differences and frozen-noise/no-grad checks |
+| Continuous PPO policy/value losses and separate Adam updates | Unassigned | Complete, detached references and four CPU/GPU updates agree |
+| CPU endpoint inverse precision | Unassigned | Complete, symmetric f64-reference density regression |
+| Fixed continuous objective optimization | Unassigned | Complete, clipped policy improvement and value MSE below 0.001 |
+| Continuous GPU agent, rollout and runtime | Unassigned | Next (7b and subsequent integration) |
+
+### Verification (stage 7a)
+
+| Check | Passing result | Delta from stage 6c |
+| --- | --- | --- |
+| Native workspace/all features, excluding Python | 1,057 passed, 109 ignored, 0 failed | +1 CPU endpoint test; +8 adapter-required tests |
+| Adapter-required GPU checks executed | 82 passed, 0 failed | Tensor 22 +storage 1 +autograd 17 +graph 1 +NN 5 +RL 33 +CLI 3 |
+| Continuous objective example | Passed | Policy 0 to -0.2; value MSE 0.979212 to 0.000122 |
+| CPU Gaussian policy unit suite | 10 passed, 0 failed | Includes new endpoint regression |
+| Python bindings rebuilt and pytest | 32 passed, 0 failed | Rerun because shared CPU Gaussian inverse changed |
+| Workspace Clippy/all targets/all features, warnings denied | Passed | New operators, Gaussian module, objective, tests and example |
+| Rust 1.75 workspace/all targets/all features | Passed | No dependencies or lockfile changes |
+| Default-feature workspace/all-targets check | Passed | GPU example remains gated; CPU APIs retain their signatures |
+| Formatting and patch whitespace | Passed | `cargo fmt --all -- --check`, `git diff --check` |
+
+The eight new adapter-required tests cover tensor log/tanh/clipping and column
+shape/ownership behavior (2), CPU/finite-difference gradients and immutable
+snapshots/no-grad/empty handling (2), and actual CPU Gaussian density/gradient,
+supplied-noise f64 reference, PPO loss/gradient/four Adam updates, and invalid
+input/hidden overflow checks (4). The existing transfer unit covers all new
+operations without intermediate transfers; the lifetime unit covers the saved
+continuous operator graph. All GPU tensor/autograd/NN/agent/CLI suites were rerun
+because shader and reverse-mode paths changed. Two ordinary tests in the explicit
+CLI suite are excluded from the 82 adapter-required count. GPU execution used
+Mesa llvmpipe GL. GPU CI runs the continuous objective suite and example;
+physical hardware performance is not claimed.
+
+## Stage 7b: continuous GPU PPO agent training
+
+`GpuPpoContinuous` owns a seeded Gaussian actor and value network, frozen action
+transform, separate device Adam optimizers and separate successful-update clocks.
+Both networks use two ReLU hidden layers. Actor trunk layers use seeds `s` and
+`s+1`, mean/std heads use `s+2` and `s+3`, and critic layers use `s+4..s+6`, with
+wrapping addition. Additive CPU `new_seeded`, `sample_with_rng`,
+`select_action_with_rng`, `train_on_batch_with_rng` and critic access support actual
+CPU/GPU parity without changing existing convenience APIs.
+
+Sampling uses the shared host Box–Muller implementation (two RNG draws per action
+dimension), uploads noise and applies the resident Gaussian transform. Actions,
+log density, value and finite-check scalars are explicit readbacks for environment
+interaction. Training uploads each shuffled host minibatch; actor, critic,
+backward graph, gradients and Adam state stay on device. The final partial
+minibatch is included and unused batch capacity is ignored. Loss/value/base-entropy
+metrics average minibatches, matching CPU continuous PPO. Base entropy describes
+the unsquashed Gaussian and is diagnostic; the continuous CPU objective does not
+apply the discrete entropy/value coefficients.
+
+`collect_rollout_with_rng` accepts an `Environment` plus a fallible action-vector
+conversion callback. Observation dimensions and exact continuous action bounds
+must match configuration before reset. Each episode uses its own CPU continuous
+rollout buffer and GAE computation before concatenation. True terminals bootstrap
+zero; truncation and imposed step limits bootstrap the final observation. Reset
+seeds increment with wrapping addition. Sampling and shuffle streams are supplied
+separately by the caller.
+
+Active tensor shapes, finite inputs, action bounds, advantage normalization and
+update-clock overflow are validated before training. Each minibatch checks finite
+objective metrics and both networks' gradients before either Adam step. Previously
+completed steps remain committed if a later minibatch fails. The two optimizers
+commit separately and their clocks record each successful step; this is not a
+transaction over the whole batch. Failed collection may consume RNG/environment
+state. Continuous runtime, checkpoints and persistence of these RNGs are not part
+of this stage.
+
+```bash
+cargo test --locked -p rustforge-rl --test continuous_seeded
+cargo test --locked -p rustforge-rl --features gpu --test gpu_continuous_agent -- --include-ignored
+cargo run --locked -p rustforge-rl --features gpu --example gpu_continuous_ppo_training
+```
+
+The target-action environment rewards `-(action - 0.5)^2` within `[-1,1]`.
+Model seed 42, sampling seed 7 and shuffle seed 8 train 30 iterations of 64 fresh
+one-step episodes, with three PPO epochs per iteration. Evaluation uses 128
+samples with seed 99 before and after training. Sampled MSE fell from **0.235857**
+to **0.000182**, and the deterministic action reached **0.505693**. Actor and critic
+each completed 90 updates. This verifies bounded continuous environment learning
+on Mesa llvmpipe GL; it does not measure physical GPU performance.
+
+### Deviations from Plan (stage 7b)
+
+- CPU continuous PPO lacked seeded initialization and supplied-RNG APIs. Added
+  backward-compatible constructors and RNG variants to validate the actual shared
+  Gaussian sampler, actor/value parameters and minibatch optimizer behavior.
+- Continuous environment action types do not share a vector conversion trait.
+  Rollout collection accepts a fallible callback rather than changing environment
+  interfaces. Box-space bounds are checked against agent configuration.
+- An initial parity fixture used arbitrary actions under a narrow seeded policy,
+  producing extreme importance ratios after repeated updates. The finite guard
+  correctly rejected it. The fixture now records on-policy actions and old
+  densities, retaining five active rows, a three-row minibatch and NaN padding.
+- Hardware validation remains deferred by user instruction. Continuous worker,
+  CLI and checkpoint integration is stage 7c.
+
+### Issue Resolution Progress (stage 7b)
+
+| Work | Issue ID | Result |
+| --- | --- | --- |
+| CPU seeded continuous policy/critic and supplied RNG APIs | Unassigned | Complete, wrapping seeds, multidimensional bounds and exact repeatability |
+| GPU Gaussian actor/value sampling and training | Unassigned | Complete, seeded CPU parameter/sample/loss and repeated Adam parity |
+| CPU rollout and episode-local GAE | Unassigned | Complete, true-terminal, truncation and imposed-limit bootstrap checks |
+| Partial minibatches, NaN padding and separate update clocks | Unassigned | Complete, five active rows, three-row minibatches and 18 updates per optimizer |
+| Invalid conversion/input/normalization and gradient rejection | Unassigned | Complete, no optimizer update on rejected minibatch, including critic overflow |
+| Fresh continuous environment learning and runnable example | Unassigned | Complete, seeded target-action convergence |
+| Continuous GPU runtime/checkpoint integration | Unassigned | Next (7c) |
+
+### Verification (stage 7b)
+
+| Check | Passing result | Delta from stage 7a |
+| --- | --- | --- |
+| Native workspace/all features, excluding Python | 1,059 passed, 113 ignored, 0 failed | +2 ordinary CPU tests; +4 adapter-required tests |
+| Adapter-required PPO checks executed | 18 passed, 0 failed | Continuous agent 4 +continuous objective 4 +discrete agent 4 +discrete checkpoint 2 +discrete runtime 4 |
+| Continuous environment training example | Passed | Sampled MSE 0.235857 to 0.000182; deterministic action 0.505693; 90 updates per optimizer |
+| Seeded CPU continuous API checks | 2 passed, 0 failed | Wrapping model seeds, asymmetric two-action bounds, supplied sampling/shuffle RNGs, partial minibatches and NaN tail |
+| Extended two-action CPU/GPU sampling parity | Passed | Focused rerun of existing continuous agent parity test after adding multidimensional sampling |
+| Python bindings rebuilt and pytest | 32 passed, 0 failed | Shared CPU sampling/training convenience wrappers now delegate to RNG variants |
+| Workspace Clippy/all targets/all features, warnings denied | Passed | Includes new agent, two test files and environment example |
+| Rust 1.75 workspace/all targets/all features | Passed | No new dependencies or lockfile changes |
+| Default-feature workspace/all-targets check | Passed | GPU example remains feature-gated |
+| Formatting and patch whitespace | Passed | `cargo fmt --all -- --check`, `git diff --check` |
+
+The four new adapter-required tests cover (1) seeded CPU/GPU actor/value
+initialization, single/two-action sampling and repeated partial-minibatch Adam
+parity, (2) episode-local terminal/truncation/step-limit GAE, (3) fresh environment
+learning and update counts, and (4) conversion/input/normalization and nonfinite
+critic-gradient rejection before optimizer updates. The two ordinary CPU tests
+run in the workspace suite; the focused PPO run also ran them, so its 20 passing
+tests comprise 18 adapter-required checks plus those two ordinary tests. Tensor,
+autograd and NN kernels did not change in stage 7b; their full adapter suites were
+verified in stage 7a. GPU CI includes the new agent suite and training example.
+
+## Stage 7c: continuous runtime, CLI and dual-optimizer checkpoints
+
+`PpoContinuousTrainerAdapter<E, F>` stores a Send environment and Send fallible
+continuous-action callback. It constructs `PpoContinuousBackend` inside the
+owning worker, so device variables never cross threads. CPU/GPU selection uses
+the existing `PpoRuntimeOptions`. Seeded runs derive separate model, environment,
+action-noise and minibatch-shuffle seeds, as in the discrete PPO runtime. Config
+validation is shared between CPU runtime and GPU construction. Runtime validates
+observation/action dimensions and exact Box bounds before environment reset,
+including when saved configuration overrides requested configuration.
+
+The runtime collects an episode-local continuous rollout and computes CPU GAE.
+True terminals bootstrap zero; truncation and step limits use the final value.
+Pause/resume retains the rollout. Graceful stop completes and trains the current
+episode. Force stop during a partial episode discards it; force stop on the last
+step permits that complete episode's update. Final checkpoint saves happen on
+normal completion and controlled stops; an error does not overwrite the final
+checkpoint. Interactive checkpoint control remains unsupported (capability false).
+
+`train ppo --env pendulum` and `run ppo --env pendulum` select continuous PPO;
+CartPole continues to select discrete PPO. Default device is CPU. Pendulum's
+profile uses three observations, one torque action in `[-2,2]`, two 64-unit hidden
+layers, learning rate 0.001 and 200-step episodes. GPU requires the `gpu` feature.
+DQN/A2C/REINFORCE on Pendulum, PPO on GridWorld, PPO prioritized replay and CPU
+checkpoint flags fail validation before metrics output is created or overwritten.
+Live display identifies the selected device and shows restored configuration as
+such. Existing metrics/checkpoint alias protection applies to both PPO variants.
+
+Continuous metadata uses algorithm `ppo-continuous` and generic JSONL v1 metrics:
+`reward.episode`, `reward.moving_average`, `loss.policy`, `loss.value`,
+`rollout.size` and `performance.steps_per_second`. The runtime does not expose a
+categorical entropy metric for a squashed continuous distribution.
+
+### Continuous checkpoint contract
+
+`RFGPUPC0` version 1 is distinct from discrete `RFGPUPPO` and DQN `RFGPUDQN`.
+A fixed little-endian header/body is bounded to 256 MiB, including the header.
+The body contains serialized continuous configuration/action bounds, eight actor
+parameter tensors, six critic parameter tensors, separate Adam hyperparameters,
+moments and timesteps, and separate actor/critic successful-update counters.
+Each clock must match its own optimizer; the two clocks may differ if a previous
+step committed only one optimizer. Every shape, tensor length, finite value,
+nonnegative variance, moment-presence/progress relation and config/rate/clock
+contract is checked on the host before allocating a candidate GPU agent.
+
+The continuous format reuses the discrete codec's tensor/moment representations
+and atomic sibling-file replacement helper; the discrete wire format is unchanged.
+Restore replaces the live agent only after full success, keeping old external
+parameter handles attached to their old model. Gradients are not persisted.
+Environment, rollout, random streams, episode/step run counters and metrics start
+fresh; this is model/optimizer resume rather than complete experiment persistence.
+
+```bash
+cargo run --locked -p rustforge-cli --features gpu -- train ppo --env pendulum --device gpu --episodes 1 --checkpoint target/pendulum-ppo.chk --no-log
+cargo run --locked -p rustforge-cli --features gpu -- train ppo --env pendulum --device gpu --episodes 1 --resume target/pendulum-ppo.chk --checkpoint target/pendulum-ppo.chk --no-log
+cargo run --locked -p rustforge-cli --features gpu -- run ppo --env pendulum --device gpu --episodes 10
+cargo test --locked -p rustforge-rl --features gpu --test gpu_continuous_checkpoint --test gpu_continuous_runtime -- --include-ignored
+```
+
+### Deviations from Plan (stage 7c)
+
+- Added a seeded CPU continuous runtime route alongside GPU routing to keep the
+  CLI's default-device behavior consistent. Config/bounds validation is shared
+  with GPU construction rather than duplicating separate acceptance rules.
+- Reused existing private discrete tensor/Adam codec and atomic write helpers
+  with visibility limited to the GPU PPO module. Kept the continuous header and
+  body separate so old discrete checkpoints retain their version and layout.
+- Omitted runtime entropy instead of labeling base-Gaussian entropy as the
+  squashed distribution's entropy. Policy/value losses retain CPU continuous PPO
+  semantics; base entropy remains available in the lower-level GPU agent metrics.
+- Pendulum smoke runs validate finite training and routing, not convergence or
+  physical GPU speed. Live plan construction is tested; terminal rendering was
+  not exercised interactively in this cloud session. Hardware work is deferred
+  by user instruction, and full RNG/environment persistence is a separate stage.
+
+### Issue Resolution Progress (stage 7c)
+
+| Work | Issue ID | Result |
+| --- | --- | --- |
+| Continuous checkpoint host codec/config validation | Unassigned | Complete, headers, bits, bounds, shapes, dual moments and independent clocks |
+| GPU dual-Adam checkpoint resume and live restore | Unassigned | Complete, bit-identical resumed losses/parameters/final file; failed load/save preserves state |
+| Worker-owned continuous CPU/GPU runtime | Unassigned | Complete, seed streams, episode rollout/GAE, dimension/bounds contracts and finite JSONL |
+| Pause/resume and graceful/force stops | Unassigned | Complete, completed-update counters and forced partial-rollout discard |
+| Pendulum headless/live CLI routing and display | Unassigned | Complete, CPU default, GPU fresh/resumed runs and plan/schema checks |
+| Reproducible CPU runtime and invalid conversion/config handling | Unassigned | Complete, repeated seeded metrics and failures before step |
+| Physical GPU profiling / full experiment persistence | Unassigned | Deferred |
+
+### Verification (stage 7c)
+
+| Check | Passing result | Delta from stage 7b |
+| --- | --- | --- |
+| Native workspace/all features, excluding Python | 1,066 passed, 120 ignored, 0 failed | +7 ordinary tests; +7 adapter-required tests |
+| Adapter-required PPO checks executed | 28 passed, 0 failed | RL 24 +CLI 4, detailed below |
+| Host checkpoint codecs (DQN, discrete and continuous PPO) | 10 passed, 0 failed | +2 continuous wire/metadata tests; no adapter allocated |
+| CPU continuous runtime suite | 3 passed, 0 failed | Seeded repeated metrics, graceful/forced controls, invalid config/bounds/observation/conversion |
+| CLI unit/headless PPO suite | 14 passed, 0 failed | +1 continuous live plan test, +1 CPU Pendulum headless JSONL test |
+| Default-build CLI device validation | 2 passed, 0 failed | Feature-disabled GPU and unsupported/checkpoint flags fail before output mutation |
+| Fresh default-profile GPU Pendulum CLI | Passed | 1 episode, 200 steps, final continuous checkpoint written |
+| Python bindings rebuilt and pytest | 32 passed, 0 failed | Native module additions remain compatible |
+| Workspace Clippy/all targets/all features, warnings denied | Passed | Includes continuous codec, runtime, CLI and tests |
+| Rust 1.75 workspace/all targets/all features | Passed | No dependency/lockfile changes |
+| Default-feature workspace/all-targets check | Passed | CPU continuous runtime and Pendulum CLI compile without GPU |
+| Formatting and patch whitespace | Passed | `cargo fmt --all -- --check`, `git diff --check` |
+
+The seven new ordinary tests comprise two host continuous checkpoint tests,
+three CPU continuous runtime tests, one live training-plan test and one headless
+CPU Pendulum metric test. Existing CLI validation tests gained Pendulum rejection
+cases without changing their test count. The seven new adapter-required tests
+comprise continuous checkpoint 2, continuous runtime 4 and continuous CLI 1.
+The 28 executed adapter-required checks comprise continuous agent 4 +continuous
+objective 4 +continuous checkpoint 2 +continuous runtime 4 +discrete agent 4
++discrete checkpoint 2 +discrete runtime 4 +CLI 4. Two ordinary CLI validation
+tests also ran in the explicit CLI suite and are excluded from the 28 count.
+Existing GPU continuous learning again reached sampled MSE 0.000182 from
+0.235857. Tensor/autograd/NN shader paths did not change in this stage. Execution
+used Mesa llvmpipe GL; physical hardware validation and performance claims remain
+deferred. GPU CI explicitly runs both continuous checkpoint host and adapter suites.
+
+## Stage 8a: GPU A2C objective foundation
+
+`agent::gpu_a2c::a2c_loss` builds the actual CPU A2C objective on device:
+
+```text
+actor_loss = -mean(log_softmax(logits)[actions] * detach(advantages))
+value_loss = mean((values - detach(returns))^2)
+entropy = -mean(sum_actions(exp(log_softmax(logits)) * log_softmax(logits)))
+total_loss = actor_loss + value_coef * value_loss - entropy_coef * entropy
+```
+
+Advantages retain their original scale; there is no normalization, clipping,
+importance ratio or old-policy density. Coefficients default to CPU A2C's 0.5
+and 0.01, and must be finite/nonnegative (zero is valid). Losses require nonempty
+`[batch,actions]` logits, matching resident typed actions and `[batch,1]` value,
+advantage and return tensors. Shape/ownership validation uses existing device
+contracts; action bounds are checked at typed index upload/gather.
+
+The API returns actor/value/entropy/total loss variables and selected action log
+probabilities, without host readbacks or optimizer mutation. References are
+immutable detached snapshots even when callers mark them trainable.
+`checked_metrics()` explicitly reads finite-check and metric scalars, checking
+all frozen inputs and all four objective components even if a coefficient is
+zero. The graph supports no-grad inference. Finite forward metrics do not guarantee
+finite backward gradients: callers must validate gradients before optimizer steps,
+as the runnable example does.
+
+`GpuA2cNet` re-exports the existing `GpuActorCriticNet`: Linear→ReLU shared trunk,
+actor/value heads, six parameter tensors and wrapping seed offsets 0/1/2. This
+matches CPU `ActorCriticNet` parameter order and initialization exactly. Constructor
+and forward errors retain the shared network's existing `GpuPpoError` type; the
+A2C objective exposes its own `GpuA2cLossError`. No shader, autograd or network
+implementation changes are required.
+
+```bash
+cargo test --locked -p rustforge-rl --features gpu --test gpu_a2c_loss -- --include-ignored
+cargo run --locked -p rustforge-rl --features gpu --example gpu_a2c_objective
+```
+
+The fixed-batch example uses model seed 42, four one-hot observations, two actions,
+eight hidden units, positive advantages and fixed value targets. Eighty combined
+Adam steps at learning rate 0.03 reduced total loss from **1.312391** to
+**0.001536**, with actor loss **0.001547** and value MSE **0.000208**. Loss/input
+metrics and all parameter gradients are checked before every update. This
+validates objective optimization on Mesa llvmpipe GL; it does not collect
+rollouts or demonstrate environment learning or physical GPU performance.
+
+### Deviations from Plan (stage 8a)
+
+- Re-exported the existing shared GPU actor/value network as `GpuA2cNet` instead
+  of duplicating its implementation. Actual seeded CPU A2C training validates
+  all six parameters and their gradients across four combined Adam updates.
+- CPU computes entropy using softmax by division; GPU computes probabilities
+  via exponentiated log-softmax. CPU objective/gradient and f64 finite-difference
+  checks verify the equivalent formula within floating-point tolerance.
+- Added frozen-input finite checks and zero-coefficient overflow coverage, plus
+  an example that checks gradients before Adam. An objective API alone does not
+  provide an atomic agent update or guarantee finite gradients.
+- GPU agent ownership, sampling, rollout/GAE, CLI/runtime and checkpoints are
+  subsequent stages. Hardware testing remains deferred by user instruction.
+
+### Issue Resolution Progress (stage 8a)
+
+| Work | Issue ID | Result |
+| --- | --- | --- |
+| Device A2C actor/value/entropy/combined objective | Unassigned | Complete, actual CPU loss and unnormalized-advantage/entropy conventions |
+| Detached rollout references and immutable snapshots | Unassigned | Complete, no reference gradients and post-forward mutation/no-grad checks |
+| CPU/f64 output and gradient parity | Unassigned | Complete, central finite differences for logits and values |
+| Seeded shared-network and combined Adam parity | Unassigned | Complete, six initial tensors and four actual CPU A2C gradient/parameter updates |
+| Shape, owner, typed-action, config and nonfinite guards | Unassigned | Complete, extreme logits, one-action entropy and masked value overflow |
+| Runnable fixed-batch optimization and GPU CI | Unassigned | Complete, loss reduction and explicit gradient checks |
+| Fresh GPU A2C rollout learning | Unassigned | Next (8b) |
+
+### Verification (stage 8a)
+
+| Check | Passing result | Delta from stage 7c |
+| --- | --- | --- |
+| Native workspace/all features, excluding Python | 1,067 passed, 124 ignored, 0 failed | +1 ordinary A2C coefficient test; +4 adapter-required A2C tests |
+| Adapter-required objective checks executed | 7 passed, 0 failed | A2C 4 +existing discrete PPO objective 3 |
+| Fixed GPU A2C objective example | Passed | 80 Adam steps; total 1.312391 to 0.001536; actor 0.001547; value 0.000208 |
+| Workspace Clippy/all targets/all features, warnings denied | Passed | New objective module, tests and feature-gated example |
+| Rust 1.75 workspace/all targets/all features | Passed | No dependency/lockfile changes |
+| Default-feature workspace/all-targets check | Passed | A2C GPU module and example remain gated |
+| Formatting and patch whitespace | Passed | `cargo fmt --all -- --check`, `git diff --check` |
+
+The four new adapter-required tests cover (1) CPU composite loss/gradient and f64
+finite-difference parity with detached targets, (2) actual seeded CPU A2C forward,
+combined gradients and four Adam parameter updates, (3) uniform/single-action
+entropy, extreme logits and raw advantage scale, and (4) invalid shapes/owners,
+typed action bounds, frozen forward snapshots, no-grad and nonfinite/zero-weight
+value-overflow detection. The ordinary coefficient test validates defaults, zero,
+negative and nonfinite coefficients without adapter allocation. Existing PPO
+objective parity was rerun because A2C reuses its categorical/device foundation.
+No CPU algorithm, Python binding, tensor shader, autograd or NN module behavior
+changed. Execution used Mesa llvmpipe GL, with physical hardware tests deferred.
+GPU CI explicitly executes the new A2C suite and example.
+
+## Stage 8b: GPU A2C agent sampling and rollout training
+
+`agent::gpu_a2c::GpuA2c` owns a `GpuA2cNet`, resident Adam, validated `A2CConfig`
+and a successful-update counter. Seeded model initialization retains the CPU
+architecture, parameter order and wrapping layer seed offsets. `A2CConfig` now
+also derives Clone/Debug/PartialEq without changing its fields or defaults.
+`GpuA2cError` wraps device/autograd/shared-network/objective errors and input
+validation; existing shared-network errors retain their source.
+
+`select_action_with_rng` returns action index, log probability and value, using
+one caller-controlled f32 random draw. Stable log probabilities and the scalar
+value are explicit inference readbacks; probability exponentiation/normalization
+and categorical sampling occur on CPU, matching existing categorical runtime
+boundaries. `action_probabilities` provides explicit inference diagnostics.
+Forward computation does not retain an autograd graph. CPU `A2C::sample_action`
+with a matching seeded stream selects the same tested sequence, and the next RNG
+draw matches after 30 actions.
+
+`collect_rollout_with_rng` accepts `GpuA2cRolloutOptions` with episode count,
+step limit and optional reset seed. Observation dimensions and the discrete
+space must match configuration before reset. Capacity products must not overflow;
+episode count and step limit must be positive. Environment actions use fallible
+`TryFrom<usize>` conversion before step. Reset seeds increment with wrapping
+addition. Each episode computes GAE in its own CPU `RolloutBuffer`, then complete
+active batches are concatenated. True terminal—including simultaneous terminal
+and truncation—bootstraps zero; truncation and imposed step limits bootstrap the
+final observation. Rewards, observations (including final terminal observations),
+returns and advantages must be finite. Failed collection can consume environment
+or RNG state; it does not train the agent.
+
+`train_on_rollout` performs one combined A2C Adam step over the active rows.
+States, advantages/returns and typed actions are uploaded for the batch;
+network parameters, graph, gradients and optimizer moments stay resident.
+References are detached, advantages are unnormalized, and old log probabilities
+are unused (even their shape/content is irrelevant). Unused capacity can contain
+NaN or invalid actions. Empty batches return zero metrics without an update.
+Shape, active action bounds, finite inputs, gradient recording and update-clock
+capacity are validated. Frozen objective/input metrics, all gradients and their
+squares are checked before Adam; the clock increments only after a successful
+step. Gradient checks explicitly read finite-count scalars rather than gradient
+tensors. Earlier successful calls remain committed if a later call fails.
+
+```bash
+cargo test --locked -p rustforge-rl --features gpu --test gpu_a2c_agent -- --include-ignored
+cargo run --locked -p rustforge-rl --features gpu --example gpu_a2c_training
+```
+
+The example rewards action 0 with +1 and action 1 with -1 in a one-step two-action
+environment. Model seed 42, action seed 7, width 8 and learning rate 0.03 train
+60 fresh 32-episode rollouts. The rewarding action's probability rises from
+**0.046995** to **0.998541**, with exactly 60 combined Adam updates. This validates
+fresh environment learning on Mesa llvmpipe GL, without a physical GPU speed claim.
+
+### Deviations from Plan (stage 8b)
+
+- Added Clone/Debug/PartialEq to CPU A2C configuration to support GPU ownership
+  and parity inspection; CPU training and sampling implementations are unchanged.
+- GPU training accepts unused rollout capacity by slicing active rows. CPU A2C
+  currently expects its tensors to contain the exact active batch, so the parity
+  test supplies the corresponding five-row CPU batch while GPU gets NaN padding.
+- Added squared-gradient finite checks: Adam squares gradients before weighting
+  its variance, so finite 2e20 gradients can poison its moments. Rejection and
+  successful recovery versus a fresh optimizer validate this path, along with
+  finite-forward/infinite-backward rejection. Shared Adam/PPO code was unchanged.
+- Kept one update per rollout, without PPO epochs or shuffling. Sampling uses a
+  supplied RNG, and collection uses the existing discrete action conversion
+  contract. Runtime/CLI/checkpoint integration follows in stage 8c.
+- Physical hardware testing remains deferred by user instruction.
+
+### Issue Resolution Progress (stage 8b)
+
+| Work | Issue ID | Result |
+| --- | --- | --- |
+| Seeded owned GPU A2C network/Adam/configuration/clock | Unassigned | Complete, actual CPU parameters, gradients and four combined update parity |
+| Reproducible categorical sampling and probability diagnostics | Unassigned | Complete, CPU action sequence/log/value/probability and RNG-consumption checks |
+| CPU episode-local multi-step rollout/GAE | Unassigned | Complete, terminal precedence, truncation/limits, reset isolation and seed wrapping |
+| Active-row training with unused references/capacity | Unassigned | Complete, five active rows, NaN padding, invalid tail actions and empty old-density tensor |
+| Input/action conversion and finite gradient/variance guards | Unassigned | Complete, no parameter/clock update on rejection; recovery matches fresh optimizer |
+| Fresh environment learning, runnable example and GPU CI | Unassigned | Complete, rewarding action probability above 0.998 after 60 updates |
+| GPU A2C worker/CLI/checkpoint integration | Unassigned | Next (8c) |
+
+### Verification (stage 8b)
+
+| Check | Passing result | Delta from stage 8a |
+| --- | --- | --- |
+| Native workspace/all features, excluding Python | 1,068 passed, 128 ignored, 0 failed | +1 ordinary agent-config test; +4 adapter-required agent tests |
+| Adapter-required A2C checks executed | 8 passed, 0 failed | Agent 4 +objective 4 |
+| Guard/recovery test focused rerun | 1 passed, 0 failed | Extended existing rejection test with optimizer recovery after failed backward/square checks |
+| GPU A2C environment example | Passed | Probability 0.046995 to 0.998541; 60 combined updates |
+| Workspace Clippy/all targets/all features, warnings denied | Passed | Agent, test suite and gated example |
+| Rust 1.75 workspace/all targets/all features | Passed | No dependency/lockfile changes |
+| Default-feature workspace/all-targets check | Passed | CPU configuration derives remain compatible; GPU example gated |
+| Formatting and patch whitespace | Passed | `cargo fmt --all -- --check`, `git diff --check` |
+
+The four new adapter-required tests cover (1) seeded CPU sampling and four actual
+CPU A2C active-batch Adam gradient/parameter updates, (2) analytic multi-step GAE
+for terminal/truncation/limits and reset isolation, (3) fresh rollout learning
+and one-update-per-batch cadence, and (4) malformed/nonfinite input, action-space
+and conversion rejection, no-grad/empty/overflow cases, nonfinite gradients,
+finite-gradient square overflow, and successful optimizer recovery. One ordinary
+agent-config test checks dimensions, rates, discount/lambda and coefficients
+without an adapter. GPU objective suites were rerun; shader/autograd/NN code did
+not change. GPU CI explicitly runs the new agent suite and environment example.
+
+## Stage 8c: GPU A2C runtime and checkpoints
+
+`A2cTrainerAdapter::with_options` selects CPU or GPU inside the training worker.
+The CPU backend remains the default; its sampling and update math are unchanged.
+GPU A2C is available through `train a2c --device gpu` and
+`run a2c --device gpu` on CartPole. Configuration and environment dimensions/action
+counts are checked before reset, including when the checkpoint configuration
+replaces the requested configuration. Nonfinite observations, rewards and values
+return errors; failed bootstrap estimates propagate through the shared boundary
+helper. True termination still takes precedence and bootstraps zero.
+
+The distinct version-1 `RFGPUA2C` format contains configuration, six shared-network
+parameter tensors, Adam hyperparameters/moments and the successful-update counter.
+A 256 MiB bound, exact shapes, finite values, nonnegative second moments, matching
+learning rates and consistent Adam/update clocks are validated on the host before
+candidate model allocation. Unsupported versions, truncated/trailing data and
+other algorithms' checkpoint headers are rejected. Saving validates state before
+writing a temporary sibling file and atomically replacing the destination. Failed
+restore preserves the existing agent; failed save preserves the previous file.
+
+Resume restores model/optimizer state rather than the entire experiment. Gradients,
+environment state, rollouts, RNG state and run counters are not persisted. Each run
+starts fresh model/environment/action RNG streams; resumed parameters overwrite
+initial model parameters. CPU checkpoint flags are rejected. Interactive checkpoint
+requests remain unsupported by the adapter capability contract.
+
+Pause retains the in-progress rollout. Graceful stop completes and trains the
+current episode; forced stop discards a partial episode, but trains an episode
+already completed at the boundary. Normal completion and controlled stops save
+when requested. Runtime errors leave the destination checkpoint untouched.
+The existing eight-metric A2C schema reports episode/moving-average reward,
+total/actor/critic loss, entropy, rollout size and throughput. Both CLI routes
+forward runtime options; live display identifies saved configuration and new
+rollout/random streams on resume.
+
+```bash
+cargo run --locked -p rustforge-cli --features gpu -- train a2c --device gpu --episodes 1 --checkpoint target/a2c.chk --no-log
+cargo run --locked -p rustforge-cli --features gpu -- train a2c --device gpu --episodes 1 --resume target/a2c.chk --checkpoint target/a2c.chk --no-log
+cargo test --locked -p rustforge-rl --features gpu --test gpu_a2c_checkpoint --test gpu_a2c_runtime -- --include-ignored
+```
+
+### Deviations from Plan (stage 8c)
+
+- The A2C codec follows the existing bounded/atomic checkpoint pattern with its own
+  format and errors, preserving DQN and PPO wire contracts.
+- Shared host configuration validation also gives the CPU adapter early errors for
+  invalid configuration or environment dimensions; CPU training math is unchanged.
+- The shared bootstrap helper became fallible to propagate device failures while
+  preserving terminal precedence. Existing boundary and PPO runtime tests pass.
+- Interactive checkpoint requests remain unsupported; final save and resume are
+  implemented through runtime options.
+- Physical GPU testing remains deferred by user instruction. Mesa llvmpipe GL
+  exercises compute paths. Live CLI option binding was tested without actual TTY
+  rendering; CartPole smoke runs establish routing, not convergence.
+
+### Issue Resolution Progress (stage 8c)
+
+| Work | Issue ID | Result |
+| --- | --- | --- |
+| Bounded shared-network/Adam checkpoint format | Unassigned | Complete, host corruption validation and atomic failure preservation |
+| Bit-identical checkpoint continuation | Unassigned | Complete, three saved updates followed by three matched updates and identical final bytes |
+| Worker-owned CPU/GPU A2C selection | Unassigned | Complete, restored configuration, early environment checks and CPU regression coverage |
+| Pause, graceful stop and forced partial-rollout stop | Unassigned | Complete, controlled-stop saves and partial/boundary update counts |
+| CartPole headless/live CLI and JSONL metrics | Unassigned | Complete, fresh/resumed training, live option binding and eight finite metrics |
+| Physical GPU validation | Unassigned | Deferred by user instruction |
+
+### Verification (stage 8c)
+
+| Check | Passing result | Delta from stage 8b |
+| --- | --- | --- |
+| Native workspace/all features, excluding Python | 1,075 passed, 135 ignored, 0 failed | +7 ordinary tests; +7 adapter-required tests |
+| Adapter-required checks executed | 27 passed, 0 failed | A2C objective/agent/checkpoint/runtime 14; discrete/continuous PPO runtime 8; CLI GPU routes 5 |
+| Host A2C checkpoint codec suite | 3 passed, 0 failed | Header/version/truncation/trailing checks, metadata validation and atomic cleanup/bounds |
+| CLI device suite with GPU | 7 passed, 0 failed | Five adapter-required routes plus two ordinary validation tests |
+| Default-feature CLI device validation | 2 passed, 0 failed | Includes A2C feature rejection and CPU checkpoint flag checks |
+| Fresh GPU A2C CartPole CLI smoke | Passed | One episode, 11 steps, checkpoint written; no convergence claim |
+| Python extension rebuild and pytest | 32 passed, 0 failed | Existing Python behavior retained |
+| Workspace Clippy/all targets/all features, warnings denied | Passed | Excluding Python |
+| Rust 1.75 workspace/all targets/all features | Passed | Excluding Python; no dependency/lockfile changes |
+| Default-feature workspace/all-targets check | Passed | Excluding Python |
+| Formatting and patch whitespace | Passed | `cargo fmt --all -- --check`, `git diff --check` |
+
+Seven new ordinary tests cover the codec (three), options validation, fallible
+bootstrap boundaries, CPU pre-reset validation and live CLI plan binding. Seven
+new adapter-required tests cover checkpoint continuation/restoration (two),
+runtime resume/controls/errors/pause (four) and the A2C CLI checkpoint route (one).
+GPU CI runs the codec, checkpoint and runtime suites and includes the CLI route in
+its existing device-selection suite. Counts above distinguish ignored native
+checks from adapter-required checks explicitly executed on llvmpipe.
+
+## Next implementation: stage 9a
+
+Add a GPU REINFORCE objective foundation using stable categorical log probabilities
+and a seeded policy network. Match the CPU Monte Carlo return convention and
+optional batch-mean baseline, including baseline-disabled loss and gradients.
+Verify actual CPU gradient/Adam-update parity and fixed-batch optimization before
+stage 9b adds owned rollout training and stage 9c adds runtime/CLI/checkpoints.
+Physical GPU profiling and full experiment-state persistence remain separate work.

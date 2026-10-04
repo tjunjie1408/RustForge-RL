@@ -37,6 +37,7 @@ pub enum Algorithm {
 pub enum Environment {
     Cartpole,
     Gridworld,
+    Pendulum,
 }
 
 /// Training backend requested explicitly by the user.
@@ -58,13 +59,13 @@ impl Device {
 
 #[derive(Clone, Debug, Default, Args)]
 pub struct ExecutionArgs {
-    /// GPU currently supports DQN with uniform replay; requires the gpu feature.
+    /// GPU supports DQN, PPO and A2C; requires the gpu feature.
     #[arg(long, value_enum, default_value_t = Device::Cpu)]
     pub device: Device,
-    /// Restore GPU DQN training state; replay, environment and exploration restart.
+    /// Restore GPU training state; environment, rollout/replay and random streams restart.
     #[arg(long)]
     pub resume: Option<PathBuf>,
-    /// Atomically save GPU DQN state on completion or controlled stop; replaces this file.
+    /// Atomically save GPU training state on completion or controlled stop; replaces this file.
     #[arg(long)]
     pub checkpoint: Option<PathBuf>,
 }
@@ -75,10 +76,12 @@ impl ExecutionArgs {
         algorithm: Algorithm,
         use_per: bool,
     ) -> anyhow::Result<rustforge_rl::agent::DqnRuntimeOptions> {
-        if algorithm != Algorithm::Dqn
+        if !matches!(algorithm, Algorithm::Dqn | Algorithm::Ppo | Algorithm::A2c)
             && (self.device == Device::Gpu || self.resume.is_some() || self.checkpoint.is_some())
         {
-            anyhow::bail!("--device gpu, --resume and --checkpoint are supported only by DQN");
+            anyhow::bail!(
+                "--device gpu, --resume and --checkpoint are supported only by DQN, PPO and A2C"
+            );
         }
         let options = rustforge_rl::agent::DqnRuntimeOptions {
             device: match self.device {
@@ -88,9 +91,14 @@ impl ExecutionArgs {
             resume: self.resume.clone(),
             checkpoint: self.checkpoint.clone(),
         };
-        options
-            .validate(use_per)
-            .map_err(|error| anyhow::anyhow!(error))?;
+        if algorithm == Algorithm::Ppo {
+            rustforge_rl::agent::PpoRuntimeOptions::from(options.clone()).validate()
+        } else if algorithm == Algorithm::A2c {
+            rustforge_rl::agent::A2cRuntimeOptions::from(options.clone()).validate()
+        } else {
+            options.validate(use_per)
+        }
+        .map_err(|error| anyhow::anyhow!(error))?;
         Ok(options)
     }
 }

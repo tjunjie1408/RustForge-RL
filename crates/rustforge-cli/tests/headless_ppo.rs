@@ -233,3 +233,29 @@ fn headless_dqn_preserves_the_exact_csv_v1_boundary() {
 
     std::fs::remove_file(output).unwrap();
 }
+
+#[test]
+fn headless_continuous_ppo_pendulum_writes_generic_jsonl_metrics() {
+    let output = temporary_output("continuous-metrics");
+    let _ = std::fs::remove_file(&output);
+
+    rustforge_cli::commands::train::execute(TrainArgs {
+        execution: Default::default(),
+        algorithm: Algorithm::Ppo,
+        env: Environment::Pendulum,
+        episodes: 1,
+        no_log: false,
+        output: Some(output.clone()),
+        overwrite: false,
+        use_per: false,
+    })
+    .unwrap();
+
+    let content = std::fs::read_to_string(&output).unwrap();
+    let records: Vec<_> = content.lines().collect();
+    assert_eq!(records.len(), 1);
+    assert!(records[0].contains("\"reward.episode\":"));
+    assert!(records[0].contains("\"loss.policy\":"));
+    assert!(records[0].contains("\"loss.value\":"));
+    std::fs::remove_file(output).unwrap();
+}

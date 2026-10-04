@@ -4,10 +4,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Context;
 use rustforge_rl::agent::{
-    cartpole_a2c_config, cartpole_ppo_config, cartpole_reinforce_config, A2cTrainerAdapter,
-    DQNConfig, DqnTrainerAdapter, PpoDiscreteTrainerAdapter, ReinforceTrainerAdapter,
+    cartpole_a2c_config, cartpole_ppo_config, cartpole_reinforce_config, pendulum_ppo_config,
+    A2cTrainerAdapter, DQNConfig, DqnTrainerAdapter, PpoContinuousTrainerAdapter,
+    PpoDiscreteTrainerAdapter, ReinforceTrainerAdapter,
 };
-use rustforge_rl::env::{CartPole, GridWorld};
+use rustforge_rl::env::{CartPole, GridWorld, Pendulum, PendulumAction};
 use rustforge_rl::metrics::DqnCsvMetricSink;
 use rustforge_rl::runtime::control::TrainerControl;
 use rustforge_rl::runtime::event::{
@@ -74,14 +75,38 @@ pub fn execute(args: TrainArgs) -> anyhow::Result<()> {
             (Algorithm::Ppo, Environment::Cartpole) => {
                 println!("Training PPO on CartPole for {} episodes...", args.episodes);
                 (
-                    Box::new(PpoDiscreteTrainerAdapter::new(
-                        CartPole::with_max_steps(500),
-                        cartpole_ppo_config(),
-                        args.episodes,
-                        500,
-                        "cartpole",
-                        Some(2026),
-                    )),
+                    Box::new(
+                        PpoDiscreteTrainerAdapter::new(
+                            CartPole::with_max_steps(500),
+                            cartpole_ppo_config(),
+                            args.episodes,
+                            500,
+                            "cartpole",
+                            Some(2026),
+                        )
+                        .with_options(runtime_options.clone().into()),
+                    ),
+                    HeadlessMetricFormat::GenericJsonlV1,
+                )
+            }
+            (Algorithm::Ppo, Environment::Pendulum) => {
+                println!(
+                    "Training continuous PPO on Pendulum for {} episodes...",
+                    args.episodes
+                );
+                (
+                    Box::new(
+                        PpoContinuousTrainerAdapter::new(
+                            Pendulum::with_max_steps(200),
+                            |a: &[f32]| Ok(PendulumAction::new(a[0])),
+                            pendulum_ppo_config(),
+                            args.episodes,
+                            200,
+                            "pendulum",
+                            Some(2026),
+                        )
+                        .with_options(runtime_options.clone().into()),
+                    ),
                     HeadlessMetricFormat::GenericJsonlV1,
                 )
             }
@@ -89,14 +114,17 @@ pub fn execute(args: TrainArgs) -> anyhow::Result<()> {
             (Algorithm::A2c, Environment::Cartpole) => {
                 println!("Training A2C on CartPole for {} episodes...", args.episodes);
                 (
-                    Box::new(A2cTrainerAdapter::new(
-                        CartPole::with_max_steps(500),
-                        cartpole_a2c_config(),
-                        args.episodes,
-                        500,
-                        "cartpole",
-                        Some(2026),
-                    )),
+                    Box::new(
+                        A2cTrainerAdapter::new(
+                            CartPole::with_max_steps(500),
+                            cartpole_a2c_config(),
+                            args.episodes,
+                            500,
+                            "cartpole",
+                            Some(2026),
+                        )
+                        .with_options(runtime_options.clone().into()),
+                    ),
                     HeadlessMetricFormat::GenericJsonlV1,
                 )
             }
@@ -119,6 +147,7 @@ pub fn execute(args: TrainArgs) -> anyhow::Result<()> {
                 )
             }
             (Algorithm::Reinforce, Environment::Gridworld) => unreachable!("validated above"),
+            (_, Environment::Pendulum) => unreachable!("validated above"),
         };
 
     let metadata = trainer.metadata();
@@ -228,14 +257,20 @@ pub(crate) fn validate_algorithm_environment(
     env: Environment,
     use_per: bool,
 ) -> anyhow::Result<()> {
-    if algorithm != Algorithm::Dqn && env != Environment::Cartpole {
-        let algorithm_name = match algorithm {
+    if env == Environment::Pendulum && algorithm != Algorithm::Ppo {
+        anyhow::bail!("Pendulum supports only PPO");
+    }
+    if algorithm != Algorithm::Dqn && env == Environment::Gridworld {
+        let name = match algorithm {
             Algorithm::Ppo => "PPO",
             Algorithm::A2c => "A2C",
             Algorithm::Reinforce => "REINFORCE",
-            Algorithm::Dqn => unreachable!("DQN supports GridWorld"),
+            Algorithm::Dqn => unreachable!(),
         };
-        anyhow::bail!("{algorithm_name} supports only CartPole");
+        if algorithm == Algorithm::Ppo {
+            anyhow::bail!("PPO supports only CartPole and Pendulum");
+        }
+        anyhow::bail!("{name} supports only CartPole");
     }
     if algorithm != Algorithm::Dqn && use_per {
         anyhow::bail!("--use-per is supported only by DQN");
@@ -248,10 +283,12 @@ pub(crate) fn dqn_config(env: Environment, use_per: bool) -> DQNConfig {
         obs_dim: match env {
             Environment::Cartpole => 4,
             Environment::Gridworld => 2,
+            Environment::Pendulum => unreachable!("DQN does not support Pendulum"),
         },
         num_actions: match env {
             Environment::Cartpole => 2,
             Environment::Gridworld => 4,
+            Environment::Pendulum => unreachable!("DQN does not support Pendulum"),
         },
         hidden_dim: 64,
         lr: 1e-3,

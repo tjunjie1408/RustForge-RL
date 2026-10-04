@@ -9,6 +9,45 @@ contain breaking changes.
 
 ### Added
 
+- GPU A2C worker/runtime integration and CartPole headless/live CLI device routing.
+  Distinct bounded version-1 `RFGPUA2C` checkpoints save configuration, shared
+  actor/value parameters, Adam moments and update counter with atomic replacement.
+  Host validation precedes candidate model allocation; resume restores training
+  state with fresh environment/rollout/random streams. Runtime validates dimensions
+  before reset, propagates bootstrap errors, preserves pause/graceful/forced stop
+  behavior and reports eight JSONL metrics. Checkpoint continuation matches
+  uninterrupted updates bit for bit; CPU math remains unchanged.
+
+- GPU A2C agent with seeded categorical sampling, shared actor/value network,
+  resident Adam, successful-update counter and CPU episode-local rollout/GAE.
+  One combined update consumes active rows with raw advantages; unused capacity
+  and old log probabilities are ignored. Finite loss/gradient/squared-gradient
+  checks precede Adam. Actual CPU update parity, multi-step bootstrap boundaries,
+  rejected-input/optimizer recovery tests and a seeded environment-learning example
+  validate the agent; runtime/CLI and checkpoints are described above.
+
+- GPU A2C objective foundation: resident categorical policy-gradient, value MSE,
+  entropy and combined losses with detached rollout references, unnormalized
+  advantages, shape/device validation and finite frozen-input checks.
+  Reuses the seeded GPU actor/value network. Actual CPU A2C loss/gradient/four
+  Adam-update parity, f64 finite differences and a fixed-batch optimization example
+  validate the foundation; agent training is described above.
+
+- Continuous PPO CPU/GPU runtime adapter and Pendulum headless/live CLI routing.
+  A distinct bounded version-1 `RFGPUPC0` checkpoint stores Gaussian action bounds,
+  actor/critic parameters, both Adam states and separate update counters; restore
+  validates host metadata before device allocation and saves replace atomically.
+  Pause/resume and graceful/forced stop follow the existing on-policy controls.
+  Continuous metrics use generic JSONL without categorical entropy; environment,
+  rollout and random streams restart on resume.
+- Seeded continuous GPU PPO agent with Gaussian actor/value networks, explicit
+  sampling and shuffle RNGs, CPU episode-local rollout/GAE, shuffled partial
+  minibatches and separate resident actor/critic Adam state and update clocks.
+  Finite losses and both networks' gradients are checked before updates. A
+  target-action environment example verifies learning from fresh rollouts.
+  CPU continuous PPO also exposes seeded construction and caller-controlled RNG
+  APIs.
+
 - Optional `rustforge-tensor/gpu` backend: reusable `GpuContext`, rank-two
   `f32` WGSL matrix multiplication, a runnable example, and adapter-required
   CPU parity tests. CPU tensor operations and training stay on their existing
@@ -41,8 +80,7 @@ contain breaking changes.
   snapshots with hard synchronization, and device Adam training. Typed u32
   GPU action selection/gather and scatter gradients avoid index readbacks
   during training. CPU parity tests and a deterministic two-state environment
-  verify bootstrapping and learned policy behavior. Prioritized GPU replay
-  remains pending.
+  verify bootstrapping and learned policy behavior.
 
 - Versioned GPU DQN checkpoints save online/frozen-target parameters,
   Adam moments/hyperparameters and training clocks. Host validation precedes
@@ -55,10 +93,52 @@ contain breaking changes.
 - Optional `rustforge-cli/gpu` adds `--device cpu|gpu` to headless and live
   training, with GPU DQN `--resume` and `--checkpoint` routing through full
   training-state files. Agents are constructed inside their owning worker;
-  CPU remains the default. GPU requests reject unsupported algorithms, PER and
+  CPU remains the default. GPU requests reject unsupported algorithms and
   builds without support. Saves occur on completion or controlled stop; replay,
   environment and exploration state restart on resume. The live display and
   manifest record the selected backend.
+
+- GPU DQN supports prioritized replay with finite nonnegative importance
+  weights and resident weighted TD loss. Absolute pre-update TD errors return
+  to the CPU replay buffer for priority updates. Headless/live CLI modes accept
+  `--device gpu --use-per`; checkpoints preserve replay mode and beta schedule
+  using the existing version-1 format. Replay contents, priorities and sampler
+  RNG still restart on resume. CPU parity covers losses, gradients, updates and
+  seeded priority feedback; invalid weights and TD overflow fail before updates.
+
+- GPU categorical policy foundations: stable row log-softmax/softmax,
+  exponential gradients, and differentiable clamp/minimum matching CPU clipping
+  boundaries. `agent::gpu_ppo` builds clipped PPO policy loss, mean categorical
+  entropy and value MSE with detached rollout references. Explicit diagnostic
+  validation rejects overflowing importance ratios even when clipping hides them
+  in a finite loss. CPU/finite-difference parity, optimizer update tests and a
+  fixed device minibatch example validate this stage.
+
+- Discrete GPU PPO actor/critic agent with seeded sampling and shuffled partial
+  minibatches. CPU rollout collection computes GAE independently for each episode,
+  with value bootstrap on truncation/step limits and zero bootstrap on terminals.
+  Resident Adam updates guard objective, ratio and gradient finiteness. CPU parity,
+  invalid-input tests and seeded environment learning validate the library agent;
+  GPU PPO CLI/runtime selection and checkpoints are available below.
+
+- GPU PPO Discrete live/headless runtime and CartPole CLI support via `--device
+  gpu`, with `--resume`/`--checkpoint`. Version-1 `RFGPUPPO` checkpoints persist
+  configuration, actor/critic parameters, Adam moments and update count with
+  bounded validation and atomic replacement. Resume uses saved configuration;
+  environment, rollout, random streams and run counters restart. Pause/resume and
+  controlled stops preserve the existing runtime contract; forced partial
+  rollouts are discarded before checkpointing. GPU checkpoints reject algorithm,
+  version, shape, numerical and clock mismatches.
+- Seeded the existing CPU XOR convergence test to remove random-initialization
+  failures while retaining its loss and prediction assertions.
+
+- Continuous GPU policy foundations: logarithm, stable tanh, exact-shape division
+  gradients, action-column reductions and numeric clipping for detached inputs.
+  `GpuGaussianTransform` evaluates scaled/squashed diagonal Gaussian densities,
+  base Gaussian entropy and reparameterized sampling from frozen supplied noise.
+  Continuous PPO objectives match CPU's separate policy/value updates without
+  an entropy bonus. CPU/f64/gradient/Adam parity and a fixed objective example
+  validate these APIs; continuous agents/runtime are described above.
 
 - `rustforge monitor` follows Stable-Baselines3 logs: `Monitor` wrapper files
   (`monitor.csv`, one row per episode) and CSV logger files (`progress.csv`,
@@ -66,6 +146,10 @@ contain breaking changes.
   the header.
 
 ### Fixed
+
+- CPU Gaussian stored-action inversion evaluates atanh in `f64` before returning
+  `f32`, preventing precision loss near the negative action endpoint and restoring
+  symmetric densities. A fixed endpoint test validates the f64 reference.
 
 - GPU contexts cache process compute resources while preserving separate tensor
   ownership scopes. This avoids wgpu 0.19 EGL display, context-lock and queue
@@ -103,6 +187,10 @@ First public release.
 - Fallible APIs `try_train_dqn` and `DQN::try_select_greedy_action`.
 
 ### Fixed
+
+- CPU Gaussian stored-action inversion evaluates atanh in `f64` before returning
+  `f32`, preventing precision loss near the negative action endpoint and restoring
+  symmetric densities. A fixed endpoint test validates the f64 reference.
 
 - Non-finite values no longer crash training: NaN Q-values end a run as a
   reported failure, non-finite losses are dropped from metric records, and
