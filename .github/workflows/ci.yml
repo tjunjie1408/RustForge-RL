@@ -195,3 +195,7 @@ jobs:
         run: cargo test --locked -p rustforge-rl --features gpu --lib gpu_reinforce::agent::checkpoint
       - name: Verify GPU REINFORCE checkpoint/runtime continuation and controls
         run: cargo test --locked -p rustforge-rl --features gpu --test gpu_reinforce_checkpoint --test gpu_reinforce_runtime -- --include-ignored
+      - name: Verify GPU TD3 objectives, action smoothing and CPU Adam parity
+        run: cargo test --locked -p rustforge-rl --features gpu --test gpu_td3_loss -- --include-ignored
+      - name: Optimize fixed GPU TD3 twin-critic objective
+        run: cargo run --locked -p rustforge-rl --features gpu --example gpu_td3_objective

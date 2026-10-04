@@ -40,7 +40,7 @@ REINFORCE worker/CLI routing, checkpoints and runtime controls.
 | 9a | GPU REINFORCE objective foundation | Complete: categorical Monte Carlo policy loss, resident optional mean baseline, seeded policy and actual CPU gradient/Adam parity |
 | 9b | GPU REINFORCE agent training | Complete: owned policy/Adam/clock, seeded action sampling, CPU Monte Carlo rollouts, active-row CPU parity and environment learning |
 | 9c | GPU REINFORCE runtime and checkpoints | Complete: worker-owned CPU/GPU agents, CartPole headless/live CLI, distinct policy/Adam checkpoints, metrics and controls |
-| 10a | GPU TD3 objective foundation | Next: twin-critic targets/loss, deterministic policy objective and supplied-noise smoothing with CPU gradient parity |
+| 10a | GPU TD3 objective foundation | Complete: detached twin-critic targets/loss, actor objective, supplied-noise smoothing/scaling and CPU/f64 gradient/Adam parity |
 
 ## Architecture decisions
 
@@ -1988,13 +1988,103 @@ were explicitly rerun. Counts distinguish ignored native tests from llvmpipe che
 executed separately. GPU CI runs the codec and checkpoint/runtime suites, and its
 existing CLI device suite includes the REINFORCE route.
 
-## Next implementation: stage 10a
+## Stage 10a: GPU TD3 objective foundations
 
-Add GPU TD3 objective foundations matching the existing CPU algorithm: twin-critic
-Bellman targets with detached target estimates and done masking, summed critic MSE,
-and the deterministic actor objective `-mean(Q1)`. Use supplied target-noise samples
-to verify clipped smoothing in normalized action space and action-bound scaling.
-Establish loss/gradient and fixed-update parity before owned actor/twin-critic,
-delayed updates, target synchronization and continuous replay integration in later
-stages. Physical GPU profiling and full experiment-state persistence remain
-separate work.
+`agent::gpu_td3::td3_critic_loss` matches CPU TD3's detached target:
+`y = reward + gamma * (1 - done) * min(target_q1, target_q2)`.
+The loss sums the two current-critic MSEs. Target estimates, rewards and masks
+receive no gradients; only current Q predictions remain differentiable. Matching
+nonempty [batch,1] shapes and ownership are checked before graph construction.
+Discount is finite in [0,1]; done masks are checked in [0,1], retaining CPU arithmetic
+for fractional masks. Terminal rows reduce to immediate reward. Checked metrics
+validate raw inputs, targets and both critic losses before backward.
+
+`td3_actor_loss` computes `-mean(Q1)` and leaves the input gradient graph live.
+Callers supply Q1 evaluated at scaled deterministic actor actions and control
+critic freezing/update cadence. Tests propagate gradients through an actual seeded
+Linear actor, tanh, action scaling and a fixed differentiable critic, then compare
+four CPU/GPU Adam updates. No owned networks, replay or scheduling are added yet.
+
+`GpuTd3ActionTransform` validates nonempty matching finite ordered action bounds
+and finite positive affine scale/bias before uploading constants. The actor path
+scales tanh-bounded normalized actions without adding another clamp, matching CPU
+TD3. The target path uses supplied standard-normal noise:
+`clip(raw + clip(std * noise, -noise_clip, noise_clip), -1, 1)`, followed by affine
+action scaling. Noise deviation/clip may be zero and must be finite/nonnegative.
+Target outputs are detached; no RNG is consumed. Actor scaling retains gradients.
+
+All objective/action graph construction and bound expansion stay on device with
+no host readback. Explicit `checked_metrics`, `checked_loss` and action `checked`
+validate before backward. Snapshots include raw noise, scaled noise and the
+pre-clamp action sum so clipping cannot hide invalid inputs or intermediate
+overflow. Invalid masked target estimates are also rejected. Finite forward values
+do not guarantee safe backward/Adam arithmetic; callers check gradients and their
+squares before optimizer steps, as the example does.
+
+```bash
+cargo test --locked -p rustforge-rl --features gpu --test gpu_td3_loss -- --include-ignored
+cargo run --locked -p rustforge-rl --features gpu --example gpu_td3_objective
+```
+
+The fixed example trains two seeded affine critics on two identity feature vectors.
+Rewards `[1,-1]`, masks `[0,1]`, target estimates `[0.5,2]`/`[1,3]` and discount 0.9
+produce fixed targets `[1.45,-1]`. Combined Adam at rate 0.03 reduces twin-critic
+loss from **6.055205** to **3.031658480e-9** in 200 updates on Mesa llvmpipe GL.
+This validates objective optimization, not replay/environment learning or physical
+GPU performance.
+
+### Deviations from Plan (stage 10a)
+
+- Reused existing GPU minimum, clamp, tanh, reduction and bias expansion operators;
+  no tensor/autograd/NN or CPU TD3 implementation changes were needed.
+- Parity compares the actual CPU TD3 formulas and CPU Adam on seeded affine critics
+  and actor paths. Complete CPU TD3 agent/noise/cadence parity belongs to stage 10b,
+  since its existing constructor/noise generation are unseeded.
+- Supplied noise is explicitly standard-normal and is multiplied by the configured
+  deviation before clipping in normalized action space, matching CPU TD3's order.
+- Added raw/intermediate finite snapshots and bounded done-mask checks. Fractional
+  masks in [0,1] retain CPU arithmetic; invalid/nonfinite inputs are rejected.
+- The fixed example uses 200 updates to meet its convergence threshold; an initial
+  100-update run did not reach loss below 0.001. The threshold was retained.
+- Owned networks, replay, delayed updates and target synchronization remain 10b;
+  runtime/CLI/checkpoints remain 10c. Physical GPU tests stay deferred by user
+  instruction.
+
+### Issue Resolution Progress (stage 10a)
+
+| Work | Issue ID | Result |
+| --- | --- | --- |
+| Detached twin-target Bellman values and summed critic MSE | Unassigned | Complete, terminal/fractional masks, gamma endpoints and target detachment |
+| Deterministic actor objective and differentiable affine scaling | Unassigned | Complete, tanh/scaling/fixed-critic gradients and four CPU Adam updates |
+| Supplied-noise target smoothing | Unassigned | Complete, normalized clipping before scaling, asymmetric bounds, zero noise/clip and detached outputs |
+| CPU/f64 loss, gradient and fixed-update parity | Unassigned | Complete, independent finite differences and four twin-critic CPU Adam updates |
+| Input/config/ownership/finite guards | Unassigned | Complete, invalid shapes/masks/bounds, foreign contexts and clipping-hidden overflow |
+| Fixed objective example and GPU CI | Unassigned | Complete, combined critic loss below 4e-9 after 200 updates |
+| Owned actor/twin critics/replay/delayed updates | Unassigned | Next (10b) |
+
+### Verification (stage 10a)
+
+| Check | Passing result | Delta from stage 9c |
+| --- | --- | --- |
+| Native workspace/all features, excluding Python | 1,085 passed, 155 ignored, 0 failed | +2 ordinary config/bounds tests; +5 adapter-required objective tests |
+| Adapter-required TD3 objective suite | 5 passed, 0 failed | CPU/f64 loss/gradient, critic/actor Adam parity, smoothing and rejection |
+| Fixed GPU TD3 twin-critic example | Passed | Loss 6.055205 to 3.031658480e-9; 200 Adam updates |
+| Workspace Clippy/all targets/all features, warnings denied | Passed | Excluding Python |
+| Rust 1.75 workspace/all targets/all features | Passed | Excluding Python; no dependency/lockfile changes |
+| Default-feature workspace/all-targets check | Passed | Excluding Python; new module/example gated |
+| Formatting and patch whitespace | Passed | `cargo fmt --all -- --check`, `git diff --check` |
+
+The five adapter-required tests cover (1) twin targets/losses, detached references,
+gamma endpoints, masks and independent f64 finite differences, (2) four actual CPU
+Adam updates of seeded affine twin critics, (3) actor gradients through tanh,
+affine scaling and a fixed critic with four CPU Adam updates, (4) supplied-noise
+smoothing order, asymmetric bounds, zero-noise/clip and detached outputs, and
+(5) malformed/empty shapes, masks, ownership, nonfinite raw inputs, masked invalid
+targets, reduction overflow and clipping-hidden noise/action overflow. Two ordinary
+tests validate loss/smoothing configuration and affine bounds without allocating
+an adapter. Native execution leaves adapter checks ignored; all five were run
+explicitly on llvmpipe. GPU CI runs the suite and fixed objective example.
+
+## Next implementation: stage 10b
+
+Continue the next documented GPU stage; physical GPU validation remains deferred.
