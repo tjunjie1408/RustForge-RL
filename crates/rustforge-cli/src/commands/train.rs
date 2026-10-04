@@ -135,14 +135,17 @@ pub fn execute(args: TrainArgs) -> anyhow::Result<()> {
                     args.episodes
                 );
                 (
-                    Box::new(ReinforceTrainerAdapter::new(
-                        CartPole::with_max_steps(500),
-                        cartpole_reinforce_config(),
-                        args.episodes,
-                        500,
-                        "cartpole",
-                        Some(2026),
-                    )),
+                    Box::new(
+                        ReinforceTrainerAdapter::new(
+                            CartPole::with_max_steps(500),
+                            cartpole_reinforce_config(),
+                            args.episodes,
+                            500,
+                            "cartpole",
+                            Some(2026),
+                        )
+                        .with_options(runtime_options.clone().into()),
+                    ),
                     HeadlessMetricFormat::GenericJsonlV1,
                 )
             }

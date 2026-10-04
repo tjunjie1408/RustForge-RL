@@ -59,7 +59,7 @@ impl Device {
 
 #[derive(Clone, Debug, Default, Args)]
 pub struct ExecutionArgs {
-    /// GPU supports DQN, PPO and A2C; requires the gpu feature.
+    /// GPU supports DQN, PPO, A2C and REINFORCE; requires the gpu feature.
     #[arg(long, value_enum, default_value_t = Device::Cpu)]
     pub device: Device,
     /// Restore GPU training state; environment, rollout/replay and random streams restart.
@@ -76,13 +76,6 @@ impl ExecutionArgs {
         algorithm: Algorithm,
         use_per: bool,
     ) -> anyhow::Result<rustforge_rl::agent::DqnRuntimeOptions> {
-        if !matches!(algorithm, Algorithm::Dqn | Algorithm::Ppo | Algorithm::A2c)
-            && (self.device == Device::Gpu || self.resume.is_some() || self.checkpoint.is_some())
-        {
-            anyhow::bail!(
-                "--device gpu, --resume and --checkpoint are supported only by DQN, PPO and A2C"
-            );
-        }
         let options = rustforge_rl::agent::DqnRuntimeOptions {
             device: match self.device {
                 Device::Cpu => rustforge_rl::agent::DqnDevice::Cpu,
@@ -95,6 +88,8 @@ impl ExecutionArgs {
             rustforge_rl::agent::PpoRuntimeOptions::from(options.clone()).validate()
         } else if algorithm == Algorithm::A2c {
             rustforge_rl::agent::A2cRuntimeOptions::from(options.clone()).validate()
+        } else if algorithm == Algorithm::Reinforce {
+            rustforge_rl::agent::ReinforceRuntimeOptions::from(options.clone()).validate()
         } else {
             options.validate(use_per)
         }

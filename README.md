@@ -291,7 +291,7 @@ rustforge monitor logs/progress.csv   # rolling mean reward, loss, exploration/e
 | **Phase 5** | Python Bindings (PyO3) | ✅ Complete |
 | **Phase 5** | Terminal Training Console (`rustforge run` / `monitor`) | ✅ Complete |
 | **Phase 5** | Benchmarks vs SB3 | ✅ Complete (DQN/CartPole; ~22× faster) |
-| **Phase 5** | GPU Support (wgpu) | 🚧 Device tensors, autograd, neural-network modules and GPU DQN/Double DQN and checkpoint/resume, CLI/runtime device selection, prioritized replay and discrete PPO rollout/GAE training with CLI/runtime and checkpoints implemented; continuous Gaussian/PPO objectives, seeded continuous rollout/GAE agent training and Pendulum CLI/runtime/checkpoints implemented; GPU A2C objectives implemented; GPU A2C rollout/GAE agent training implemented; A2C CartPole runtime/CLI and checkpoints implemented; REINFORCE objective foundation implemented; REINFORCE Monte Carlo agent training implemented; REINFORCE runtime/checkpoints next, hardware validation pending |
+| **Phase 5** | GPU Support (wgpu) | 🚧 Device tensors, autograd, neural-network modules and GPU DQN/Double DQN and checkpoint/resume, CLI/runtime device selection, prioritized replay and discrete PPO rollout/GAE training with CLI/runtime and checkpoints implemented; continuous Gaussian/PPO objectives, seeded continuous rollout/GAE agent training and Pendulum CLI/runtime/checkpoints implemented; GPU A2C objectives implemented; GPU A2C rollout/GAE agent training implemented; A2C CartPole runtime/CLI and checkpoints implemented; REINFORCE objective foundation implemented; REINFORCE Monte Carlo agent training implemented; REINFORCE CartPole runtime/CLI and checkpoints implemented; TD3 foundations next, hardware validation pending |
 
 ### GPU development
 
@@ -449,7 +449,7 @@ counters restart; this restores training state without reproducing an entire
 experiment. Completion and controlled stops save atomically, while failed runs
 leave the checkpoint unchanged. Force-stop during an episode discards its partial
 rollout; pause/resume retains it. Interactive checkpoint requests remain unsupported.
-`--use-per` is DQN only, and the GPU REINFORCE CLI route is not available.
+`--use-per` is DQN only. GPU routes require rebuilding with `--features gpu`.
 
 Continuous-policy GPU foundations provide stable logarithm/tanh and gradients,
 action-column reductions, and tanh-squashed diagonal Gaussian densities with
@@ -548,8 +548,8 @@ CPU REINFORCE's Linear/ReLU/Linear architecture. Its loss uses detached Monte Ca
 advantages with an optional batch-mean baseline, without variance normalization.
 Mean subtraction stays on device. `checked_loss()` validates inputs, centered
 advantages and the scalar loss before backward; check gradients and their squares
-before Adam. Owned rollout training is available below; runtime/CLI and
-checkpoints follow in stage 9c.
+before Adam. Owned rollout training and CartPole runtime/CLI/checkpoints are
+available as described below.
 
 ```bash
 cargo test --locked -p rustforge-rl --features gpu --test gpu_reinforce_loss -- --include-ignored
@@ -573,6 +573,23 @@ cargo run --locked -p rustforge-rl --features gpu --example gpu_reinforce_traini
 
 The seeded bandit example raises the rewarding action's probability from 0.046995
 to 0.999581 in 60 fresh rollout updates with the mean baseline enabled.
+
+GPU REINFORCE also supports CartPole headless/live training:
+
+```bash
+cargo run --locked -p rustforge-cli --features gpu -- train reinforce --device gpu --episodes 1 --checkpoint target/reinforce.chk --no-log
+cargo run --locked -p rustforge-cli --features gpu -- train reinforce --device gpu --episodes 1 --resume target/reinforce.chk --checkpoint target/reinforce.chk --no-log
+cargo run --locked -p rustforge-cli --features gpu -- run reinforce --device gpu --episodes 10
+```
+
+Version-1 `RFGPUREI` checkpoints atomically save the policy, Adam moments,
+configuration (including the mean-baseline flag) and update counter. Resume uses
+saved configuration with fresh environment, rollout and action RNG streams.
+Pause retains the rollout; graceful stop completes it, while forced stop discards
+a partial rollout and saves completed updates. Runtime errors preserve the prior
+checkpoint. CPU checkpoint flags and interactive checkpoint requests are unsupported.
+The five-metric JSONL schema reports episode/moving-average reward, policy loss,
+rollout size and throughput. Physical GPU validation remains deferred.
 
 See [the GPU implementation plan](docs/gpu-development.md) and its saved benchmark.
 

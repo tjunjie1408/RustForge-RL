@@ -9,6 +9,15 @@ contain breaking changes.
 
 ### Added
 
+- GPU REINFORCE worker/runtime integration and CartPole headless/live CLI routing.
+  Distinct bounded version-1 `RFGPUREI` checkpoints atomically save policy parameters,
+  Adam state, configuration/baseline flag and update counter. Host validation precedes
+  candidate model allocation; resume uses saved configuration and fresh environment,
+  rollout and action RNG streams. Runtime validates environment spaces, finite inputs
+  and Monte Carlo returns, retains controls and the five-metric JSONL schema, and
+  saves only on completion/controlled stop. Tests cover bit-identical continued
+  updates in both baseline modes, failed restore/save preservation and CLI routing.
+
 - Owned GPU REINFORCE agent with seeded categorical sampling, resident policy/Adam
   and successful-update counter. Episode-local CPU Monte Carlo rollouts use zero
   final bootstrap for termination/truncation/limits. One update consumes active
@@ -16,7 +25,7 @@ contain breaking changes.
   Finite input/loss/gradient/squared-gradient guards run before Adam. CPU sampling
   and update parity, analytic returns, rejection/recovery and fresh environment
   learning are tested. CPU configuration gains Clone/Debug/PartialEq; training math
-  is unchanged. Runtime/CLI and checkpoints follow in stage 9c.
+  is unchanged. Runtime/CLI and checkpoints are described above.
 
 - GPU REINFORCE objective foundation with a seeded CPU-matching policy network,
   stable categorical policy loss, detached advantages and optional resident
@@ -24,7 +33,7 @@ contain breaking changes.
   advantages/loss. Tests cover f64 gradient parity, both baseline modes, four
   actual CPU Adam updates, singleton/constant batches, extreme logits and invalid
   inputs. A fixed-objective example and GPU CI steps verify optimization; owned
-  rollout training is described above, with runtime/CLI/checkpoints still pending.
+  rollout training and runtime/CLI/checkpoints are described above.
 
 - GPU A2C worker/runtime integration and CartPole headless/live CLI device routing.
   Distinct bounded version-1 `RFGPUA2C` checkpoints save configuration, shared

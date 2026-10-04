@@ -633,3 +633,46 @@ fn persistence_failure_recovery_and_flush_are_authoritative() {
     assert!(!status.complete);
     assert_eq!(status.failures, 2);
 }
+
+#[test]
+fn mismatched_dimensions_invalid_config_and_cpu_resume_fail_before_reset() {
+    struct BeforeReset;
+    impl Environment for BeforeReset {
+        type Obs = [f32; 1];
+        type Act = OnlyAction;
+        type Info = ();
+        fn reset(&mut self, _: Option<u64>) -> (Self::Obs, ()) {
+            panic!("invalid runtime must fail before reset")
+        }
+        fn step(&mut self, _: OnlyAction) -> (Self::Obs, f32, bool, bool, ()) {
+            panic!("invalid runtime must fail before step")
+        }
+        fn action_space(&self) -> Space {
+            Space::discrete(1)
+        }
+        fn observation_space(&self) -> Space {
+            Space::continuous(vec![0.], vec![1.])
+        }
+    }
+    for kind in 0..4 {
+        let mut c = config();
+        match kind {
+            0 => c.obs_dim = 2,
+            1 => c.num_actions = 2,
+            2 => c.lr = 0.,
+            _ => {}
+        }
+        let options = rustforge_rl::agent::ReinforceRuntimeOptions {
+            resume: if kind == 3 {
+                Some("missing.chk".into())
+            } else {
+                None
+            },
+            ..Default::default()
+        };
+        let adapter = ReinforceTrainerAdapter::new(BeforeReset, c, 1, 3, "invalid", Some(2026))
+            .with_options(options);
+        let (context, _, _, _, _) = runtime(Box::new(RecordingSink::default()));
+        assert!(Box::new(adapter).run(context).is_err());
+    }
+}

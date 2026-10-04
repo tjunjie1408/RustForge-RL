@@ -55,7 +55,7 @@ fn log_softmax_var(logits: &Variable) -> Variable {
 }
 
 /// Configuration for the REINFORCE agent.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct REINFORCEConfig {
     /// Observation dimensionality.
     pub obs_dim: usize,
@@ -256,6 +256,25 @@ impl REINFORCE {
     pub fn gamma(&self) -> f32 {
         self.config.gamma
     }
+}
+
+pub(crate) fn validate_reinforce_config(config: &REINFORCEConfig) -> Result<(), &'static str> {
+    if config.obs_dim == 0
+        || config.hidden_dim == 0
+        || config.num_actions == 0
+        || config.obs_dim.checked_mul(config.hidden_dim).is_none()
+        || config.hidden_dim.checked_mul(config.num_actions).is_none()
+    {
+        return Err("REINFORCE dimensions must be positive with representable parameter sizes");
+    }
+    if !config.lr.is_finite()
+        || config.lr <= 0.
+        || !config.gamma.is_finite()
+        || !(0. ..=1.).contains(&config.gamma)
+    {
+        return Err("REINFORCE requires positive finite learning rate and discount in [0,1]");
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -433,15 +433,29 @@ fn training_plan(
                 ("Discount gamma".into(), config.gamma.to_string()),
                 ("Mean baseline".into(), config.use_baseline.to_string()),
             ];
+            let display_config = if execution.resume.is_some() {
+                vec![
+                    (
+                        "Agent configuration".into(),
+                        "Restored from checkpoint".into(),
+                    ),
+                    ("Rollout / random streams".into(), "New run".into()),
+                ]
+            } else {
+                display_config
+            };
             Ok(TrainingPlan {
-                trainer: Box::new(ReinforceTrainerAdapter::new(
-                    CartPole::with_max_steps(max_steps),
-                    config,
-                    episodes,
-                    max_steps,
-                    "cartpole",
-                    Some(2026),
-                )),
+                trainer: Box::new(
+                    ReinforceTrainerAdapter::new(
+                        CartPole::with_max_steps(max_steps),
+                        config,
+                        episodes,
+                        max_steps,
+                        "cartpole",
+                        Some(2026),
+                    )
+                    .with_options(runtime_options.clone().into()),
+                ),
                 display_config,
                 metrics: MetricFormat::GenericJsonlV1,
             })
@@ -509,7 +523,6 @@ mod tests {
     use crate::cli::{Algorithm, Environment};
 
     #[cfg(feature = "gpu")]
-    #[cfg(feature = "gpu")]
     #[test]
     fn a2c_gpu_plan_routes_options_and_labels_restored_configuration() {
         let options = crate::cli::ExecutionArgs {
@@ -520,6 +533,32 @@ mod tests {
         let plan =
             training_plan(Algorithm::A2c, Environment::Cartpole, 1, false, &options).unwrap();
         assert_eq!(plan.trainer.metadata().algorithm, "a2c");
+        assert_eq!(plan.metrics.schema(), "rustforge-metrics-jsonl-v1");
+        assert!(plan
+            .display_config
+            .iter()
+            .any(|(name, value)| name == "Agent configuration"
+                && value == "Restored from checkpoint"));
+        assert!(!plan.trainer.metadata().capabilities.checkpoint);
+    }
+
+    #[cfg(feature = "gpu")]
+    #[test]
+    fn reinforce_gpu_plan_routes_options_and_labels_restored_configuration() {
+        let options = crate::cli::ExecutionArgs {
+            device: crate::cli::Device::Gpu,
+            resume: Some("reinforce.chk".into()),
+            checkpoint: Some("reinforce.chk".into()),
+        };
+        let plan = training_plan(
+            Algorithm::Reinforce,
+            Environment::Cartpole,
+            1,
+            false,
+            &options,
+        )
+        .unwrap();
+        assert_eq!(plan.trainer.metadata().algorithm, "reinforce");
         assert_eq!(plan.metrics.schema(), "rustforge-metrics-jsonl-v1");
         assert!(plan
             .display_config

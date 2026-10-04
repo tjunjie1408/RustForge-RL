@@ -12,7 +12,8 @@ adds owned agent sampling, CPU rollout/GAE and fresh-environment learning.
 Stage 8c adds A2C worker/CLI routing, checkpoints and runtime controls.
 Stage 9a adds the REINFORCE categorical objective, optional mean baseline and
 seeded policy network. Stage 9b adds an owned REINFORCE agent, CPU episode-local
-Monte Carlo returns, guarded updates and environment learning.
+Monte Carlo returns, guarded updates and environment learning. Stage 9c adds
+REINFORCE worker/CLI routing, checkpoints and runtime controls.
 
 ## Implementation stages
 
@@ -38,7 +39,8 @@ Monte Carlo returns, guarded updates and environment learning.
 | 8c | GPU A2C runtime and checkpoints | Complete: worker-owned CPU/GPU agents, CartPole headless/live CLI, distinct shared-network/Adam checkpoints, metrics and controls |
 | 9a | GPU REINFORCE objective foundation | Complete: categorical Monte Carlo policy loss, resident optional mean baseline, seeded policy and actual CPU gradient/Adam parity |
 | 9b | GPU REINFORCE agent training | Complete: owned policy/Adam/clock, seeded action sampling, CPU Monte Carlo rollouts, active-row CPU parity and environment learning |
-| 9c | GPU REINFORCE runtime and checkpoints | Next: worker/CLI routing, bounded policy/Adam checkpoints, controls and resume contracts |
+| 9c | GPU REINFORCE runtime and checkpoints | Complete: worker-owned CPU/GPU agents, CartPole headless/live CLI, distinct policy/Adam checkpoints, metrics and controls |
+| 10a | GPU TD3 objective foundation | Next: twin-critic targets/loss, deterministic policy objective and supplied-noise smoothing with CPU gradient parity |
 
 ## Architecture decisions
 
@@ -1892,13 +1894,107 @@ test runs without adapter allocation. The existing four objective tests were
 rerun explicitly; native workspace execution leaves all eight adapter-required
 REINFORCE checks ignored. GPU CI runs the agent suite and environment example.
 
-## Next implementation: stage 9c
+## Stage 9c: GPU REINFORCE runtime and checkpoints
 
-Integrate GPU REINFORCE with the existing worker and CartPole headless/live CLI.
-Add distinct bounded policy/Adam/configuration/update-clock checkpoints and verify
-bit-identical continued updates after restore. Preserve existing Monte Carlo
-boundaries, pause/resume, graceful completion and forced partial-rollout discard.
-Validate restored configuration against the environment before reset, propagate
-errors without overwriting checkpoints, and document fresh environment/rollout/RNG
-streams on resume. Physical GPU profiling and full experiment-state persistence
-remain separate work.
+`ReinforceTrainerAdapter::with_options` chooses CPU or GPU inside the worker;
+GPU values do not cross thread boundaries. CPU remains the default, with unchanged
+training and sampling math. GPU CartPole training is available through
+`train reinforce --device gpu` and `run reinforce --device gpu`. Requested spaces
+are checked before fresh agent construction. On resume, saved configuration
+replaces requested values and is checked against the environment before reset.
+The saved discount and baseline flag govern training. Existing derived model,
+environment and action seeds remain separated.
+
+The distinct version-1 `RFGPUREI` checkpoint stores configuration, four policy
+parameter tensors, Adam hyperparameters/moments and the successful-update counter.
+It follows the existing 256 MiB bounded little-endian codec and atomic sibling-file
+replacement pattern. Exact tensor shapes/counts, finite values, nonnegative second
+moments, matching learning rates, consistent clocks and moment presence are
+validated on the host before candidate model allocation. Wrong algorithm/version,
+truncated/trailing data and malformed metadata are rejected. A failed restore
+leaves the live agent unchanged; a failed save preserves the destination file.
+
+Resume persists training state rather than the whole experiment: gradients,
+environment, rollout, random streams, run counters and metrics are not restored.
+New environment/action streams start each run. CPU checkpoint flags are rejected,
+and interactive checkpoint requests remain unsupported by the capability contract.
+Normal completion and controlled stops save when requested; runtime failures leave
+the previous checkpoint untouched.
+
+The worker retains pause/resume, graceful stop and forced stop behavior. Pause
+keeps the current rollout; graceful stop finishes and trains the episode; forced
+stop discards a partial rollout but trains an already-completed boundary episode.
+Monte Carlo returns use zero final bootstrap for all episode boundaries. Runtime
+checks finite observations, logits, rewards, accumulated episode reward and returns.
+The unchanged five-metric JSONL schema reports episode/moving-average reward,
+policy loss, rollout size and throughput. Live plans forward options and identify
+restored configuration plus fresh rollout/random streams.
+
+```bash
+cargo run --locked -p rustforge-cli --features gpu -- train reinforce --device gpu --episodes 1 --checkpoint target/reinforce.chk --no-log
+cargo run --locked -p rustforge-cli --features gpu -- train reinforce --device gpu --episodes 1 --resume target/reinforce.chk --checkpoint target/reinforce.chk --no-log
+cargo test --locked -p rustforge-rl --features gpu --test gpu_reinforce_checkpoint --test gpu_reinforce_runtime -- --include-ignored
+```
+
+### Deviations from Plan (stage 9c)
+
+- Added serde configuration derives and shared host validation for CPU/GPU runtime
+  construction. CPU training math is unchanged; invalid configurations now fail early.
+- Preserved the detailed observation-dimension error and fresh-run pre-construction
+  validation while checking saved dimensions after checkpoint load.
+- The REINFORCE codec follows the established bounded/atomic pattern with its own
+  magic/error/API, preserving all DQN/PPO/A2C checkpoint formats.
+- Interactive checkpoint requests remain unsupported; runtime options implement
+  final save/resume. Environment, rollout and RNG persistence remain out of scope.
+- Physical GPU tests remain deferred by user instruction. Compute tests use Mesa
+  llvmpipe GL; live option binding is tested without actual TTY rendering. The fresh
+  CartPole CLI smoke demonstrates routing/finite training, not convergence.
+
+### Issue Resolution Progress (stage 9c)
+
+| Work | Issue ID | Result |
+| --- | --- | --- |
+| Distinct bounded policy/Adam checkpoint codec | Unassigned | Complete, host metadata validation and atomic failure cleanup |
+| Bit-identical checkpoint continuation | Unassigned | Complete, three saved plus three resumed updates in each baseline mode, matching parameters/loss/final bytes |
+| Worker-owned CPU/GPU backend and saved configuration | Unassigned | Complete, restored discount/baseline and early dimension/action validation |
+| Pause, graceful stop and forced partial-rollout handling | Unassigned | Complete, preserved rollouts and completed-update checkpoint counts |
+| Headless/live CLI and five finite JSONL metrics | Unassigned | Complete, fresh/resumed runs, live plan binding, feature/flag/path validation |
+| Runtime error and failed checkpoint preservation | Unassigned | Complete, missing resume, restored/fresh dimension errors, nonfinite observation/reward and reward overflow |
+| Physical GPU validation | Unassigned | Deferred by user instruction |
+
+### Verification (stage 9c)
+
+| Check | Passing result | Delta from stage 9b |
+| --- | --- | --- |
+| Native workspace/all features, excluding Python | 1,083 passed, 150 ignored, 0 failed | +6 ordinary tests; +7 adapter-required tests |
+| Adapter-required suites executed | 32 passed, 0 failed | REINFORCE objective/agent/checkpoint/runtime 14; A2C/discrete PPO/continuous PPO runtime 12; CLI GPU routes 6 |
+| Host REINFORCE checkpoint codec | 3 passed, 0 failed | Header/version/truncation/trailing, malformed metadata and bounded/atomic file operations |
+| GPU CLI device suite | 8 passed, 0 failed | Six adapter-required routes plus two ordinary validation tests |
+| Default-feature CLI device validation | 2 passed, 0 failed | Includes REINFORCE feature rejection and CPU checkpoint flags |
+| Final runtime suite after dimension-error refinement | 4 passed, 0 failed | Restored/fresh spaces, finite errors, controls and metrics |
+| Fresh GPU REINFORCE CartPole CLI smoke | Passed | One episode, 11 steps, checkpoint written; no convergence claim |
+| Python extension rebuild and pytest | 32 passed, 0 failed | Existing Python behavior retained |
+| Workspace Clippy/all targets/all features, warnings denied | Passed | Excluding Python |
+| Rust 1.75 workspace/all targets/all features | Passed | Excluding Python; no dependency/lockfile changes |
+| Default-feature workspace/all-targets check | Passed | Excluding Python |
+| Formatting and patch whitespace | Passed | `cargo fmt --all -- --check`, `git diff --check` |
+
+Six new ordinary tests cover codec validation (three), runtime options, CPU
+pre-reset validation and live plan binding. Seven new adapter-required tests cover
+checkpoint continuation/restoration (two), runtime resume/controls/errors/pause
+(four) and the CLI checkpoint route (one). Existing native CPU controls/seed tests
+pass; adapter-required REINFORCE foundation/agent and other on-policy runtime suites
+were explicitly rerun. Counts distinguish ignored native tests from llvmpipe checks
+executed separately. GPU CI runs the codec and checkpoint/runtime suites, and its
+existing CLI device suite includes the REINFORCE route.
+
+## Next implementation: stage 10a
+
+Add GPU TD3 objective foundations matching the existing CPU algorithm: twin-critic
+Bellman targets with detached target estimates and done masking, summed critic MSE,
+and the deterministic actor objective `-mean(Q1)`. Use supplied target-noise samples
+to verify clipped smoothing in normalized action space and action-bound scaling.
+Establish loss/gradient and fixed-update parity before owned actor/twin-critic,
+delayed updates, target synchronization and continuous replay integration in later
+stages. Physical GPU profiling and full experiment-state persistence remain
+separate work.

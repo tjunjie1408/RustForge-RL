@@ -13,11 +13,7 @@ fn unsupported_device_combinations_preserve_existing_output() {
     let output = directory.join("output.csv");
     fs::write(&output, "existing metrics").unwrap();
     for (algorithm, flags, expected) in [
-        (
-            "reinforce",
-            vec!["--device", "gpu"],
-            "only by DQN, PPO and A2C",
-        ),
+        ("reinforce", vec!["--use-per"], "only by DQN"),
         (
             "dqn",
             vec!["--resume", "missing.chk"],
@@ -58,6 +54,16 @@ fn unsupported_device_combinations_preserve_existing_output() {
             vec!["--checkpoint", "out.chk"],
             "require --device gpu",
         ),
+        (
+            "reinforce",
+            vec!["--resume", "missing.chk"],
+            "require --device gpu",
+        ),
+        (
+            "reinforce",
+            vec!["--checkpoint", "output.chk"],
+            "require --device gpu",
+        ),
     ] {
         let mut arguments = vec![
             "rustforge",
@@ -83,7 +89,7 @@ fn unsupported_device_combinations_preserve_existing_output() {
 fn unavailable_gpu_feature_fails_before_creating_metrics() {
     let directory = directory("feature");
     let output = directory.join("output.csv");
-    for algorithm in ["dqn", "ppo", "a2c"] {
+    for algorithm in ["dqn", "ppo", "a2c", "reinforce"] {
         let args = match Cli::try_parse_from([
             "rustforge",
             "train",
@@ -111,7 +117,7 @@ fn checkpoint_metrics_alias_is_rejected_before_truncation_or_device_creation() {
     let directory = directory("alias");
     let output = directory.join("agent.chk");
     fs::write(&output, "existing checkpoint").unwrap();
-    for (algorithm, flag) in ["dqn", "ppo", "a2c"]
+    for (algorithm, flag) in ["dqn", "ppo", "a2c", "reinforce"]
         .into_iter()
         .flat_map(|algorithm| ["--resume", "--checkpoint"].map(|flag| (algorithm, flag)))
     {
@@ -470,6 +476,72 @@ fn gpu_a2c_cli_trains_and_resumes_saved_configuration_and_adam_with_jsonl() {
         .strip_suffix("}}\n")
         .unwrap();
     assert_eq!(metrics.split(',').count(), 8);
+    assert!(metrics.split(',').all(|m| m
+        .split_once(':')
+        .unwrap()
+        .1
+        .parse::<f64>()
+        .unwrap()
+        .is_finite()));
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[cfg(feature = "gpu")]
+#[test]
+#[ignore = "requires a GPU adapter"]
+fn gpu_reinforce_cli_trains_and_resumes_saved_configuration_and_adam_with_jsonl() {
+    use rustforge_cli::cli::{Algorithm, Device, Environment, ExecutionArgs, TrainArgs};
+    use rustforge_rl::agent::{cartpole_reinforce_config, gpu_reinforce::GpuReinforce};
+    use rustforge_tensor::gpu::GpuContext;
+    let dir = directory("reinforce");
+    let checkpoint = dir.join("agent.chk");
+    let metrics = dir.join("metrics.jsonl");
+    let context = GpuContext::new().unwrap();
+    let mut config = cartpole_reinforce_config();
+    config.hidden_dim = 8;
+    config.lr = 0.003;
+    config.gamma = 0.9;
+    config.use_baseline = false;
+    GpuReinforce::new_seeded(&context, config.clone(), 42)
+        .unwrap()
+        .save_checkpoint(&checkpoint)
+        .unwrap();
+    for run in 0..2 {
+        rustforge_cli::commands::train::execute(TrainArgs {
+            execution: ExecutionArgs {
+                device: Device::Gpu,
+                resume: Some(checkpoint.clone()),
+                checkpoint: Some(checkpoint.clone()),
+            },
+            algorithm: Algorithm::Reinforce,
+            env: Environment::Cartpole,
+            episodes: 1,
+            no_log: run == 1,
+            output: if run == 0 {
+                Some(metrics.clone())
+            } else {
+                None
+            },
+            overwrite: false,
+            use_per: false,
+        })
+        .unwrap();
+        let restored = GpuReinforce::load_checkpoint(&context, &checkpoint).unwrap();
+        assert_eq!(restored.config(), &config);
+        assert_eq!(restored.updates(), run + 1);
+    }
+    let text = fs::read_to_string(metrics).unwrap();
+    assert_eq!(text.lines().count(), 1);
+    for name in ["loss.policy", "rollout.size", "reward.episode"] {
+        assert!(text.contains(&format!("\"{name}\":")));
+    }
+    let metrics = text
+        .split_once("\"metrics\":{")
+        .unwrap()
+        .1
+        .strip_suffix("}}\n")
+        .unwrap();
+    assert_eq!(metrics.split(',').count(), 5);
     assert!(metrics.split(',').all(|m| m
         .split_once(':')
         .unwrap()

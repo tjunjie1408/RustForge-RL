@@ -1,9 +1,13 @@
 //! Owned policy/Adam and successful update clock; CPU episode-local Monte Carlo rollouts.
-use super::{reinforce_loss, validate_dimensions, GpuReinforceError, GpuReinforceNet, Result};
+mod checkpoint;
+use super::{reinforce_loss, GpuReinforceError, GpuReinforceNet, Result};
 use crate::{
     agent::REINFORCEConfig,
     buffer::{RolloutBatch, RolloutBuffer},
     env::{Environment, IntoTensorBuffer, Space},
+};
+pub use checkpoint::{
+    GpuReinforceCheckpointError, CHECKPOINT_MAGIC, CHECKPOINT_VERSION, MAX_CHECKPOINT_BYTES,
 };
 use rand::Rng;
 use rustforge_autograd::{
@@ -28,17 +32,8 @@ pub struct GpuReinforce {
 }
 impl GpuReinforce {
     pub fn validate_config(config: &REINFORCEConfig) -> Result<()> {
-        validate_dimensions(config.obs_dim, config.hidden_dim, config.num_actions)?;
-        if !config.lr.is_finite()
-            || config.lr <= 0.
-            || !config.gamma.is_finite()
-            || !(0. ..=1.).contains(&config.gamma)
-        {
-            return Err(GpuReinforceError::InvalidInput(
-                "REINFORCE requires positive finite learning rate and discount in [0,1]",
-            ));
-        }
-        Ok(())
+        crate::agent::reinforce::validate_reinforce_config(config)
+            .map_err(GpuReinforceError::InvalidInput)
     }
     pub fn new_seeded(context: &GpuContext, config: REINFORCEConfig, seed: u64) -> Result<Self> {
         Self::validate_config(&config)?;

@@ -1,6 +1,9 @@
 //! GPU REINFORCE objective and agent; sampling and Monte Carlo rollouts stay on CPU.
 mod agent;
-pub use agent::{GpuReinforce, GpuReinforceRolloutOptions};
+pub use agent::{
+    GpuReinforce, GpuReinforceCheckpointError, GpuReinforceRolloutOptions, CHECKPOINT_MAGIC,
+    CHECKPOINT_VERSION, MAX_CHECKPOINT_BYTES,
+};
 use rustforge_autograd::gpu::{GpuAutogradError, GpuVariable};
 use rustforge_nn::gpu::{GpuLinear, GpuModule, GpuModuleError, GpuReLU, GpuSequential};
 use rustforge_tensor::gpu::{GpuContext, GpuError, GpuIndices};
@@ -11,6 +14,7 @@ pub enum GpuReinforceError {
     Autograd(GpuAutogradError),
     Module(GpuModuleError),
     Device(GpuError),
+    Checkpoint(GpuReinforceCheckpointError),
     InvalidInput(&'static str),
     InvalidDimensions,
     InvalidBatch,
@@ -22,6 +26,7 @@ impl fmt::Display for GpuReinforceError {
             Self::Autograd(e) => e.fmt(f),
             Self::Module(e) => e.fmt(f),
             Self::Device(e) => e.fmt(f),
+            Self::Checkpoint(e) => e.fmt(f),
             Self::InvalidInput(message) => f.write_str(message),
             Self::InvalidDimensions => f.write_str("REINFORCE dimensions must be positive with representable parameter sizes"),
             Self::InvalidBatch => f.write_str("REINFORCE requires nonempty [batch,actions] logits, matching typed actions and [batch,1] advantages"),
@@ -35,6 +40,7 @@ impl Error for GpuReinforceError {
             Self::Autograd(e) => Some(e),
             Self::Module(e) => Some(e),
             Self::Device(e) => Some(e),
+            Self::Checkpoint(e) => Some(e),
             _ => None,
         }
     }
@@ -52,6 +58,11 @@ impl From<GpuModuleError> for GpuReinforceError {
 impl From<GpuError> for GpuReinforceError {
     fn from(e: GpuError) -> Self {
         Self::Device(e)
+    }
+}
+impl From<GpuReinforceCheckpointError> for GpuReinforceError {
+    fn from(e: GpuReinforceCheckpointError) -> Self {
+        Self::Checkpoint(e)
     }
 }
 pub type Result<T> = std::result::Result<T, GpuReinforceError>;

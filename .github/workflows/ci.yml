@@ -191,3 +191,7 @@ jobs:
         run: cargo test --locked -p rustforge-rl --features gpu --test gpu_reinforce_agent -- --include-ignored
       - name: Learn rewarding action from GPU REINFORCE rollouts
         run: cargo run --locked -p rustforge-rl --features gpu --example gpu_reinforce_training
+      - name: Verify GPU REINFORCE checkpoint codec without adapter allocation
+        run: cargo test --locked -p rustforge-rl --features gpu --lib gpu_reinforce::agent::checkpoint
+      - name: Verify GPU REINFORCE checkpoint/runtime continuation and controls
+        run: cargo test --locked -p rustforge-rl --features gpu --test gpu_reinforce_checkpoint --test gpu_reinforce_runtime -- --include-ignored
