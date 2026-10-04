@@ -38,34 +38,13 @@ pub fn map_monitor_key(key: KeyEvent) -> MonitorInput {
     if key.kind == KeyEventKind::Release {
         return MonitorInput::Ignored;
     }
-    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+    if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('c') {
         return MonitorInput::Quit;
     }
-    let action = match key.code {
-        KeyCode::Tab => Action::NextView,
-        KeyCode::BackTab => Action::PreviousView,
-        KeyCode::Left => Action::PreviousRange,
-        KeyCode::Right => Action::NextRange,
-        KeyCode::Up => Action::ScrollUp(1),
-        KeyCode::Down => Action::ScrollDown(1),
-        KeyCode::PageUp => Action::ScrollUp(10),
-        KeyCode::PageDown => Action::ScrollDown(10),
-        KeyCode::Home => Action::JumpToFirst,
-        KeyCode::End => Action::JumpToLatest,
-        KeyCode::Char('f') => Action::ToggleFollow,
-        KeyCode::Char('t') => Action::CyclePalette,
-        KeyCode::Char('g') => Action::ToggleAlertSettings,
-        KeyCode::Char('?') => Action::ToggleHelp,
-        KeyCode::Esc => Action::DismissDialog,
-        KeyCode::Backspace => Action::AlertTargetBackspace,
-        KeyCode::Enter => Action::ApplyAlertTarget,
-        KeyCode::Char(character) if character.is_ascii_digit() || ".eE+-".contains(character) => {
-            Action::AlertTargetChar(character)
-        }
-        KeyCode::Char('q') => return MonitorInput::Quit,
-        _ => return MonitorInput::Ignored,
-    };
-    MonitorInput::Action(action)
+    if crate::keys::plain_key(key) && key.code == KeyCode::Char('q') {
+        return MonitorInput::Quit;
+    }
+    crate::keys::navigation(key).map_or(MonitorInput::Ignored, MonitorInput::Action)
 }
 
 pub async fn run_monitor(options: MonitorOptions) -> anyhow::Result<()> {

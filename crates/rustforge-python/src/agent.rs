@@ -45,6 +45,22 @@ impl PyDQN {
         double_dqn: bool,
         log_path: Option<String>,
     ) -> PyResult<PyDQN> {
+        if episodes == 0 || max_steps == 0 || hidden_dim == 0 {
+            return Err(PyValueError::new_err(
+                "episodes, max_steps and hidden_dim must be positive",
+            ));
+        }
+        if !lr.is_finite() || lr <= 0. || !gamma.is_finite() || !(0. ..=1.).contains(&gamma) {
+            return Err(PyValueError::new_err(
+                "lr must be finite and positive; gamma must be finite in [0,1]",
+            ));
+        }
+        let normalized = env_name.trim().to_ascii_lowercase().replace(['-', '_'], "");
+        let env_name = match normalized.as_str() {
+            "cartpolev1" => "cartpole",
+            "mountaincarv0" => "mountaincar",
+            name => name,
+        };
         let (obs_dim, num_actions) = match env_name {
             "cartpole" => (4usize, 2usize),
             "gridworld" => (2usize, 4usize),
@@ -102,6 +118,9 @@ impl PyDQN {
                 self.obs_dim,
                 obs.len()
             )));
+        }
+        if obs.iter().any(|v| !v.is_finite()) {
+            return Err(PyValueError::new_err("observation values must be finite"));
         }
         self.inner
             .try_select_greedy_action(&obs)

@@ -77,3 +77,28 @@ fn alert_dialog_keys_map_to_session_edit_actions() {
         MonitorInput::Action(Action::ApplyAlertTarget)
     );
 }
+
+#[test]
+fn navigation_and_help_are_identical_in_monitor_and_live_modes() {
+    use rustforge_rl::runtime::trainer::TrainerStatus;
+    use rustforge_tui::live::{map_live_key, LiveInput};
+    for code in [
+        KeyCode::F(1),
+        KeyCode::Tab,
+        KeyCode::Left,
+        KeyCode::Down,
+        KeyCode::End,
+    ] {
+        match (
+            map_monitor_key(key(code)),
+            map_live_key(key(code), TrainerStatus::Running, false, false),
+        ) {
+            (MonitorInput::Action(a), LiveInput::Action(b)) => assert_eq!(a, b),
+            other => panic!("inconsistent mapping: {other:?}"),
+        }
+    }
+    assert_eq!(
+        map_monitor_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::ALT)),
+        MonitorInput::Ignored
+    );
+}

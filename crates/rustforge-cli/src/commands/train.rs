@@ -23,7 +23,8 @@ use rustforge_rl::runtime::trainer::{Trainer, TrainerContext, TrainingSummary};
 
 use crate::cli::{Algorithm, Environment, TrainArgs};
 
-pub fn execute(args: TrainArgs) -> anyhow::Result<()> {
+pub fn execute(mut args: TrainArgs) -> anyhow::Result<()> {
+    args.env = args.env.resolve(args.algorithm);
     validate_algorithm_environment(args.algorithm, args.env, args.use_per)?;
     let runtime_options = args
         .execution
@@ -151,6 +152,7 @@ pub fn execute(args: TrainArgs) -> anyhow::Result<()> {
                 )
             }
             (Algorithm::Sac, _) => unreachable!("validated above"),
+            (_, Environment::Auto) => unreachable!("environment resolved above"),
             (Algorithm::Ppo, Environment::Gridworld) => unreachable!("validated above"),
             (Algorithm::A2c, Environment::Cartpole) => {
                 println!("Training A2C on CartPole for {} episodes...", args.episodes);
@@ -301,6 +303,7 @@ pub(crate) fn validate_algorithm_environment(
     env: Environment,
     use_per: bool,
 ) -> anyhow::Result<()> {
+    let env = env.resolve(algorithm);
     if matches!(algorithm, Algorithm::Td3 | Algorithm::Sac) && env != Environment::Pendulum {
         anyhow::bail!(
             "{} supports only Pendulum",
@@ -337,11 +340,13 @@ pub(crate) fn validate_algorithm_environment(
 pub(crate) fn dqn_config(env: Environment, use_per: bool) -> DQNConfig {
     DQNConfig {
         obs_dim: match env {
+            Environment::Auto => 4,
             Environment::Cartpole => 4,
             Environment::Gridworld => 2,
             Environment::Pendulum => unreachable!("DQN does not support Pendulum"),
         },
         num_actions: match env {
+            Environment::Auto => 2,
             Environment::Cartpole => 2,
             Environment::Gridworld => 4,
             Environment::Pendulum => unreachable!("DQN does not support Pendulum"),

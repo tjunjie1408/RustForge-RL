@@ -4,6 +4,7 @@ use std::path::Path;
 use std::thread;
 
 use anyhow::Context;
+use clap::ValueEnum;
 use rustforge_rl::agent::{
     cartpole_a2c_config, cartpole_ppo_config, cartpole_reinforce_config, pendulum_ppo_config,
     pendulum_sac_config, pendulum_td3_config, A2cTrainerAdapter, DQNConfig, DqnTrainerAdapter,
@@ -69,7 +70,8 @@ struct TrainingPlan {
     metrics: MetricFormat,
 }
 
-pub async fn execute(args: RunArgs) -> anyhow::Result<()> {
+pub async fn execute(mut args: RunArgs) -> anyhow::Result<()> {
+    args.env = args.env.resolve(args.algorithm);
     validate_algorithm_environment(args.algorithm, args.env, args.use_per)?;
     args.execution
         .runtime_options(args.algorithm, args.use_per)?;
@@ -231,6 +233,7 @@ fn training_plan(
     use_per: bool,
     execution: &ExecutionArgs,
 ) -> anyhow::Result<TrainingPlan> {
+    let env = env.resolve(algorithm);
     validate_algorithm_environment(algorithm, env, use_per)?;
     let runtime_options = execution.runtime_options(algorithm, use_per)?;
     match (algorithm, env) {
@@ -467,6 +470,7 @@ fn training_plan(
             })
         }
         (Algorithm::Sac, _) => unreachable!("validated above"),
+        (_, Environment::Auto) => unreachable!("environment resolved above"),
         (Algorithm::Ppo, Environment::Gridworld) => unreachable!("validated above"),
         (Algorithm::A2c, Environment::Cartpole) => {
             let max_steps = 500;
@@ -606,6 +610,41 @@ fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
     }
 }
 
+/// Describe effective routing without allocating a backend, touching output files or requiring a TTY.
+pub fn describe(args: crate::cli::PlanArgs) -> anyhow::Result<String> {
+    let environment = args.env.resolve(args.algorithm);
+    let plan = training_plan(
+        args.algorithm,
+        environment,
+        args.episodes,
+        args.use_per,
+        &args.execution,
+    )?;
+    let metadata = plan.trainer.metadata();
+    let metrics: Vec<_> = metadata
+        .metrics
+        .iter()
+        .map(|m| {
+            serde_json::json!({
+                "id":m.id.get(),"name":m.name,"label":m.label,"unit":m.unit,
+                "kind":format!("{:?}",m.kind),"role":m.role.map(|r|format!("{r:?}"))
+            })
+        })
+        .collect();
+    Ok(serde_json::to_string_pretty(&serde_json::json!({
+        "schema":"rustforge-training-plan-v1",
+        "algorithm":metadata.algorithm,"environment":metadata.environment,
+        "episodes":args.episodes,"device":args.execution.device.to_possible_value().expect("known device").get_name(),
+        "configuration_source":if args.execution.resume.is_some() {"checkpoint"} else {"built-in profile"},
+        "configuration":plan.display_config.into_iter().collect::<BTreeMap<_,_>>(),
+        "resume":args.execution.resume,"checkpoint":args.execution.checkpoint,
+        "metrics_schema":plan.metrics.schema(),"metrics":metrics,
+        "capabilities":{"pause_resume":metadata.capabilities.pause_resume,"graceful_stop":metadata.capabilities.graceful_stop,
+            "force_stop":metadata.capabilities.force_stop,"interactive_checkpoint":metadata.capabilities.checkpoint},
+        "resume_restarts":["environment","replay or rollout","random streams","run counters"]
+    }))?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::training_plan;
@@ -685,6 +724,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "gpu")]
     #[test]
     fn gpu_training_plan_builds_worker_configuration_without_initializing_adapter() {
         let execution = crate::cli::ExecutionArgs {

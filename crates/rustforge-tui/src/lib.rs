@@ -4,6 +4,7 @@ pub mod analytics;
 pub mod app;
 pub mod event_loop;
 pub mod history;
+mod keys;
 pub mod live;
 pub mod metrics;
 pub mod monitor;
