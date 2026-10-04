@@ -42,6 +42,12 @@ pub enum GpuError {
     ExpectedMatrix { shape: Vec<usize> },
     /// Categorical probabilities require [batch, actions] with actions > 0.
     InvalidCategoricalShape { shape: Vec<usize> },
+    /// A requested column range exceeds the matrix feature axis.
+    InvalidColumnRange {
+        columns: usize,
+        start: usize,
+        len: usize,
+    },
     /// Clamp bounds must be finite and ordered.
     InvalidBounds,
     /// A shape, buffer, index, or dispatch exceeds supported limits.
@@ -85,6 +91,7 @@ impl fmt::Display for GpuError {
             Self::InvalidBiasShape { matrix, bias } => write!(f, "GPU bias addition requires [batch, features] and [features], got {matrix:?} and {bias:?}"),
             Self::ExpectedMatrix { shape } => write!(f, "GPU row reduction requires a matrix, got {shape:?}"),
             Self::InvalidCategoricalShape { shape } => write!(f, "GPU categorical probabilities require [batch, actions] with actions > 0, got {shape:?}"),
+            Self::InvalidColumnRange { columns, start, len } => write!(f, "column range start={start}, len={len} exceeds {columns} columns"),
             Self::InvalidBounds => write!(f, "clamp bounds must be finite and ordered"),
             Self::LimitExceeded => write!(f, "GPU tensor exceeds supported shape or device limits"),
             Self::DeviceMismatch => write!(f, "tensor belongs to a different GPU device"),
@@ -813,7 +820,9 @@ mod tests {
         let clipped = context.clamp_device(&affine, -1., 1.).unwrap();
         let columns = context.sum_columns_device(&affine).unwrap();
         let repeated = context.broadcast_columns_device(&columns, 2).unwrap();
-        drop((logarithm, tanh, clipped, columns, repeated));
+        let joined = context.concat_columns_device(&affine, &affine).unwrap();
+        let sliced = context.slice_columns_device(&joined, 1, 2).unwrap();
+        drop((logarithm, tanh, clipped, columns, repeated, joined, sliced));
 
         assert_eq!(
             context.inner.transfers.load(Ordering::Relaxed),

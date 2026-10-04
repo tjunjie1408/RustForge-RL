@@ -830,3 +830,61 @@ fn gpu_column_reduction_and_broadcast_cover_shapes_and_owner_errors() {
         Err(GpuError::DeviceMismatch)
     ));
 }
+
+#[test]
+#[ignore = "requires a hardware or software wgpu adapter"]
+fn concat_and_column_slices_preserve_logical_rows_and_empty_axes() {
+    let c = context();
+    for (rows, left, right) in [(513, 3, 5), (2, 0, 3), (2, 3, 0), (0, 3, 5), (2, 0, 0)] {
+        let a = Tensor::rand_uniform(&[rows, left], -1., 1., Some(3));
+        let b = Tensor::rand_uniform(&[rows, right], -1., 1., Some(4));
+        let joined = c
+            .concat_columns_device(&c.upload(&a).unwrap(), &c.upload(&b).unwrap())
+            .unwrap();
+        let expected: Vec<_> = (0..rows)
+            .flat_map(|row| {
+                a.to_vec()[row * left..(row + 1) * left]
+                    .iter()
+                    .chain(&b.to_vec()[row * right..(row + 1) * right])
+                    .copied()
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        assert_eq!(c.download(&joined).unwrap().to_vec(), expected);
+        assert_eq!(
+            c.download(&c.slice_columns_device(&joined, 0, left).unwrap())
+                .unwrap()
+                .to_vec(),
+            a.to_vec()
+        );
+        assert_eq!(
+            c.download(&c.slice_columns_device(&joined, left, right).unwrap())
+                .unwrap()
+                .to_vec(),
+            b.to_vec()
+        );
+        assert!(c
+            .slice_columns_device(&joined, left + right + 1, 0)
+            .is_err());
+        assert!(c.slice_columns_device(&joined, left + right, 1).is_err());
+    }
+    let matrix = c.zeros(&[2, 3]).unwrap();
+    assert!(c
+        .concat_columns_device(&matrix, &c.zeros(&[3, 2]).unwrap())
+        .is_err());
+    assert!(c
+        .concat_columns_device(&matrix, &c.zeros(&[6]).unwrap())
+        .is_err());
+    assert!(c
+        .slice_columns_device(&c.zeros(&[6]).unwrap(), 0, 1)
+        .is_err());
+    let foreign = GpuContext::new().unwrap().zeros(&[2, 3]).unwrap();
+    assert!(matches!(
+        c.concat_columns_device(&matrix, &foreign),
+        Err(GpuError::DeviceMismatch)
+    ));
+    assert!(matches!(
+        c.slice_columns_device(&foreign, 0, 1),
+        Err(GpuError::DeviceMismatch)
+    ));
+}

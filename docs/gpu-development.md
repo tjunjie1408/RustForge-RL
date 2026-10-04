@@ -41,6 +41,7 @@ REINFORCE worker/CLI routing, checkpoints and runtime controls.
 | 9b | GPU REINFORCE agent training | Complete: owned policy/Adam/clock, seeded action sampling, CPU Monte Carlo rollouts, active-row CPU parity and environment learning |
 | 9c | GPU REINFORCE runtime and checkpoints | Complete: worker-owned CPU/GPU agents, CartPole headless/live CLI, distinct policy/Adam checkpoints, metrics and controls |
 | 10a | GPU TD3 objective foundation | Complete: detached twin-critic targets/loss, actor objective, supplied-noise smoothing/scaling and CPU/f64 gradient/Adam parity |
+| 10b | GPU TD3 agent training | Complete: owned actor/twin critics/targets, seeded continuous replay/noise, transactional delayed updates, Polyak synchronization and fresh continuous learning |
 
 ## Architecture decisions
 
@@ -2085,6 +2086,141 @@ tests validate loss/smoothing configuration and affine bounds without allocating
 an adapter. Native execution leaves adapter checks ignored; all five were run
 explicitly on llvmpipe. GPU CI runs the suite and fixed objective example.
 
-## Next implementation: stage 10b
+## Stage 10b: owned GPU TD3 replay training
+
+`agent::gpu_td3::GpuTd3` owns the seeded three-layer tanh actor, two three-layer
+critics, independent frozen target leaves, separate actor/joint-critic Adam state,
+and successful critic/actor update clocks. Hidden layers use ReLU. Actor seeds
+are `seed`, `seed+1`, `seed+2`; critic seeds are offsets 3–5 and 6–8, with wrapping
+arithmetic. CPU `TD3::new_seeded` uses the same architecture and initialization.
+Targets initially share immutable online value snapshots; optimizer updates
+replace buffers and cannot change those snapshots.
+
+Device `concat_columns_device` joins observation/action feature matrices;
+`slice_columns_device` splits the backward adjoint into both input graphs.
+Operations validate devices, matrix shapes, row counts, ranges and index/storage
+limits, including empty feature axes. WGSL dispatch parameters carry explicit
+logical widths instead of inferring them from physical empty-buffer storage.
+The existing tensor transfer-counter check now includes concat/slice and verifies
+that the operations make no host transfers.
+
+`GpuTd3::train_step_with_rng` validates active replay rows before consuming noise.
+Only `batch.size` rows are uploaded; stale capacity values, including NaNs, are
+ignored. States/actions/rewards/next states must be finite, matrix widths must
+match configuration, and done masks must lie in [0,1]. Fractional masks keep CPU
+arithmetic. Empty batches return `(0,None)` without RNG draws or clock changes;
+nonempty training inside `no_grad` is rejected. Physical replay actions need only
+be finite, matching CPU TD3's accepted inputs.
+
+Exploration noise is added in physical action units and clipped to action bounds.
+Target noise is added/clipped in normalized action units before affine scaling.
+Both seeded CPU/GPU RNG methods preserve CPU's Box–Muller multiplication order
+`std * sqrt(-2*ln(u1)) * cos(u2)`, with two uniforms per action. Zero exploration
+deviation consumes no draws; zero target deviation still consumes two draws.
+Caller-owned exploration, replay and smoothing streams are independent.
+`ContinuousReplayBuffer::sample_with_rng` samples with replacement into existing
+batch storage; its default wrapper retains thread RNG behavior.
+
+The agent's explicit `train_step_with_target_noise` accepts **pre-scaled** Gaussian
+noise, clips it using the configured normalized-space clip and ignores capacity
+rows. In contrast, the stage 10a objective-level `smooth_target_actions` helper
+accepts standard-normal samples and multiplies by its smoothing deviation. This
+separation preserves CPU arithmetic order for exact caller-controlled streams.
+
+Critic targets detach all target paths. Both critics take one joint Adam step.
+On scheduled steps, the actor uses the **updated** Q1 with frozen critic weights,
+while state/action concat retains actor gradients. Actor Adam advances only then,
+and all three targets use `tau*online + (1-tau)*old`. Delay zero disables actor and
+target updates. Tau endpoints 0/1 are supported without altering CPU arithmetic.
+
+Updates are prepared on independent trainable parameter leaves and a device
+snapshot of Adam moments/clock (`GpuAdam::fork`). Immutable moment buffers are
+shared until optimizer steps replace them; no parameter/moment host snapshot is
+needed. Both critic and scheduled actor computations must succeed before live
+leaf values and optimizer state are committed. Public parameter handles stay live.
+Failures preserve online/target parameters, both optimizer states and counters;
+caller RNG draws already used are not rolled back. Temporary graphs drop after
+the call. Successful commits clear live gradients.
+
+Scalar checks validate affine logits before nonlinearities can hide invalid values,
+actions/targets/losses, gradients and gradient squares before Adam, candidate
+parameters after Adam and Polyak targets before commit. Multiple diagnostic counts
+are combined on device before one scalar readback. Full tensors stay resident;
+selection downloads only final physical actions. These checks provide correctness
+coverage and do not establish physical GPU throughput.
+
+```bash
+cargo test --locked -p rustforge-rl --features gpu --test gpu_td3_agent -- --include-ignored
+cargo run --locked -p rustforge-rl --features gpu --example gpu_td3_training
+```
+
+The fresh example collects 600 terminal episodes with reward `-(action-0.5)^2`,
+including 64 uniform-action warm-up episodes, followed by noisy policy collection
+and seeded replay sampling. On Mesa llvmpipe GL, 536 critic/268 actor updates reduce
+deterministic cost from **0.291425** to **0.000515**, with final action **0.477313**.
+The acceptance checks retain cost below 0.01, at least 90% reduction and action
+within 0.1 of the known optimum. This demonstrates fresh replay learning on a small
+continuous environment; Pendulum performance and physical GPU throughput are not
+measured here.
+
+### Deviations from Plan (stage 10b)
+
+- Added independent device parameter snapshots and Adam-state rebinding so a
+  scheduled actor failure rolls back the prepared critic update as well. These
+  are lower-layer GPU APIs; CPU optimizers and default TD3 formulas are preserved.
+- Added CPU seeded construction, network/counter accessors and caller-RNG/explicit
+  noise hooks for full-agent parity. Default CPU constructors retain their original
+  unseeded initialization; exploration, smoothing, delay and Polyak math are kept.
+- Added seeded continuous replay sampling to make fresh collection/sampling checks
+  reproducible. The default sampling wrapper still uses thread RNG.
+- Fresh learning uses a terminal continuous target environment with a known
+  quadratic reward, rather than claiming Pendulum performance before runtime
+  integration. An initial 16-unit/rate-0.003 actor/rate-0.01 critic run reached cost
+  0.012079 and missed the unchanged 0.01 threshold. The final example uses 32 units,
+  actor rate 0.001 and critic rate 0.005; the threshold remains unchanged.
+- Runtime, Pendulum CLI, multi-optimizer checkpoints and controls remain stage
+  10c. Physical GPU profiling stays deferred by user instruction.
+
+### Issue Resolution Progress (stage 10b)
+
+| Work | Issue ID | Result |
+| --- | --- | --- |
+| Resident state/action concat and gradient splitting | Unassigned | Complete, unequal/empty axes, shared/repeated backward, ownership/range checks and no-transfer verification |
+| Owned seeded actor, twin critics and frozen targets | Unassigned | Complete, CPU initialization/network parameter parity and target isolation |
+| Continuous replay and caller-owned noise streams | Unassigned | Complete, seeded sampling, active-row validation, zero-noise draw rules and pre-scaled supplied noise |
+| Delayed actor updates and all-network Polyak synchronization | Unassigned | Complete, CPU/GPU six-update parity, delays 0/1/2/3 and tau 0/0.2/1 |
+| Transactional parameters/Adam/counters and finite guards | Unassigned | Complete, actor failure and gradient-square overflow rollback followed by identical valid updates |
+| Fresh continuous-environment learning | Unassigned | Complete, replay collection, seeded sampling and deterministic policy convergence |
+| Pendulum runtime, CLI and multi-optimizer checkpoints | Unassigned | Next (10c) |
+
+### Verification (stage 10b)
+
+| Check | Passing result | Delta from stage 10a |
+| --- | --- | --- |
+| Native workspace/all features, excluding Python | 1,089 passed, 163 ignored, 0 failed | +4 ordinary tests; +8 adapter-required tests |
+| Full GPU tensor matrix/operation suite | 23 passed, 0 failed | +1 concat/slice/empty-axis/ownership/range test |
+| Full GPU autograd suite | 19 passed, 0 failed | +1 concat/shared/repeated/frozen/empty backward test; +1 device Adam fork/rebind test |
+| Tensor resident-operation transfer counter | 1 passed, 0 failed | Existing check expanded with concat/slice |
+| TD3 owned-agent suite | 5 passed, 0 failed | Seeded CPU parity/cadence/Polyak; RNG; active-row/rejection; rollback; fresh learning |
+| TD3 objective regression suite | 5 passed, 0 failed | Existing stage 10a coverage retained after diagnostic batching |
+| Fresh GPU TD3 environment example | Passed | Cost 0.291425 to 0.000515; action 0.477313; 536 critic/268 actor updates |
+| Fixed GPU TD3 objective example | Passed | Loss 6.055205 to 3.031658480e-9; 200 Adam updates |
+| Python editable rebuild and regression suite | 32 passed, 0 failed | CPU TD3/RNG changes included in rebuilt extension |
+| Workspace Clippy/all targets/all features, warnings denied | Passed | Excluding Python |
+| Rust 1.75 workspace/all targets/all features | Passed | Excluding Python; array snapshot helper uses compatible API |
+| Default-feature workspace/all-targets check | Passed | Excluding Python; GPU agent/example remain gated |
+| Formatting and patch whitespace | Passed | `cargo fmt --all -- --check`, `git diff --check` |
+
+The four ordinary additions are one GPU-owned configuration validation test, two
+CPU seeded TD3/RNG tests and one seeded continuous replay test. The eight new
+adapter-required tests are one tensor, two autograd and five TD3-agent tests.
+All eight are included in the 53 explicitly passing GPU checks listed above;
+the remaining 45 are regression coverage from the existing tensor/autograd/TD3
+objective suites and expanded transfer-counter test. Native execution leaves the
+adapter tests ignored; explicit checks used Mesa llvmpipe GL. Physical GPU tests
+remain deferred. No dependencies or lockfile changes were needed. Logs are saved
+under `/tmp/rustforge-gpu-stage10b-*.log`.
+
+## Next implementation: stage 10c
 
 Continue the next documented GPU stage; physical GPU validation remains deferred.

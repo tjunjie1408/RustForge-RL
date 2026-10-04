@@ -54,6 +54,75 @@ pub(super) fn create_pipelines(
 }
 
 impl GpuContext {
+    /// Joins rank-two matrices along their feature axis without host transfers.
+    pub fn concat_columns_device(
+        &self,
+        left: &GpuTensor,
+        right: &GpuTensor,
+    ) -> Result<GpuTensor, GpuError> {
+        self.ensure_owner(left)?;
+        self.ensure_owner(right)?;
+        let (a, b) = (left.shape(), right.shape());
+        if a.len() != 2 || b.len() != 2 || a[0] != b[0] {
+            return Err(GpuError::ElementwiseShapeMismatch {
+                left: a.to_vec(),
+                right: b.to_vec(),
+            });
+        }
+        let columns = a[1].checked_add(b[1]).ok_or(GpuError::LimitExceeded)?;
+        let first = u32::try_from(a[1]).map_err(|_| GpuError::LimitExceeded)?;
+        let second = u32::try_from(b[1]).map_err(|_| GpuError::LimitExceeded)?;
+        u32::try_from(columns).map_err(|_| GpuError::LimitExceeded)?;
+        let output = self.zeros(&[a[0], columns])?;
+        if !output.is_empty() {
+            self.dispatch_operation_layout(
+                left,
+                right,
+                &output,
+                [output.numel() as u32, 20, 0],
+                [first, second, 0, 0],
+                &self.inner.elementwise_pipeline,
+            )?;
+        }
+        Ok(output)
+    }
+    /// Copies a contiguous column range from every row of a rank-two matrix.
+    pub fn slice_columns_device(
+        &self,
+        input: &GpuTensor,
+        start: usize,
+        len: usize,
+    ) -> Result<GpuTensor, GpuError> {
+        self.ensure_owner(input)?;
+        let shape = input.shape();
+        if shape.len() != 2 {
+            return Err(GpuError::ExpectedMatrix {
+                shape: shape.to_vec(),
+            });
+        }
+        if start > shape[1] || len > shape[1] - start {
+            return Err(GpuError::InvalidColumnRange {
+                columns: shape[1],
+                start,
+                len,
+            });
+        }
+        let stride = u32::try_from(shape[1]).map_err(|_| GpuError::LimitExceeded)?;
+        let width = u32::try_from(len).map_err(|_| GpuError::LimitExceeded)?;
+        let offset = u32::try_from(start).map_err(|_| GpuError::LimitExceeded)?;
+        let output = self.zeros(&[shape[0], len])?;
+        if !output.is_empty() {
+            self.dispatch_operation_layout(
+                input,
+                input,
+                &output,
+                [output.numel() as u32, 21, 0],
+                [stride, width, offset, 0],
+                &self.inner.elementwise_pipeline,
+            )?;
+        }
+        Ok(output)
+    }
     /// Elementwise exponential, with shader floating-point semantics.
     pub fn exp_device(&self, input: &GpuTensor) -> Result<GpuTensor, GpuError> {
         self.elementwise(input, input, 11)
@@ -442,6 +511,19 @@ impl GpuContext {
         parameters: [u32; 3],
         pipeline: &wgpu::ComputePipeline,
     ) -> Result<(), GpuError> {
+        self.dispatch_operation_layout(left, right, output, parameters, [0; 4], pipeline)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn dispatch_operation_layout(
+        &self,
+        left: &GpuTensor,
+        right: &GpuTensor,
+        output: &GpuTensor,
+        parameters: [u32; 3],
+        layout: [u32; 4],
+        pipeline: &wgpu::ComputePipeline,
+    ) -> Result<(), GpuError> {
         let [length, operation, auxiliary] = parameters;
         let groups = length.div_ceil(256);
         let grid = dispatch_grid(
@@ -456,7 +538,10 @@ impl GpuContext {
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("tensor operation parameters"),
-                contents: bytemuck::cast_slice(&[length, operation, groups, auxiliary]),
+                contents: bytemuck::cast_slice(&[
+                    length, operation, groups, auxiliary, layout[0], layout[1], layout[2],
+                    layout[3],
+                ]),
                 usage: wgpu::BufferUsages::UNIFORM,
             });
         let buffers = [&left.buffer, &right.buffer, &output.buffer, &parameters];

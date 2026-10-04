@@ -408,13 +408,22 @@ impl ContinuousReplayBuffer {
     /// ## Panics
     /// If the buffer is empty.
     pub fn sample(&self, batch_size: usize, batch: &mut ContinuousTransitionBatch) {
+        self.sample_with_rng(batch_size, batch, &mut rand::thread_rng());
+    }
+
+    /// Samples with replacement using a caller-owned reproducible replay stream.
+    pub fn sample_with_rng(
+        &self,
+        batch_size: usize,
+        batch: &mut ContinuousTransitionBatch,
+        rng: &mut impl Rng,
+    ) {
         assert!(
             !self.is_empty(),
             "Cannot sample from empty ContinuousReplayBuffer"
         );
 
         let actual_batch = batch_size.min(self.len);
-        let mut rng = rand::thread_rng();
 
         let states_flat = batch.states.data_mut();
         let next_states_flat = batch.next_states.data_mut();
@@ -452,6 +461,45 @@ impl ContinuousReplayBuffer {
         }
 
         batch.size = actual_batch;
+    }
+}
+
+#[cfg(test)]
+mod continuous_seed_tests {
+    use super::*;
+    use rand::{rngs::StdRng, SeedableRng};
+    #[test]
+    fn seeded_continuous_sampling_preserves_active_rows_and_draw_count() {
+        let mut replay = ContinuousReplayBuffer::new(8, 2, 1);
+        for i in 0..3 {
+            replay.push(
+                &[i as f32, 1.],
+                &[i as f32],
+                i as f32,
+                &[i as f32 + 1., 1.],
+                i == 2,
+            );
+        }
+        let mut first = ContinuousTransitionBatch::new(8, 2, 1);
+        let mut second = ContinuousTransitionBatch::new(8, 2, 1);
+        first.rewards.data_mut()[[7, 0]] = 99.;
+        second.rewards.data_mut()[[7, 0]] = 99.;
+        let mut a = StdRng::seed_from_u64(7);
+        let mut b = a.clone();
+        replay.sample_with_rng(8, &mut first, &mut a);
+        replay.sample_with_rng(8, &mut second, &mut b);
+        assert_eq!(first.size, 3);
+        for (p, q) in [
+            (&first.states, &second.states),
+            (&first.actions, &second.actions),
+            (&first.rewards, &second.rewards),
+            (&first.next_states, &second.next_states),
+            (&first.dones, &second.dones),
+        ] {
+            assert_eq!(p.to_vec(), q.to_vec());
+        }
+        assert_eq!(first.rewards.data()[[7, 0]], 99.);
+        assert_eq!(a.gen::<u64>(), b.gen::<u64>());
     }
 }
 

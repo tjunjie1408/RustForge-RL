@@ -65,6 +65,7 @@ struct Inner {
 #[derive(Clone)]
 enum Op {
     Add(GpuVariable, GpuVariable),
+    Concat(GpuVariable, GpuVariable, usize, usize),
     Bias(GpuVariable, GpuVariable),
     Gather(GpuVariable, Rc<GpuIndices>),
     Mul(GpuVariable, GpuVariable, Rc<GpuTensor>, Rc<GpuTensor>),
@@ -95,6 +96,7 @@ impl Op {
     fn parents(&self) -> Vec<GpuVariable> {
         match self {
             Self::Add(a, b)
+            | Self::Concat(a, b, ..)
             | Self::Bias(a, b)
             | Self::Mul(a, b, ..)
             | Self::Div(a, b, ..)
@@ -209,6 +211,20 @@ impl GpuVariable {
     /// Shares an immutable snapshot without retaining its computation graph.
     pub fn detach(&self) -> Self {
         Self::build(&self.context, self.data(), false, None)
+    }
+    /// Independent leaf sharing an immutable value snapshot; no graph or gradient is retained.
+    pub fn leaf_snapshot(&self, requires_grad: bool) -> Self {
+        Self::build(&self.context, self.data(), requires_grad, None)
+    }
+    /// Joins matrix features and splits the adjoint back into both input graphs.
+    pub fn concat_columns(&self, rhs: &Self) -> Result<Self> {
+        let data = self
+            .context
+            .concat_columns_device(&self.data(), &rhs.data())?;
+        let (left, right) = (self.data().shape()[1], rhs.data().shape()[1]);
+        Ok(self.output(data, &[self, rhs], || {
+            Op::Concat(self.clone(), rhs.clone(), left, right)
+        }))
     }
     pub fn add(&self, rhs: &Self) -> Result<Self> {
         Ok(self.output(
@@ -420,6 +436,18 @@ impl GpuVariable {
                 Some(Op::Add(a, b)) => {
                     contributions.push((a, g.clone()));
                     contributions.push((b, g));
+                }
+                Some(Op::Concat(a, b, left, right)) => {
+                    if a.requires_grad() {
+                        contributions
+                            .push((a, Rc::new(self.context.slice_columns_device(&g, 0, left)?)));
+                    }
+                    if b.requires_grad() {
+                        contributions.push((
+                            b,
+                            Rc::new(self.context.slice_columns_device(&g, left, right)?),
+                        ));
+                    }
                 }
                 Some(Op::Bias(a, b)) => {
                     if b.requires_grad() {
@@ -720,6 +748,33 @@ impl GpuAdam {
             beta2,
             epsilon,
             t: 0,
+        })
+    }
+    /// Rebinds a device-resident state snapshot to same-shape, same-device leaves.
+    /// Immutable moments are shared until a step replaces them. Use independent
+    /// leaf snapshots to prepare an update without mutating the live optimizer.
+    pub fn fork(&self, params: Vec<GpuVariable>) -> Result<Self> {
+        validate_parameters(&params)?;
+        if params.len() != self.params.len() {
+            return Err(GpuAutogradError::InvalidOptimizer(
+                "Adam fork parameter count must match",
+            ));
+        }
+        for (old, new) in self.params.iter().zip(&params) {
+            if old.data().shape() != new.data().shape() || !old.context.is_compatible(&new.data()) {
+                return Err(GpuAutogradError::InvalidOptimizer(
+                    "Adam fork parameter shapes and devices must match",
+                ));
+            }
+        }
+        Ok(Self {
+            params,
+            moments: self.moments.clone(),
+            lr: self.lr,
+            beta1: self.beta1,
+            beta2: self.beta2,
+            epsilon: self.epsilon,
+            t: self.t,
         })
     }
     /// Downloads a validated host snapshot. Live gradients are not saved.

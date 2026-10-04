@@ -199,3 +199,7 @@ jobs:
         run: cargo test --locked -p rustforge-rl --features gpu --test gpu_td3_loss -- --include-ignored
       - name: Optimize fixed GPU TD3 twin-critic objective
         run: cargo run --locked -p rustforge-rl --features gpu --example gpu_td3_objective
+      - name: Verify GPU TD3 replay, seeded CPU parity and delayed updates
+        run: cargo test --locked -p rustforge-rl --features gpu --test gpu_td3_agent -- --include-ignored
+      - name: Learn fresh continuous episodes with GPU TD3
+        run: cargo run --locked -p rustforge-rl --features gpu --example gpu_td3_training

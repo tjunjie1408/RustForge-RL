@@ -1,5 +1,6 @@
 //! Device-resident TD3 objectives, owned networks, replay updates and target synchronization.
-
+mod agent;
+pub use agent::{GpuTd3, GpuTd3Net};
 use rustforge_autograd::gpu::{GpuAutogradError, GpuVariable};
 use rustforge_tensor::{
     gpu::{GpuContext, GpuError},

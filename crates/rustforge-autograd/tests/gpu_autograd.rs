@@ -720,3 +720,97 @@ fn continuous_operators_preserve_forward_snapshots_and_empty_no_grad_contracts()
     assert!(a.div(&variable(&[1.], &[1], false)).is_err());
     assert!(variable(&[1.], &[1], true).sum_columns().is_err());
 }
+
+#[test]
+#[ignore = "requires a GPU adapter"]
+fn concatenation_splits_shared_adjoints_and_respects_frozen_and_empty_inputs() {
+    let a = variable(&[1., -2., 3., 4.], &[2, 2], true);
+    let b = variable(&[5., 6.], &[2, 1], true);
+    let joined = a.concat_columns(&b).unwrap();
+    let loss = joined.mul(&joined).unwrap().sum().unwrap();
+    loss.backward().unwrap();
+    close(&gradient(&a), &[2., -4., 6., 8.], 0.);
+    close(&gradient(&b), &[10., 12.], 0.);
+    loss.backward().unwrap();
+    close(&gradient(&a), &[4., -8., 12., 16.], 0.);
+    a.zero_grad();
+    a.concat_columns(&a)
+        .unwrap()
+        .sum()
+        .unwrap()
+        .backward()
+        .unwrap();
+    close(&gradient(&a), &[2.; 4], 0.);
+    let frozen = b.detach();
+    a.concat_columns(&frozen)
+        .unwrap()
+        .sum()
+        .unwrap()
+        .backward()
+        .unwrap();
+    assert!(frozen.grad().is_none());
+    assert!(!no_grad(|| a.concat_columns(&b).unwrap()).requires_grad());
+    let empty = variable(&[], &[2, 0], true);
+    empty
+        .concat_columns(&b)
+        .unwrap()
+        .sum()
+        .unwrap()
+        .backward()
+        .unwrap();
+    assert!(gradient(&empty).is_empty());
+}
+
+#[test]
+#[ignore = "requires a GPU adapter"]
+fn adam_device_forks_preserve_live_moments_and_rebind_updated_state() {
+    use rustforge_autograd::gpu::GpuAdam;
+    let p = variable(&[1., -2.], &[2], true);
+    let mut live = GpuAdam::new(vec![p.clone()], 0.02).unwrap();
+    p.mul(&p).unwrap().sum().unwrap().backward().unwrap();
+    live.step().unwrap();
+    live.zero_grad();
+    let before = live.state().unwrap();
+    let old_values = p.to_cpu().unwrap().to_vec();
+    let q = p.leaf_snapshot(true);
+    let mut fork = live.fork(vec![q.clone()]).unwrap();
+    assert!(q.grad().is_none());
+    q.mul(&q).unwrap().sum().unwrap().backward().unwrap();
+    fork.step().unwrap();
+    assert_eq!(p.to_cpu().unwrap().to_vec(), old_values);
+    assert_eq!(live.state().unwrap().timestep, before.timestep);
+    assert_eq!(
+        live.state().unwrap().moments[0]
+            .as_ref()
+            .unwrap()
+            .first
+            .to_vec(),
+        before.moments[0].as_ref().unwrap().first.to_vec()
+    );
+    assert!(live.fork(vec![]).is_err());
+    assert!(live.fork(vec![variable(&[1.], &[1], true)]).is_err());
+    assert!(live.fork(vec![q.detach()]).is_err());
+    let foreign = GpuVariable::new(&GpuContext::new().unwrap(), &Tensor::ones(&[2]), true).unwrap();
+    assert!(live.fork(vec![foreign]).is_err());
+    // Rebinding retains the same moments and clock without uploading a host snapshot.
+    p.copy_data_from(&q).unwrap();
+    live = fork.fork(vec![p.clone()]).unwrap();
+    close(
+        &p.to_cpu().unwrap().to_vec(),
+        &q.to_cpu().unwrap().to_vec(),
+        0.,
+    );
+    assert_eq!(live.state().unwrap().timestep, 2);
+    assert_eq!(
+        live.state().unwrap().moments[0]
+            .as_ref()
+            .unwrap()
+            .second
+            .to_vec(),
+        fork.state().unwrap().moments[0]
+            .as_ref()
+            .unwrap()
+            .second
+            .to_vec()
+    );
+}

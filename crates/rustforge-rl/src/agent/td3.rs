@@ -40,6 +40,7 @@ use crate::agent::utils::{clamp_var, elementwise_min_var, hard_update, soft_upda
 use crate::buffer::ContinuousTransitionBatch;
 
 /// Configuration for the TD3 agent.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TD3Config {
     /// Observation dimensionality.
     pub obs_dim: usize,
@@ -92,6 +93,53 @@ impl TD3Config {
     }
 }
 
+pub(crate) fn validate_td3_config(c: &TD3Config) -> Result<(), &'static str> {
+    let input = c
+        .obs_dim
+        .checked_add(c.act_dim)
+        .ok_or("TD3 dimension overflow")?;
+    if c.obs_dim == 0
+        || c.act_dim == 0
+        || c.hidden_dim == 0
+        || [c.actor_lr, c.critic_lr]
+            .iter()
+            .any(|v| !v.is_finite() || *v <= 0.)
+        || [c.gamma, c.tau]
+            .iter()
+            .any(|v| !v.is_finite() || !(0. ..=1.).contains(v))
+        || [c.target_noise_std, c.target_noise_clip]
+            .iter()
+            .any(|v| !v.is_finite() || *v < 0.)
+        || [
+            (input, c.hidden_dim),
+            (c.hidden_dim, c.hidden_dim),
+            (c.hidden_dim, c.act_dim),
+        ]
+        .iter()
+        .any(|(a, b)| {
+            a.checked_mul(*b)
+                .and_then(|n| u32::try_from(n).ok())
+                .is_none()
+        })
+    {
+        return Err("invalid TD3 dimensions or hyperparameters");
+    }
+    if c.action_low.len() != c.act_dim
+        || c.action_high.len() != c.act_dim
+        || c.action_low.iter().zip(&c.action_high).any(|(&l, &h)| {
+            !l.is_finite()
+                || !h.is_finite()
+                || l >= h
+                || !((h - l) / 2.).is_finite()
+                || (h - l) / 2. <= 0.
+                || !((h + l) / 2.).is_finite()
+        })
+    {
+        return Err("invalid TD3 action bounds");
+    }
+    Ok(())
+}
+
 /// Builds a deterministic actor network: Linear → ReLU → Linear → ReLU → Linear → Tanh.
 fn build_actor(obs_dim: usize, hidden_dim: usize, act_dim: usize) -> Sequential {
     Sequential::new(vec![
@@ -114,6 +162,20 @@ fn build_critic(obs_dim: usize, act_dim: usize, hidden_dim: usize) -> Sequential
         Box::new(ReLU),
         Box::new(Linear::new(hidden_dim, 1)),
     ])
+}
+
+fn build_seeded(input: usize, hidden: usize, output: usize, seed: u64, actor: bool) -> Sequential {
+    let mut layers: Vec<Box<dyn Module>> = vec![
+        Box::new(Linear::new_seeded(input, hidden, seed)),
+        Box::new(ReLU),
+        Box::new(Linear::new_seeded(hidden, hidden, seed.wrapping_add(1))),
+        Box::new(ReLU),
+        Box::new(Linear::new_seeded(hidden, output, seed.wrapping_add(2))),
+    ];
+    if actor {
+        layers.push(Box::new(Tanh));
+    }
+    Sequential::new(layers)
 }
 
 /// Twin Delayed DDPG agent.
@@ -156,6 +218,55 @@ impl TD3 {
         let critic1_target = build_critic(config.obs_dim, config.act_dim, config.hidden_dim);
         let critic2_target = build_critic(config.obs_dim, config.act_dim, config.hidden_dim);
 
+        Self::from_networks(
+            config,
+            [
+                actor,
+                actor_target,
+                critic1,
+                critic2,
+                critic1_target,
+                critic2_target,
+            ],
+        )
+    }
+
+    /// Reproducible actor/twin-critic initialization, independent of noise streams.
+    pub fn new_seeded(config: TD3Config, seed: u64) -> Self {
+        let actor = build_seeded(
+            config.obs_dim,
+            config.hidden_dim,
+            config.act_dim,
+            seed,
+            true,
+        );
+        let actor_target = build_seeded(
+            config.obs_dim,
+            config.hidden_dim,
+            config.act_dim,
+            seed,
+            true,
+        );
+        let input = config.obs_dim + config.act_dim;
+        let critic1 = build_seeded(input, config.hidden_dim, 1, seed.wrapping_add(3), false);
+        let critic2 = build_seeded(input, config.hidden_dim, 1, seed.wrapping_add(6), false);
+        let critic1_target = build_seeded(input, config.hidden_dim, 1, seed.wrapping_add(3), false);
+        let critic2_target = build_seeded(input, config.hidden_dim, 1, seed.wrapping_add(6), false);
+        Self::from_networks(
+            config,
+            [
+                actor,
+                actor_target,
+                critic1,
+                critic2,
+                critic1_target,
+                critic2_target,
+            ],
+        )
+    }
+
+    fn from_networks(config: TD3Config, networks: [Sequential; 6]) -> Self {
+        let [actor, actor_target, critic1, critic2, critic1_target, critic2_target] = networks;
         // Sync targets
         hard_update(&actor.parameters(), &actor_target.parameters());
         hard_update(&critic1.parameters(), &critic1_target.parameters());
@@ -199,12 +310,21 @@ impl TD3 {
     ///
     /// Returns the scaled action as a `Vec<f32>`.
     pub fn select_action(&self, state: &[f32], noise_std: f32) -> Vec<f32> {
+        self.select_action_with_rng(state, noise_std, &mut rand::thread_rng())
+    }
+
+    /// Exploration in physical action units using the caller's RNG; zero noise draws nothing.
+    pub fn select_action_with_rng(
+        &self,
+        state: &[f32],
+        noise_std: f32,
+        rng: &mut impl Rng,
+    ) -> Vec<f32> {
         let state_tensor = Tensor::from_vec(state.to_vec(), &[1, self.config.obs_dim]);
         let state_var = Variable::from_tensor(state_tensor);
         let raw_action = no_grad(|| self.actor.forward(&state_var));
         let raw_data = raw_action.data().to_vec();
 
-        let mut rng = rand::thread_rng();
         let mut action = Vec::with_capacity(self.config.act_dim);
         for (i, &v) in raw_data.iter().enumerate() {
             // raw_action is in [-1, 1] (tanh output). Scale to action bounds.
@@ -228,6 +348,38 @@ impl TD3 {
     /// Returns `(critic_loss, actor_loss_or_none)`.
     /// Actor loss is None when this step is not a policy-update step.
     pub fn train_step(&mut self, batch: &ContinuousTransitionBatch) -> (f32, Option<f32>) {
+        self.train_step_with_rng(batch, &mut rand::thread_rng())
+    }
+
+    /// Target smoothing uses two uniform draws per active action, including zero deviation.
+    pub fn train_step_with_rng(
+        &mut self,
+        batch: &ContinuousTransitionBatch,
+        rng: &mut impl Rng,
+    ) -> (f32, Option<f32>) {
+        if batch.size == 0 {
+            return (0., None);
+        }
+        let noise = (0..batch.size * self.config.act_dim)
+            .map(|_| {
+                let u1: f32 = rng.gen_range(1e-7..1.0);
+                let u2: f32 = rng.gen_range(0.0..std::f32::consts::TAU);
+                self.config.target_noise_std * (-2.0 * u1.ln()).sqrt() * u2.cos()
+            })
+            .collect();
+        self.train_step_with_target_noise(
+            batch,
+            &Tensor::from_vec(noise, &[batch.size, self.config.act_dim]),
+        )
+    }
+
+    /// Uses supplied, pre-scaled Gaussian noise in normalized action units.
+    /// Clipping still occurs here; extra capacity rows are ignored.
+    pub fn train_step_with_target_noise(
+        &mut self,
+        batch: &ContinuousTransitionBatch,
+        noise: &Tensor,
+    ) -> (f32, Option<f32>) {
         let n = batch.size;
         if n == 0 {
             return (0.0, None);
@@ -244,14 +396,14 @@ impl TD3 {
         let next_states_var = Variable::from_tensor(batch.next_states.clone());
         let target_actions_raw = self.actor_target.forward(&next_states_var); // [-1, 1]
 
-        // Target smoothing noise
-        let mut rng = rand::thread_rng();
-        let noise_data: Vec<f32> = (0..n * act_dim)
-            .map(|_| {
-                let u1: f32 = rng.gen_range(1e-7..1.0);
-                let u2: f32 = rng.gen_range(0.0..std::f32::consts::TAU);
-                let noise = self.config.target_noise_std * (-2.0 * u1.ln()).sqrt() * u2.cos();
-                noise.clamp(
+        // Target smoothing noise, already scaled by the configured deviation.
+        assert!(noise.shape().len() == 2 && noise.shape()[0] >= n && noise.shape()[1] == act_dim);
+        let noise_data = noise
+            .data()
+            .iter()
+            .take(n * act_dim)
+            .map(|v| {
+                v.clamp(
                     -self.config.target_noise_clip,
                     self.config.target_noise_clip,
                 )
@@ -336,6 +488,28 @@ impl TD3 {
         (critic_loss_val, actor_loss_val)
     }
 
+    pub fn actor(&self) -> &Sequential {
+        &self.actor
+    }
+    pub fn actor_target(&self) -> &Sequential {
+        &self.actor_target
+    }
+    pub fn critic1(&self) -> &Sequential {
+        &self.critic1
+    }
+    pub fn critic2(&self) -> &Sequential {
+        &self.critic2
+    }
+    pub fn critic1_target(&self) -> &Sequential {
+        &self.critic1_target
+    }
+    pub fn critic2_target(&self) -> &Sequential {
+        &self.critic2_target
+    }
+    pub fn updates(&self) -> usize {
+        self.train_steps
+    }
+
     /// Concatenates state and action tensors along the feature dimension.
     fn concat_state_action(&self, state: &Variable, action: &Variable) -> Variable {
         state.concat(action, 1)
@@ -374,6 +548,61 @@ mod tests {
             action_low: vec![-1.0, -1.0],
             action_high: vec![1.0, 1.0],
         }
+    }
+
+    #[test]
+    fn seeded_td3_parameters_noise_and_updates_are_reproducible() {
+        use rand::{rngs::StdRng, SeedableRng};
+        let mut first = TD3::new_seeded(make_config(), 42);
+        let mut second = TD3::new_seeded(make_config(), 42);
+        let mut a = StdRng::seed_from_u64(7);
+        let mut b = a.clone();
+        assert_eq!(
+            first.select_action_with_rng(&[0.2; 4], 0.3, &mut a),
+            second.select_action_with_rng(&[0.2; 4], 0.3, &mut b)
+        );
+        let mut replay = ContinuousReplayBuffer::new(4, 4, 2);
+        replay.push(&[0.2; 4], &[0.1, -0.1], 0.5, &[0.3; 4], false);
+        let mut batch = ContinuousTransitionBatch::new(4, 4, 2);
+        replay.sample_with_rng(4, &mut batch, &mut a);
+        b = a.clone();
+        for _ in 0..4 {
+            assert_eq!(
+                first.train_step_with_rng(&batch, &mut a),
+                second.train_step_with_rng(&batch, &mut b)
+            );
+            for (p, q) in first
+                .actor()
+                .parameters()
+                .iter()
+                .zip(second.actor().parameters())
+            {
+                assert_eq!(p.data().to_vec(), q.data().to_vec());
+            }
+        }
+        assert_eq!(a.gen::<u64>(), b.gen::<u64>());
+        assert_eq!(first.updates(), 4);
+        assert_ne!(
+            first.actor().parameters()[0].data().to_vec(),
+            TD3::new_seeded(make_config(), 43).actor().parameters()[0]
+                .data()
+                .to_vec()
+        );
+    }
+
+    #[test]
+    fn seeded_td3_zero_exploration_and_empty_training_do_not_consume_rng() {
+        use rand::{rngs::StdRng, SeedableRng};
+        let mut agent = TD3::new_seeded(make_config(), 42);
+        let mut rng = StdRng::seed_from_u64(7);
+        let mut expected = rng.clone();
+        agent.select_action_with_rng(&[0.2; 4], 0., &mut rng);
+        assert_eq!(
+            agent.train_step_with_rng(&ContinuousTransitionBatch::new(4, 4, 2), &mut rng),
+            (0., None)
+        );
+        assert_eq!(rng.gen::<u64>(), expected.gen::<u64>());
+        assert_eq!(agent.updates(), 0);
     }
 
     #[test]

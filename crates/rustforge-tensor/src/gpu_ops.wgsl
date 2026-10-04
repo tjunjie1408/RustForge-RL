@@ -3,6 +3,10 @@ struct Parameters {
     operation: u32,
     groups: u32,
     divisor: u32,
+    first_columns: u32,
+    second_columns: u32,
+    offset: u32,
+    padding: u32,
 }
 
 @group(0) @binding(0) var<storage, read> a: array<f32>;
@@ -23,6 +27,21 @@ fn elementwise(@builtin(workgroup_id) group: vec3<u32>,
         return;
     }
     switch parameters.operation {
+        case 20u: {
+            let width = parameters.first_columns + parameters.second_columns;
+            let row = index / width;
+            let column = index % width;
+            if (column < parameters.first_columns) {
+                output[index] = a[row * parameters.first_columns + column];
+            } else {
+                output[index] = b[row * parameters.second_columns + column - parameters.first_columns];
+            }
+        }
+        case 21u: {
+            let row = index / parameters.second_columns;
+            let column = index % parameters.second_columns;
+            output[index] = a[row * parameters.first_columns + parameters.offset + column];
+        }
         case 0u: { output[index] = a[index] + b[index]; }
         case 1u: { output[index] = a[index] * b[index]; }
         // Select zero for NaN, matching Tensor::relu's f32::max.
