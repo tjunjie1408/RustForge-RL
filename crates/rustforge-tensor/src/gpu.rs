@@ -40,6 +40,10 @@ pub enum GpuError {
     },
     /// A row reduction requires a rank-two tensor.
     ExpectedMatrix { shape: Vec<usize> },
+    /// Categorical probabilities require [batch, actions] with actions > 0.
+    InvalidCategoricalShape { shape: Vec<usize> },
+    /// Clamp bounds must be finite and ordered.
+    InvalidBounds,
     /// A shape, buffer, index, or dispatch exceeds supported limits.
     LimitExceeded,
     /// A tensor belongs to a different compute device.
@@ -80,6 +84,8 @@ impl fmt::Display for GpuError {
             }
             Self::InvalidBiasShape { matrix, bias } => write!(f, "GPU bias addition requires [batch, features] and [features], got {matrix:?} and {bias:?}"),
             Self::ExpectedMatrix { shape } => write!(f, "GPU row reduction requires a matrix, got {shape:?}"),
+            Self::InvalidCategoricalShape { shape } => write!(f, "GPU categorical probabilities require [batch, actions] with actions > 0, got {shape:?}"),
+            Self::InvalidBounds => write!(f, "clamp bounds must be finite and ordered"),
             Self::LimitExceeded => write!(f, "GPU tensor exceeds supported shape or device limits"),
             Self::DeviceMismatch => write!(f, "tensor belongs to a different GPU device"),
             Self::ExpectedScalar { shape } => {
@@ -796,6 +802,19 @@ mod tests {
         let chosen = context.argmax_rows_device(&affine).unwrap();
         let gathered = context.gather_rows_device(&affine, &chosen).unwrap();
         let scattered = context.scatter_rows_device(&gathered, &actions).unwrap();
+        let log_probabilities = context.log_softmax_device(&affine).unwrap();
+        let probabilities = context.softmax_device(&affine).unwrap();
+        let log_gradient = context
+            .log_softmax_backward_device(&log_probabilities, &affine)
+            .unwrap();
+        let nonfinite = context.nonfinite_count_device(&log_gradient).unwrap();
+        let logarithm = context.log_device(&affine).unwrap();
+        let tanh = context.tanh_device(&affine).unwrap();
+        let clipped = context.clamp_device(&affine, -1., 1.).unwrap();
+        let columns = context.sum_columns_device(&affine).unwrap();
+        let repeated = context.broadcast_columns_device(&columns, 2).unwrap();
+        drop((logarithm, tanh, clipped, columns, repeated));
+
         assert_eq!(
             context.inner.transfers.load(Ordering::Relaxed),
             before_operations
@@ -816,6 +835,23 @@ mod tests {
             context.download(&scattered).unwrap().to_vec(),
             vec![5., 0., 0., 5.]
         );
+        assert_eq!(context.download(&nonfinite).unwrap().item(), 0.);
+        assert!(context
+            .download(&probabilities)
+            .unwrap()
+            .to_vec()
+            .iter()
+            .all(|p| (*p - 0.5).abs() < 1e-6));
+        assert!(context
+            .download(&log_gradient)
+            .unwrap()
+            .to_vec()
+            .iter()
+            .all(|g| g.abs() < 1e-5));
+        drop(log_probabilities);
+        drop(probabilities);
+        drop(log_gradient);
+        drop(nonfinite);
         drop(actions);
         drop(chosen);
         drop(gathered);

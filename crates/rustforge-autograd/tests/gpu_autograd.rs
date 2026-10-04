@@ -491,3 +491,232 @@ fn invalid_adam_state_preserves_optimizer_and_live_gradients() {
         );
     }
 }
+
+#[test]
+#[ignore = "requires a GPU adapter"]
+fn categorical_autograd_matches_cpu_and_finite_differences() {
+    let data = [0.2, -0.7, 1.1, -0.3, 0.5, 0.8];
+    let weights = [0.4, -0.5, 0.7, 1.2, 0.1, -0.9];
+    let x = variable(&data, &[2, 3], true);
+    let w = variable(&weights, &[2, 3], false);
+    let objective = x.log_softmax().unwrap().mul(&w).unwrap().sum().unwrap();
+    objective.backward().unwrap();
+    let cx = Variable::new(Tensor::from_vec(data.to_vec(), &[2, 3]), true);
+    let max = Variable::from_tensor(cx.data().max_axis(1, true).unwrap());
+    let shifted = &cx - &max;
+    let exps = shifted.exp();
+    let logs = &shifted - &exps.sum_axis(1, true).log();
+    let cpu_loss =
+        (&logs * &Variable::from_tensor(Tensor::from_vec(weights.to_vec(), &[2, 3]))).sum();
+    cpu_loss.backward();
+    close(&gradient(&x), &cx.grad().unwrap().to_vec(), 2e-6);
+    let evaluate = |values: &[f32]| -> f64 {
+        (0..2)
+            .map(|row| {
+                let maximum = values[row * 3..row * 3 + 3]
+                    .iter()
+                    .copied()
+                    .fold(f32::NEG_INFINITY, f32::max) as f64;
+                let total: f64 = values[row * 3..row * 3 + 3]
+                    .iter()
+                    .map(|v| (*v as f64 - maximum).exp())
+                    .sum();
+                (0..3)
+                    .map(|col| {
+                        let i = row * 3 + col;
+                        weights[i] as f64 * (values[i] as f64 - maximum - total.ln())
+                    })
+                    .sum::<f64>()
+            })
+            .sum()
+    };
+    let grads = gradient(&x);
+    for i in 0..6 {
+        let mut plus = data;
+        let mut minus = data;
+        plus[i] += 0.001;
+        minus[i] -= 0.001;
+        approx::assert_abs_diff_eq!(
+            grads[i],
+            ((evaluate(&plus) - evaluate(&minus)) / (plus[i] - minus[i]) as f64) as f32,
+            epsilon = 2e-4
+        );
+    }
+    x.zero_grad();
+    x.softmax()
+        .unwrap()
+        .mul(&w)
+        .unwrap()
+        .sum()
+        .unwrap()
+        .backward()
+        .unwrap();
+    let probabilities = x.softmax().unwrap().to_cpu().unwrap().to_vec();
+    let expected: Vec<f32> = (0..6)
+        .map(|i| {
+            let row = i / 3;
+            let sum: f32 = (0..3)
+                .map(|c| probabilities[row * 3 + c] * weights[row * 3 + c])
+                .sum();
+            probabilities[i] * (weights[i] - sum)
+        })
+        .collect();
+    close(&gradient(&x), &expected, 2e-6);
+}
+
+#[test]
+#[ignore = "requires a GPU adapter"]
+fn new_unary_ops_preserve_forward_snapshots_no_grad_and_empty_batches() {
+    let x = variable(&[0.1, -0.2, 0.5], &[1, 3], true);
+    let exp = x.exp().unwrap();
+    let logs = x.log_softmax().unwrap();
+    let loss = exp.sum().unwrap().add(&logs.sum().unwrap()).unwrap();
+    x.copy_data_from(&variable(&[9., 8., 7.], &[1, 3], false))
+        .unwrap();
+    loss.backward().unwrap();
+    let sum = 0.1f32.exp() + (-0.2f32).exp() + 0.5f32.exp();
+    let expected: Vec<f32> = [0.1f32, -0.2, 0.5]
+        .iter()
+        .map(|v| v.exp() + 1. - 3. * v.exp() / sum)
+        .collect();
+    close(&gradient(&x), &expected, 2e-6);
+    loss.backward().unwrap();
+    close(
+        &gradient(&x),
+        &expected.iter().map(|v| 2. * v).collect::<Vec<_>>(),
+        3e-6,
+    );
+    let frozen = no_grad(|| x.log_softmax().unwrap().exp().unwrap());
+    assert!(!frozen.requires_grad() && !frozen.has_grad_fn());
+    let empty = variable(&[], &[0, 3], true);
+    empty
+        .log_softmax()
+        .unwrap()
+        .exp()
+        .unwrap()
+        .sum()
+        .unwrap()
+        .backward()
+        .unwrap();
+    assert_eq!(empty.grad_cpu().unwrap().unwrap().shape(), &[0, 3]);
+}
+
+#[test]
+#[ignore = "requires a GPU adapter"]
+fn log_tanh_division_and_column_sum_match_cpu_and_finite_differences() {
+    let a = [0.2, 0.5, 1., 2., 3., 4.];
+    let b = [0.7, 1.1, 1.3, 1.5, 1.7, 2.];
+    let weights = [0.3, -0.7];
+    let x = variable(&a, &[2, 3], true);
+    let y = variable(&b, &[2, 3], true);
+    let w = variable(&weights, &[2, 1], false);
+    let loss = x
+        .div(&y)
+        .unwrap()
+        .log()
+        .unwrap()
+        .tanh()
+        .unwrap()
+        .sum_columns()
+        .unwrap()
+        .mul(&w)
+        .unwrap()
+        .sum()
+        .unwrap();
+    loss.backward().unwrap();
+    let cx = Variable::new(Tensor::from_vec(a.to_vec(), &[2, 3]), true);
+    let cy = Variable::new(Tensor::from_vec(b.to_vec(), &[2, 3]), true);
+    let cw = Variable::from_tensor(Tensor::from_vec(weights.to_vec(), &[2, 1]));
+    let cl = (&(&cx / &cy).log().tanh_().sum_axis(1, true) * &cw).sum();
+    cl.backward();
+    close(&gradient(&x), &cx.grad().unwrap().to_vec(), 2e-5);
+    close(&gradient(&y), &cy.grad().unwrap().to_vec(), 2e-5);
+    let reference = |a: &[f32], b: &[f32]| -> f64 {
+        a.iter()
+            .zip(b)
+            .enumerate()
+            .map(|(i, (a, b))| ((*a as f64) / (*b as f64)).ln().tanh() * (weights[i / 3] as f64))
+            .sum()
+    };
+    for i in 0..6 {
+        let mut plus = a;
+        let mut minus = a;
+        plus[i] += 0.001;
+        minus[i] -= 0.001;
+        let dx =
+            (reference(&plus, &b) - reference(&minus, &b)) / (plus[i] as f64 - minus[i] as f64);
+        approx::assert_abs_diff_eq!(gradient(&x)[i] as f64, dx, epsilon = 2e-5);
+    }
+}
+#[test]
+#[ignore = "requires a GPU adapter"]
+fn continuous_operators_preserve_forward_snapshots_and_empty_no_grad_contracts() {
+    let a = variable(&[0.5, 2.], &[1, 2], true);
+    let b = variable(&[2., 3.], &[1, 2], true);
+    let loss = a
+        .div(&b)
+        .unwrap()
+        .log()
+        .unwrap()
+        .tanh()
+        .unwrap()
+        .sum_columns()
+        .unwrap()
+        .sum()
+        .unwrap();
+    a.copy_data_from(&variable(&[8., 9.], &[1, 2], false))
+        .unwrap();
+    b.copy_data_from(&variable(&[5., 6.], &[1, 2], false))
+        .unwrap();
+    loss.backward().unwrap();
+    let first = gradient(&a);
+    loss.backward().unwrap();
+    close(
+        &gradient(&a),
+        &first.iter().map(|x| 2. * x).collect::<Vec<_>>(),
+        2e-5,
+    );
+    for (i, (av, bv)) in [(0.5f32, 2f32), (2., 3.)].iter().enumerate() {
+        let t = (av / bv).ln().tanh();
+        approx::assert_abs_diff_eq!(first[i], (1. - t * t) / av, epsilon = 2e-5);
+        approx::assert_abs_diff_eq!(gradient(&b)[i], -2. * (1. - t * t) / bv, epsilon = 2e-5);
+    }
+    let inference = no_grad(|| {
+        a.div(&b)
+            .unwrap()
+            .log()
+            .unwrap()
+            .tanh()
+            .unwrap()
+            .sum_columns()
+            .unwrap()
+    });
+    assert!(!inference.requires_grad() && !inference.has_grad_fn());
+    let empty = variable(&[], &[0, 3], true);
+    let other = variable(&[], &[0, 3], false);
+    empty
+        .div(&other)
+        .unwrap()
+        .log()
+        .unwrap()
+        .tanh()
+        .unwrap()
+        .sum_columns()
+        .unwrap()
+        .sum()
+        .unwrap()
+        .backward()
+        .unwrap();
+    assert_eq!(gradient(&empty), Vec::<f32>::new());
+    let empty_columns = variable(&[], &[2, 0], true);
+    empty_columns
+        .sum_columns()
+        .unwrap()
+        .sum()
+        .unwrap()
+        .backward()
+        .unwrap();
+    assert!(gradient(&empty_columns).is_empty());
+    assert!(a.div(&variable(&[1.], &[1], false)).is_err());
+    assert!(variable(&[1.], &[1], true).sum_columns().is_err());
+}

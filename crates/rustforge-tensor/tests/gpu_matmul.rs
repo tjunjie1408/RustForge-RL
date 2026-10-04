@@ -589,3 +589,244 @@ fn action_indices_reject_invalid_shapes_devices_and_nonfinite_rows() {
         assert!(output.item().is_nan());
     }
 }
+
+#[test]
+#[ignore = "requires a GPU adapter"]
+fn stable_categorical_probabilities_cover_extreme_logits_empty_rows_and_exp() {
+    let ctx = context();
+    for (rows, columns) in [(1, 3), (7, 17), (257, 3), (2, 513), (3, 1), (0, 3)] {
+        let data: Vec<f32> = (0..rows * columns)
+            .map(|i| 1000. + (i % columns) as f32 * 0.25 - (i % 7) as f32)
+            .collect();
+        let input = ctx
+            .upload(&Tensor::from_vec(data.clone(), &[rows, columns]))
+            .unwrap();
+        let lp = ctx
+            .download(&ctx.log_softmax_device(&input).unwrap())
+            .unwrap()
+            .to_vec();
+        let probabilities = ctx
+            .download(&ctx.softmax_device(&input).unwrap())
+            .unwrap()
+            .to_vec();
+        for row in 0..rows {
+            let row_data = &data[row * columns..(row + 1) * columns];
+            let max = row_data.iter().copied().fold(f32::NEG_INFINITY, f32::max) as f64;
+            let sum: f64 = row_data.iter().map(|v| (*v as f64 - max).exp()).sum();
+            for col in 0..columns {
+                let expected = row_data[col] as f64 - max - sum.ln();
+                assert_abs_diff_eq!(lp[row * columns + col], expected as f32, epsilon = 3e-5);
+                assert_abs_diff_eq!(
+                    probabilities[row * columns + col],
+                    expected.exp() as f32,
+                    epsilon = 2e-6
+                );
+            }
+            assert_abs_diff_eq!(
+                probabilities[row * columns..(row + 1) * columns]
+                    .iter()
+                    .sum::<f32>(),
+                1.,
+                epsilon = 2e-5
+            );
+        }
+    }
+    let input = ctx
+        .upload(&Tensor::from_vec(
+            vec![1000., -1000., 999., -1000., -1001., -999.],
+            &[2, 3],
+        ))
+        .unwrap();
+    let lp = ctx
+        .download(&ctx.log_softmax_device(&input).unwrap())
+        .unwrap();
+    assert!(lp.to_vec().iter().all(|v| v.is_finite()));
+    let exp_input = Tensor::from_vec(vec![-10., -1., 0., 1., 10.], &[5]);
+    let actual = ctx
+        .download(&ctx.exp_device(&ctx.upload(&exp_input).unwrap()).unwrap())
+        .unwrap();
+    for (a, b) in actual.to_vec().iter().zip(exp_input.exp().to_vec()) {
+        assert!((*a - b).abs() <= 2e-6 * b.abs().max(1.));
+    }
+}
+
+#[test]
+#[ignore = "requires a GPU adapter"]
+fn categorical_backward_validates_shapes_owners_and_propagates_nonfinite_rows() {
+    let ctx = context();
+    let logits = ctx
+        .upload(&Tensor::from_vec(vec![1., 2., -1., -2., 0., 3.], &[2, 3]))
+        .unwrap();
+    let lp = ctx.log_softmax_device(&logits).unwrap();
+    let gradient = [0.2, -0.4, 1.1, -2., 0.3, 0.7];
+    let grad = ctx
+        .upload(&Tensor::from_vec(gradient.to_vec(), &[2, 3]))
+        .unwrap();
+    let result = ctx
+        .download(&ctx.log_softmax_backward_device(&lp, &grad).unwrap())
+        .unwrap()
+        .to_vec();
+    let logs = ctx.download(&lp).unwrap().to_vec();
+    for row in 0..2 {
+        let sum: f32 = gradient[row * 3..row * 3 + 3].iter().sum();
+        for col in 0..3 {
+            let i = row * 3 + col;
+            assert_abs_diff_eq!(result[i], gradient[i] - logs[i].exp() * sum, epsilon = 1e-6);
+        }
+    }
+    for shape in [vec![3], vec![2, 0], vec![], vec![1, 2, 3]] {
+        assert!(matches!(
+            ctx.log_softmax_device(&ctx.zeros(&shape).unwrap()),
+            Err(GpuError::InvalidCategoricalShape { .. })
+        ));
+    }
+    assert!(ctx
+        .log_softmax_backward_device(&lp, &ctx.zeros(&[2, 1]).unwrap())
+        .is_err());
+    let other = GpuContext::new().unwrap();
+    assert!(matches!(
+        ctx.log_softmax_device(&other.zeros(&[2, 3]).unwrap()),
+        Err(GpuError::DeviceMismatch)
+    ));
+    assert!(matches!(
+        ctx.log_softmax_backward_device(&lp, &other.zeros(&[2, 3]).unwrap()),
+        Err(GpuError::DeviceMismatch)
+    ));
+    for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        let input = ctx
+            .upload(&Tensor::from_vec(vec![bad, 0., 1., 1., 1., 1.], &[2, 3]))
+            .unwrap();
+        let values = ctx
+            .download(&ctx.log_softmax_device(&input).unwrap())
+            .unwrap()
+            .to_vec();
+        assert_eq!(
+            ctx.download(&ctx.nonfinite_count_device(&input).unwrap())
+                .unwrap()
+                .item(),
+            1.
+        );
+        assert!(values[..3].iter().all(|v| v.is_nan()));
+        assert!(values[3..].iter().all(|v| v.is_finite()));
+    }
+}
+
+#[test]
+#[ignore = "requires a GPU adapter"]
+fn gpu_log_tanh_numeric_clamp_and_special_values() {
+    let c = context();
+    let data = [
+        -1000.,
+        -20.,
+        -1.,
+        -0.,
+        0.,
+        1e-7,
+        0.3,
+        1.,
+        20.,
+        1000.,
+        f32::NEG_INFINITY,
+        f32::INFINITY,
+        f32::NAN,
+    ];
+    let input = c
+        .upload(&Tensor::from_vec(data.to_vec(), &[data.len()]))
+        .unwrap();
+    let tanh = c
+        .download(&c.tanh_device(&input).unwrap())
+        .unwrap()
+        .to_vec();
+    let clipped = c
+        .download(&c.clamp_device(&input, -0.5, 0.5).unwrap())
+        .unwrap()
+        .to_vec();
+    for ((x, y), z) in data.iter().zip(&tanh).zip(&clipped) {
+        if x.is_nan() {
+            assert!(y.is_nan() && z.is_nan());
+        } else {
+            assert_abs_diff_eq!(*y, x.tanh(), epsilon = 2e-6);
+            assert_abs_diff_eq!(*z, x.clamp(-0.5, 0.5), epsilon = 0.);
+        }
+    }
+    assert_eq!(tanh[3].to_bits(), (-0f32).to_bits());
+    assert_eq!(tanh[4].to_bits(), 0f32.to_bits());
+    let data = [
+        1e-30,
+        0.1,
+        1.,
+        2.,
+        1000.,
+        0.,
+        -0.,
+        -1.,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        f32::NAN,
+    ];
+    let input = c
+        .upload(&Tensor::from_vec(data.to_vec(), &[data.len()]))
+        .unwrap();
+    let logs = c.download(&c.log_device(&input).unwrap()).unwrap().to_vec();
+    for (x, y) in data.iter().zip(logs) {
+        let expected = x.ln();
+        if expected.is_nan() {
+            assert!(y.is_nan());
+        } else if expected.is_infinite() {
+            assert_eq!(expected, y);
+        } else {
+            assert_abs_diff_eq!(y, expected, epsilon = 1e-5);
+        }
+    }
+    assert!(c.clamp_device(&input, 1., -1.).is_err());
+    assert!(c.clamp_device(&input, f32::NAN, 1.).is_err());
+}
+#[test]
+#[ignore = "requires a GPU adapter"]
+fn gpu_column_reduction_and_broadcast_cover_shapes_and_owner_errors() {
+    let c = context();
+    for (rows, cols) in [(1, 1), (7, 17), (257, 3), (3, 513), (0, 3), (3, 0)] {
+        let data: Vec<_> = (0..rows * cols).map(|i| (i % 11) as f32 - 5.).collect();
+        let input = c
+            .upload(&Tensor::from_vec(data.clone(), &[rows, cols]))
+            .unwrap();
+        let sum = c.sum_columns_device(&input).unwrap();
+        assert_eq!(sum.shape(), [rows, 1]);
+        let expected: Vec<_> = (0..rows)
+            .map(|r| data[r * cols..(r + 1) * cols].iter().sum::<f32>())
+            .collect();
+        assert_eq!(c.download(&sum).unwrap().to_vec(), expected);
+        let repeated = c.broadcast_columns_device(&sum, cols).unwrap();
+        let expected: Vec<_> = expected
+            .iter()
+            .flat_map(|v| std::iter::repeat(*v).take(cols))
+            .collect();
+        assert_eq!(c.download(&repeated).unwrap().to_vec(), expected);
+    }
+    let wrong = c.zeros(&[2]).unwrap();
+    assert!(c.sum_columns_device(&wrong).is_err());
+    assert!(c.broadcast_columns_device(&wrong, 2).is_err());
+    let wrong = c.zeros(&[2, 2]).unwrap();
+    assert!(c.broadcast_columns_device(&wrong, 2).is_err());
+    let foreign = GpuContext::new().unwrap().zeros(&[2, 1]).unwrap();
+    assert!(matches!(
+        c.sum_columns_device(&foreign),
+        Err(GpuError::DeviceMismatch)
+    ));
+    assert!(matches!(
+        c.broadcast_columns_device(&foreign, 2),
+        Err(GpuError::DeviceMismatch)
+    ));
+    assert!(matches!(
+        c.log_device(&foreign),
+        Err(GpuError::DeviceMismatch)
+    ));
+    assert!(matches!(
+        c.tanh_device(&foreign),
+        Err(GpuError::DeviceMismatch)
+    ));
+    assert!(matches!(
+        c.clamp_device(&foreign, 0., 1.),
+        Err(GpuError::DeviceMismatch)
+    ));
+}
