@@ -291,7 +291,7 @@ rustforge monitor logs/progress.csv   # rolling mean reward, loss, exploration/e
 | **Phase 5** | Python Bindings (PyO3) | ✅ Complete |
 | **Phase 5** | Terminal Training Console (`rustforge run` / `monitor`) | ✅ Complete |
 | **Phase 5** | Benchmarks vs SB3 | ✅ Complete (DQN/CartPole; ~22× faster) |
-| **Phase 5** | GPU Support (wgpu) | 🚧 Device tensors, autograd, neural-network modules and GPU DQN/Double DQN and checkpoint/resume, CLI/runtime device selection, prioritized replay and discrete PPO rollout/GAE training with CLI/runtime and checkpoints implemented; continuous Gaussian/PPO objectives, seeded continuous rollout/GAE agent training and Pendulum CLI/runtime/checkpoints implemented; GPU A2C objectives implemented; GPU A2C rollout/GAE agent training implemented; A2C CartPole runtime/CLI and checkpoints implemented; REINFORCE objective foundation implemented; REINFORCE rollout training next, hardware validation pending |
+| **Phase 5** | GPU Support (wgpu) | 🚧 Device tensors, autograd, neural-network modules and GPU DQN/Double DQN and checkpoint/resume, CLI/runtime device selection, prioritized replay and discrete PPO rollout/GAE training with CLI/runtime and checkpoints implemented; continuous Gaussian/PPO objectives, seeded continuous rollout/GAE agent training and Pendulum CLI/runtime/checkpoints implemented; GPU A2C objectives implemented; GPU A2C rollout/GAE agent training implemented; A2C CartPole runtime/CLI and checkpoints implemented; REINFORCE objective foundation implemented; REINFORCE Monte Carlo agent training implemented; REINFORCE runtime/checkpoints next, hardware validation pending |
 
 ### GPU development
 
@@ -548,7 +548,8 @@ CPU REINFORCE's Linear/ReLU/Linear architecture. Its loss uses detached Monte Ca
 advantages with an optional batch-mean baseline, without variance normalization.
 Mean subtraction stays on device. `checked_loss()` validates inputs, centered
 advantages and the scalar loss before backward; check gradients and their squares
-before Adam. Rollout training and runtime/CLI/checkpoints follow in later stages.
+before Adam. Owned rollout training is available below; runtime/CLI and
+checkpoints follow in stage 9c.
 
 ```bash
 cargo test --locked -p rustforge-rl --features gpu --test gpu_reinforce_loss -- --include-ignored
@@ -557,6 +558,21 @@ cargo run --locked -p rustforge-rl --features gpu --example gpu_reinforce_object
 
 The fixed objective example reduces loss from 0.774196 to 0.000944 in 80 updates.
 This validates objective optimization on llvmpipe; physical GPU tests remain deferred.
+
+`agent::gpu_reinforce::GpuReinforce` owns the policy, resident Adam and successful
+update counter. It samples with a caller-owned RNG and collects episode-local
+CPU Monte Carlo returns, using zero final bootstrap at termination, truncation
+and step limits. Training applies one update over active rows; mean-baseline
+subtraction excludes unused capacity. Returns and old log probabilities are unused
+by the loss. Finite input/loss/gradient/squared-gradient checks precede Adam.
+
+```bash
+cargo test --locked -p rustforge-rl --features gpu --test gpu_reinforce_agent -- --include-ignored
+cargo run --locked -p rustforge-rl --features gpu --example gpu_reinforce_training
+```
+
+The seeded bandit example raises the rewarding action's probability from 0.046995
+to 0.999581 in 60 fresh rollout updates with the mean baseline enabled.
 
 See [the GPU implementation plan](docs/gpu-development.md) and its saved benchmark.
 

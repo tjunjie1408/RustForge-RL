@@ -55,6 +55,7 @@ fn log_softmax_var(logits: &Variable) -> Variable {
 }
 
 /// Configuration for the REINFORCE agent.
+#[derive(Clone, Debug, PartialEq)]
 pub struct REINFORCEConfig {
     /// Observation dimensionality.
     pub obs_dim: usize,

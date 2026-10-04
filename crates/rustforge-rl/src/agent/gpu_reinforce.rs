@@ -1,4 +1,6 @@
-//! GPU Monte Carlo policy-gradient objective; rollout training follows separately.
+//! GPU REINFORCE objective and agent; sampling and Monte Carlo rollouts stay on CPU.
+mod agent;
+pub use agent::{GpuReinforce, GpuReinforceRolloutOptions};
 use rustforge_autograd::gpu::{GpuAutogradError, GpuVariable};
 use rustforge_nn::gpu::{GpuLinear, GpuModule, GpuModuleError, GpuReLU, GpuSequential};
 use rustforge_tensor::gpu::{GpuContext, GpuError, GpuIndices};
@@ -9,6 +11,7 @@ pub enum GpuReinforceError {
     Autograd(GpuAutogradError),
     Module(GpuModuleError),
     Device(GpuError),
+    InvalidInput(&'static str),
     InvalidDimensions,
     InvalidBatch,
     NonFinite,
@@ -19,6 +22,7 @@ impl fmt::Display for GpuReinforceError {
             Self::Autograd(e) => e.fmt(f),
             Self::Module(e) => e.fmt(f),
             Self::Device(e) => e.fmt(f),
+            Self::InvalidInput(message) => f.write_str(message),
             Self::InvalidDimensions => f.write_str("REINFORCE dimensions must be positive with representable parameter sizes"),
             Self::InvalidBatch => f.write_str("REINFORCE requires nonempty [batch,actions] logits, matching typed actions and [batch,1] advantages"),
             Self::NonFinite => f.write_str("GPU REINFORCE input, centered advantages or loss is nonfinite"),

@@ -11,7 +11,8 @@ Stage 8a adds categorical A2C objective and shared-network update parity; stage 
 adds owned agent sampling, CPU rollout/GAE and fresh-environment learning.
 Stage 8c adds A2C worker/CLI routing, checkpoints and runtime controls.
 Stage 9a adds the REINFORCE categorical objective, optional mean baseline and
-seeded policy network.
+seeded policy network. Stage 9b adds an owned REINFORCE agent, CPU episode-local
+Monte Carlo returns, guarded updates and environment learning.
 
 ## Implementation stages
 
@@ -36,8 +37,8 @@ seeded policy network.
 | 8b | GPU A2C agent training | Complete: owned network/Adam/clock, seeded sampling, CPU episode-local rollout/GAE, active-row CPU parity and environment learning |
 | 8c | GPU A2C runtime and checkpoints | Complete: worker-owned CPU/GPU agents, CartPole headless/live CLI, distinct shared-network/Adam checkpoints, metrics and controls |
 | 9a | GPU REINFORCE objective foundation | Complete: categorical Monte Carlo policy loss, resident optional mean baseline, seeded policy and actual CPU gradient/Adam parity |
-| 9b | GPU REINFORCE agent training | Next: owned policy/Adam/clock, seeded sampling, Monte Carlo rollouts and environment learning |
-| 9c | GPU REINFORCE runtime and checkpoints | Planned: worker/CLI routing, bounded policy/Adam checkpoints, controls and resume contracts |
+| 9b | GPU REINFORCE agent training | Complete: owned policy/Adam/clock, seeded action sampling, CPU Monte Carlo rollouts, active-row CPU parity and environment learning |
+| 9c | GPU REINFORCE runtime and checkpoints | Next: worker/CLI routing, bounded policy/Adam checkpoints, controls and resume contracts |
 
 ## Architecture decisions
 
@@ -1804,13 +1805,100 @@ ordinary test validates dimensions without constructing an adapter. The native
 suite leaves adapter-required tests ignored; the focused suite explicitly executes
 all four on llvmpipe. GPU CI runs both the suite and fixed objective example.
 
-## Next implementation: stage 9b
+## Stage 9b: GPU REINFORCE agent training
 
-Build an owned GPU REINFORCE agent around the seeded policy, Adam and successful
-update counter. Add reproducible categorical sampling with a caller-controlled
-RNG, CPU episode-local discounted Monte Carlo rollout collection and one update
-per active rollout batch. Preserve the optional mean baseline and zero bootstrap
-at episode boundaries, reject malformed/nonfinite inputs before optimizer mutation,
-and verify actual CPU updates plus fresh environment learning. Runtime/CLI,
-checkpoint continuation and controls follow in stage 9c. Physical GPU profiling
-and full experiment-state persistence remain separate work.
+`GpuReinforce` owns the seeded policy, resident Adam, configuration and successful
+update counter. Construction validates dimensions, positive finite learning rate
+and discount in [0,1]. Inference records no gradient graph; explicit readback
+produces stable categorical log probabilities and normalized probabilities.
+`select_action_with_rng` consumes one draw from a caller-owned RNG and returns the
+action and log probability. Its seeded action sequence matches CPU REINFORCE.
+
+`collect_rollout_with_rng` validates environment dimensions/actions and rollout
+bounds before reset. Each episode gets a wrapping seed offset and its own CPU
+rollout buffer. Values are zero, lambda is 1 and final bootstrap is zero, including
+truncation and step limits. Returns therefore equal discounted Monte Carlo
+advantages and never leak across resets. State/action conversion, reward, next
+observation and resulting returns are checked. Sampling logs are retained for
+diagnostics but are not consumed during training.
+
+`train_on_rollout` applies one Adam step to the active states/actions/advantages.
+Optional mean subtraction uses only active rows; there is no variance normalization.
+Unused capacity, returns and old log probabilities are ignored. Empty batches
+return zero without updating the clock. Shape, action, finite input and counter
+checks precede objective construction. Finite loss is checked before backward;
+gradients and their squares are checked before Adam mutates moments/parameters.
+Failed backward/variance checks leave parameters and the update clock unchanged;
+subsequent valid training clears gradients and matches a fresh optimizer.
+
+```bash
+cargo test --locked -p rustforge-rl --features gpu --test gpu_reinforce_agent -- --include-ignored
+cargo run --locked -p rustforge-rl --features gpu --example gpu_reinforce_training
+```
+
+The example rewards action 0 with +1 and action 1 with -1. Model seed 42, action
+seed 7, hidden width 8 and learning rate 0.03 train 60 fresh batches of 32 one-step
+episodes with the optional mean baseline enabled. Rewarding action probability
+rises from **0.046995** to **0.999581**, with exactly 60 successful Adam updates.
+This establishes fresh environment learning on Mesa llvmpipe GL, without a
+physical GPU speed or CartPole convergence claim.
+
+### Deviations from Plan (stage 9b)
+
+- Added Clone/Debug/PartialEq to CPU REINFORCE configuration for owned GPU state
+  and inspection; CPU training and sampling math remain unchanged.
+- GPU training slices active rows, including before mean subtraction. CPU training
+  expects exact active tensors, so parity supplies a matching five-row CPU batch
+  while the GPU receives NaN padding and an invalid unused action.
+- Retained sampled log probabilities as rollout diagnostics, while the objective
+  recomputes current-policy logs. Returns and old logs may be absent during updates.
+- Finite gradients are insufficient for Adam: squared-gradient checks reject
+  second-moment overflow. Recovery tests cover both failed backward and failed
+  square checks before a successful update versus a fresh optimizer.
+- Runtime/CLI/checkpoints remain stage 9c. Physical GPU testing stays deferred by
+  user instruction.
+
+### Issue Resolution Progress (stage 9b)
+
+| Work | Issue ID | Result |
+| --- | --- | --- |
+| Owned policy/Adam/configuration/update clock | Unassigned | Complete, four actual CPU gradient/parameter update checks per baseline mode |
+| Seeded categorical sampling and diagnostics | Unassigned | Complete, CPU action/log/probability sequence and RNG consumption parity |
+| CPU episode-local Monte Carlo collection | Unassigned | Complete, analytic terminal/truncation/limit returns, reset isolation and seed wrapping |
+| Active-row mean baseline and unused references | Unassigned | Complete, NaN padding and absent returns/old logs do not affect training |
+| Input/gradient/square validation and recovery | Unassigned | Complete, parameters/clock preserved on rejection and recovery matches fresh Adam |
+| Environment learning, runnable example and GPU CI | Unassigned | Complete, rewarding action probability above 0.999 after 60 updates |
+| Worker/CLI/checkpoint integration | Unassigned | Next (9c) |
+
+### Verification (stage 9b)
+
+| Check | Passing result | Delta from stage 9a |
+| --- | --- | --- |
+| Native workspace/all features, excluding Python | 1,077 passed, 143 ignored, 0 failed | +1 ordinary config test; +4 adapter-required agent tests |
+| Adapter-required REINFORCE suites executed | 8 passed, 0 failed | Agent 4 + objective 4 |
+| GPU REINFORCE environment example | Passed | Probability 0.046995 to 0.999581; 60 updates |
+| Workspace Clippy/all targets/all features, warnings denied | Passed | Excluding Python |
+| Rust 1.75 workspace/all targets/all features | Passed | Excluding Python; no dependency/lockfile changes |
+| Default-feature workspace/all-targets check | Passed | Excluding Python; CPU config derives compatible and GPU example gated |
+| Formatting and patch whitespace | Passed | `cargo fmt --all -- --check`, `git diff --check` |
+
+The four new adapter-required tests cover (1) seeded CPU sampling and four actual
+CPU active-batch updates per baseline mode, (2) analytic episode-local discounted
+returns with terminal/truncation/limits and reset seed wrapping, (3) fresh rollout
+learning and one-update-per-batch cadence, and (4) invalid actions/bounds/capacity,
+nonfinite states/rewards/returns, conversion failures, no-grad/empty/overflow cases,
+failed gradients/squares and successful optimizer recovery. One ordinary config
+test runs without adapter allocation. The existing four objective tests were
+rerun explicitly; native workspace execution leaves all eight adapter-required
+REINFORCE checks ignored. GPU CI runs the agent suite and environment example.
+
+## Next implementation: stage 9c
+
+Integrate GPU REINFORCE with the existing worker and CartPole headless/live CLI.
+Add distinct bounded policy/Adam/configuration/update-clock checkpoints and verify
+bit-identical continued updates after restore. Preserve existing Monte Carlo
+boundaries, pause/resume, graceful completion and forced partial-rollout discard.
+Validate restored configuration against the environment before reset, propagate
+errors without overwriting checkpoints, and document fresh environment/rollout/RNG
+streams on resume. Physical GPU profiling and full experiment-state persistence
+remain separate work.

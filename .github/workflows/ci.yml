@@ -187,3 +187,7 @@ jobs:
         run: cargo test --locked -p rustforge-rl --features gpu --test gpu_reinforce_loss -- --include-ignored
       - name: Optimize fixed GPU REINFORCE objective
         run: cargo run --locked -p rustforge-rl --features gpu --example gpu_reinforce_objective
+      - name: Verify GPU REINFORCE agent Monte Carlo rollouts and guarded updates
+        run: cargo test --locked -p rustforge-rl --features gpu --test gpu_reinforce_agent -- --include-ignored
+      - name: Learn rewarding action from GPU REINFORCE rollouts
+        run: cargo run --locked -p rustforge-rl --features gpu --example gpu_reinforce_training

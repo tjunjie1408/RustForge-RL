@@ -9,13 +9,22 @@ contain breaking changes.
 
 ### Added
 
+- Owned GPU REINFORCE agent with seeded categorical sampling, resident policy/Adam
+  and successful-update counter. Episode-local CPU Monte Carlo rollouts use zero
+  final bootstrap for termination/truncation/limits. One update consumes active
+  rows with an optional mean baseline, ignoring unused capacity and old references.
+  Finite input/loss/gradient/squared-gradient guards run before Adam. CPU sampling
+  and update parity, analytic returns, rejection/recovery and fresh environment
+  learning are tested. CPU configuration gains Clone/Debug/PartialEq; training math
+  is unchanged. Runtime/CLI and checkpoints follow in stage 9c.
+
 - GPU REINFORCE objective foundation with a seeded CPU-matching policy network,
   stable categorical policy loss, detached advantages and optional resident
   batch-mean baseline. Validates shapes, ownership and finite inputs/centered
   advantages/loss. Tests cover f64 gradient parity, both baseline modes, four
   actual CPU Adam updates, singleton/constant batches, extreme logits and invalid
   inputs. A fixed-objective example and GPU CI steps verify optimization; owned
-  rollout training and runtime/CLI/checkpoints remain later stages.
+  rollout training is described above, with runtime/CLI/checkpoints still pending.
 
 - GPU A2C worker/runtime integration and CartPole headless/live CLI device routing.
   Distinct bounded version-1 `RFGPUA2C` checkpoints save configuration, shared

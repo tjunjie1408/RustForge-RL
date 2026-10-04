@@ -48,6 +48,10 @@ required-features = ["gpu"]
 name = "gpu_reinforce_objective"
 required-features = ["gpu"]
 
+[[example]]
+name = "gpu_reinforce_training"
+required-features = ["gpu"]
+
 [dependencies]
 bincode = { workspace = true, optional = true }
 rustforge-tensor = { path = "../rustforge-tensor" }
