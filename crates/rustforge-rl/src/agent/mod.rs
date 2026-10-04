@@ -73,3 +73,6 @@ pub mod gpu_reinforce;
 
 #[cfg(feature = "gpu")]
 pub mod gpu_td3;
+
+#[cfg(feature = "gpu")]
+pub mod gpu_sac;

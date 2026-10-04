@@ -60,6 +60,10 @@ required-features = ["gpu"]
 name = "gpu_td3_training"
 required-features = ["gpu"]
 
+[[example]]
+name = "gpu_sac_objective"
+required-features = ["gpu"]
+
 [dependencies]
 bincode = { workspace = true, optional = true }
 rustforge-tensor = { path = "../rustforge-tensor" }

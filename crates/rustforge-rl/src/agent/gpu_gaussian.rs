@@ -65,6 +65,20 @@ pub struct GpuGaussianSample {
     pub actions: GpuVariable,
     pub distribution: GpuGaussianLogProb,
 }
+impl GpuGaussianSample {
+    /// Validates the physical actions as well as density inputs/intermediates.
+    pub fn checked_metrics(&self) -> Result<GpuGaussianMetrics> {
+        let context = self.actions.context();
+        if context
+            .download(&context.nonfinite_count_device(&self.actions.data())?)?
+            .item()
+            != 0.
+        {
+            return Err(GpuGaussianError::NonFinite);
+        }
+        self.distribution.checked_metrics()
+    }
+}
 #[derive(Clone, Copy, Debug)]
 pub struct GpuGaussianMetrics {
     pub mean_log_prob: f32,
@@ -246,7 +260,14 @@ impl GpuGaussianTransform {
             mean,
             &std,
             &tanh_u,
-            vec![mean.detach(), raw_log_std.detach(), noise.detach()],
+            vec![
+                mean.detach(),
+                raw_log_std.detach(),
+                noise.detach(),
+                std.detach(),
+                u.detach(),
+                tanh_u.detach(),
+            ],
         )?;
         Ok(GpuGaussianSample {
             actions,

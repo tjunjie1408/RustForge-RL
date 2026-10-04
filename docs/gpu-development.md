@@ -43,6 +43,7 @@ REINFORCE worker/CLI routing, checkpoints and runtime controls.
 | 10a | GPU TD3 objective foundation | Complete: detached twin-critic targets/loss, actor objective, supplied-noise smoothing/scaling and CPU/f64 gradient/Adam parity |
 | 10b | GPU TD3 agent training | Complete: owned actor/twin critics/targets, seeded continuous replay/noise, transactional delayed updates, Polyak synchronization and fresh continuous learning |
 | 10c | GPU TD3 runtime and checkpoints | Complete: Pendulum worker/CLI, six-network/two-Adam snapshots, delayed-clock resume, controls and finite JSONL metrics |
+| 11a | GPU SAC objective foundation | Complete: squashed Gaussian sampling, detached soft targets, actor/temperature objectives and CPU/f64 gradient/Adam parity |
 
 ## Architecture decisions
 
@@ -2358,6 +2359,90 @@ its stage 10b result remains documented above. Other algorithm/lower-layer GPU
 suites were unaffected. Explicit GPU checks used Mesa llvmpipe GL; physical GPU
 performance is not asserted. Logs are under `/tmp/rustforge-gpu-stage10c-*.log`.
 
-## Next implementation: stage 11a
+## Stage 11a: GPU SAC objective foundation
+
+`agent::gpu_sac` supplies independently usable SAC objectives behind the `gpu`
+feature. `GpuSacActionTransform` reuses the shared Gaussian transform for
+supplied-noise reparameterization, tanh squashing, physical action scaling and
+the CPU policy's log-probability Jacobian correction. Mean and log-standard-
+deviation gradients stay live; supplied noise is detached. Asymmetric action
+bounds, saturation and log-standard-deviation clamp boundaries are covered.
+
+The critic objective computes a detached target
+`reward + gamma*(1-done)*(min(target_q1,target_q2)-alpha*next_log_prob)` and sums
+the two mean squared errors. The actor objective computes
+`mean(alpha*log_prob-min(q1,q2))`, retaining the action path through frozen
+critics. Minimum ties follow the CPU implementation's Q2 derivative. The
+learned-temperature objective computes
+`-log_alpha*mean(detach(log_prob)+target_entropy)`; only log-alpha receives
+its gradient. The exposed detached alpha is a snapshot before its optimizer
+update and must be recomputed for the next update.
+
+Inputs require matching nonempty `[batch,1]` shapes and context ownership.
+Gamma must be finite in `[0,1]`; fixed alpha must be finite and nonnegative.
+Fractional done masks in `[0,1]` preserve CPU arithmetic. Checked metrics reject
+nonfinite inputs, intermediate values and losses, including invalid values
+hidden by terminal masks or tanh saturation. Learned alpha additionally must
+remain finite and strictly positive. These helpers build graphs; the owned
+agent and transactional optimizer scheduling belong to stage 11b.
+
+```bash
+cargo test --locked -p rustforge-rl --features gpu --test gpu_sac_loss -- --include-ignored
+cargo run --locked -p rustforge-rl --features gpu --example gpu_sac_objective
+```
+
+The fixed-objective example optimizes two seeded affine critics with targets
+`[1.54,-1]`. Its summed loss falls from **6.306413 to 8.55e-9** after 200 Adam
+updates. This validates objective optimization; fresh-environment learning
+follows with the owned agent.
+
+### Deviations from Plan (stage 11a)
+
+- Reused the existing Gaussian transform and policy network instead of adding
+  duplicate sampling math. Shared sampling diagnostics now check physical
+  actions and pre-tanh intermediates; continuous PPO regressions pass.
+- Actual Adam parity uses the seeded CPU Gaussian policy and twin affine
+  critics with caller-supplied noise. The full CPU SAC agent's seeded/noise
+  hooks and complete update-order parity remain part of 11b.
+- Fixed alpha zero is accepted as an entropy-disabled boundary; learned alpha
+  rejects exponential overflow and underflow to zero.
+- Default-feature Clippy exposed an unused checkpoint path in the stage 10c
+  CPU TD3 rejection branch. Including that path in its diagnostic resolves the
+  warning without changing checkpoint behavior.
+- No dependencies or lockfile changes were needed. Physical GPU profiling,
+  runtime/checkpoints and full experiment-state persistence remain deferred.
+
+### Issue Resolution Progress (stage 11a)
+
+| Work | Issue ID | Result |
+| --- | --- | --- |
+| Supplied-noise Gaussian actions and corrected log probabilities | Unassigned | Complete, asymmetric bounds, saturation and detached noise |
+| Detached soft twin-critic targets and summed MSE | Unassigned | Complete, CPU/f64 gradients and four seeded Adam updates |
+| Actor objective and action gradients through frozen critics | Unassigned | Complete, CPU/f64 checks and four seeded Gaussian-policy Adam updates |
+| Learned-temperature objective and scalar shapes | Unassigned | Complete, detached policy, four Adam updates and alpha representability guards |
+| Shape, ownership and finite-value diagnostics | Unassigned | Complete, masked invalid inputs and intermediate/reduction overflow checks |
+| Fixed-objective optimization and CI | Unassigned | Complete, 200 updates and dedicated test/example steps |
+| Owned GPU SAC agent and fresh learning | Unassigned | Next (11b) |
+
+### Verification (stage 11a)
+
+| Check | Passing result | Delta from stage 10c |
+| --- | --- | --- |
+| Native workspace/all features, excluding Python | 1,098 passed, 178 ignored, 0 failed | +1 ordinary configuration test; +7 adapter-required tests |
+| GPU SAC objective/sampling/Adam checks | 7 passed, 0 failed | Critic, actor, temperature, seeded critic/policy updates, supplied-noise gradients and guards |
+| Shared Gaussian/continuous PPO regressions | 4 passed, 0 failed | Sampling diagnostic changes covered |
+| Fixed SAC twin-critic example | Passed | Loss 6.306413 → 8.55e-9 in 200 Adam updates |
+| Workspace Clippy/all targets, default and all features | Passed, warnings denied | Excluding Python |
+| Rust 1.75 workspace/all targets/all features | Passed | Excluding Python |
+| Default-feature workspace/all-targets check | Passed | GPU SAC remains feature-gated |
+| Formatting and patch whitespace | Passed | `cargo fmt --all -- --check`, `git diff --check` |
+
+Explicit adapter verification totals **11 passing checks** (seven SAC and four
+continuous PPO regressions), using Mesa llvmpipe GL. Physical GPU performance is
+not asserted. Python was not rebuilt for this GPU-only stage; its 32-test stage
+10c result remains historical. Logs are under
+`/tmp/rustforge-gpu-stage11a-*.log`.
+
+## Next implementation: stage 11b
 
 Continue the next documented GPU stage; physical GPU validation remains deferred.

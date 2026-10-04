@@ -209,5 +209,9 @@ jobs:
         run: cargo test --locked -p rustforge-rl --features gpu --test gpu_td3_checkpoint --test gpu_td3_runtime -- --include-ignored
       - name: Verify GPU TD3 Pendulum CLI resume
         run: cargo test --locked -p rustforge-cli --features gpu --test device_selection gpu_td3_pendulum_cli -- --include-ignored
+      - name: Verify GPU SAC sampling, objectives and CPU Adam parity
+        run: cargo test --locked -p rustforge-rl --features gpu --test gpu_sac_loss -- --include-ignored
+      - name: Optimize fixed GPU SAC twin-critic objective
+        run: cargo run --locked -p rustforge-rl --features gpu --example gpu_sac_objective
       - name: Verify GPU SAC Pendulum CLI resume and temperature clock
         run: cargo test --locked -p rustforge-cli --features gpu --test device_selection gpu_sac_pendulum_cli -- --include-ignored
