@@ -1,8 +1,12 @@
 //! Transactional GPU SAC with caller-owned noise and replay sampling streams.
+mod checkpoint;
 use super::*;
 use crate::{
     agent::{gaussian_policy::sample_standard_normal, sac::SACConfig},
     buffer::ContinuousTransitionBatch,
+};
+pub use checkpoint::{
+    GpuSacCheckpointError, CHECKPOINT_MAGIC, CHECKPOINT_VERSION, MAX_CHECKPOINT_BYTES,
 };
 use rand::Rng;
 use rustforge_autograd::{gpu::GpuAdam, no_grad};

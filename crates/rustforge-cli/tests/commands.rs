@@ -135,3 +135,36 @@ fn td3_pendulum_train_and_run_accept_explicit_gpu_checkpoint_flags() {
         }
     }
 }
+
+#[test]
+fn sac_pendulum_train_and_run_accept_explicit_gpu_checkpoint_flags() {
+    for command in ["train", "run"] {
+        let cli = Cli::try_parse_from([
+            "rustforge",
+            command,
+            "sac",
+            "--env",
+            "pendulum",
+            "--device",
+            "gpu",
+            "--resume",
+            "source.chk",
+            "--checkpoint",
+            "target.chk",
+        ])
+        .unwrap();
+        match cli.command {
+            Commands::Train(a) => {
+                assert_eq!(a.algorithm, Algorithm::Sac);
+                assert_eq!(a.env, Environment::Pendulum);
+                assert!(a.execution.resume.is_some() && a.execution.checkpoint.is_some());
+            }
+            Commands::Run(a) => {
+                assert_eq!(a.algorithm, Algorithm::Sac);
+                assert_eq!(a.env, Environment::Pendulum);
+                assert!(a.execution.resume.is_some() && a.execution.checkpoint.is_some());
+            }
+            _ => unreachable!(),
+        }
+    }
+}

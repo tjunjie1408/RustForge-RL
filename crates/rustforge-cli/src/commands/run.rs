@@ -6,9 +6,9 @@ use std::thread;
 use anyhow::Context;
 use rustforge_rl::agent::{
     cartpole_a2c_config, cartpole_ppo_config, cartpole_reinforce_config, pendulum_ppo_config,
-    pendulum_td3_config, A2cTrainerAdapter, DQNConfig, DqnTrainerAdapter,
+    pendulum_sac_config, pendulum_td3_config, A2cTrainerAdapter, DQNConfig, DqnTrainerAdapter,
     PpoContinuousTrainerAdapter, PpoDiscreteTrainerAdapter, ReinforceTrainerAdapter,
-    Td3TrainerAdapter,
+    SacTrainerAdapter, Td3TrainerAdapter,
 };
 use rustforge_rl::env::{CartPole, GridWorld, Pendulum, PendulumAction};
 use rustforge_rl::metrics::DqnCsvMetricSink;
@@ -421,7 +421,52 @@ fn training_plan(
             })
         }
         (Algorithm::Td3, _) => unreachable!("validated above"),
-
+        (Algorithm::Sac, Environment::Pendulum) => {
+            let config = pendulum_sac_config();
+            let display_config = if execution.resume.is_some() {
+                vec![
+                    (
+                        "Agent configuration".into(),
+                        "Restored from checkpoint".into(),
+                    ),
+                    (
+                        "Replay / policy noise / random streams".into(),
+                        "New run".into(),
+                    ),
+                ]
+            } else {
+                vec![
+                    ("Episodes".into(), episodes.to_string()),
+                    ("Max steps / episode".into(), "200".into()),
+                    ("Action bounds".into(), "[-2, 2]".into()),
+                    ("Hidden dimensions".into(), config.hidden_dim.to_string()),
+                    ("Actor learning rate".into(), config.actor_lr.to_string()),
+                    ("Critic learning rate".into(), config.critic_lr.to_string()),
+                    (
+                        "Temperature learning rate".into(),
+                        config.alpha_lr.to_string(),
+                    ),
+                    ("Initial temperature".into(), config.init_alpha.to_string()),
+                ]
+            };
+            Ok(TrainingPlan {
+                trainer: Box::new(
+                    SacTrainerAdapter::new(
+                        Pendulum::with_max_steps(200),
+                        |a: &[f32]| Ok(PendulumAction::new(a[0])),
+                        config,
+                        episodes,
+                        200,
+                        "pendulum",
+                        Some(2026),
+                    )
+                    .with_options(runtime_options.clone().into()),
+                ),
+                display_config,
+                metrics: MetricFormat::GenericJsonlV1,
+            })
+        }
+        (Algorithm::Sac, _) => unreachable!("validated above"),
         (Algorithm::Ppo, Environment::Gridworld) => unreachable!("validated above"),
         (Algorithm::A2c, Environment::Cartpole) => {
             let max_steps = 500;
@@ -804,6 +849,47 @@ mod tests {
             };
             let plan =
                 training_plan(Algorithm::Td3, Environment::Pendulum, 1, false, &options).unwrap();
+            assert!(plan.display_config.contains(&(
+                "Agent configuration".into(),
+                "Restored from checkpoint".into()
+            )));
+        }
+    }
+    #[test]
+    fn training_plan_binds_sac_pendulum_roles_schema_and_resume_display() {
+        let plan = training_plan(
+            Algorithm::Sac,
+            Environment::Pendulum,
+            1,
+            false,
+            &Default::default(),
+        )
+        .unwrap();
+        let metadata = plan.trainer.metadata();
+        assert_eq!(metadata.algorithm, "sac");
+        assert_eq!(metadata.environment, "pendulum");
+        assert_eq!(plan.metrics.schema(), "rustforge-metrics-jsonl-v1");
+        assert!(metadata.metrics.iter().any(|m| m.name == "loss.critic"
+            && m.role == Some(rustforge_rl::runtime::trainer::MetricRole::PrimaryLoss)));
+        assert_eq!(metadata.metrics.len(), 8);
+        assert!(!metadata.capabilities.checkpoint);
+        assert!(training_plan(
+            Algorithm::Sac,
+            Environment::Cartpole,
+            1,
+            false,
+            &Default::default()
+        )
+        .is_err());
+        #[cfg(feature = "gpu")]
+        {
+            let options = crate::cli::ExecutionArgs {
+                device: crate::cli::Device::Gpu,
+                resume: Some("source.chk".into()),
+                checkpoint: Some("target.chk".into()),
+            };
+            let plan =
+                training_plan(Algorithm::Sac, Environment::Pendulum, 1, false, &options).unwrap();
             assert!(plan.display_config.contains(&(
                 "Agent configuration".into(),
                 "Restored from checkpoint".into()

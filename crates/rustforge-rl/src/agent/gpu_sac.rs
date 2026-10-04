@@ -4,7 +4,10 @@ mod agent;
 /// Reparameterized tanh-squashed Gaussian sampling, including action-scale density correction.
 pub use super::gpu_gaussian::GpuGaussianSample;
 use super::gpu_gaussian::{GpuGaussianError, GpuGaussianTransform};
-pub use agent::{GpuSac, GpuSacCritic, GpuSacPolicy};
+pub use agent::{
+    GpuSac, GpuSacCheckpointError, GpuSacCritic, GpuSacPolicy, CHECKPOINT_MAGIC,
+    CHECKPOINT_VERSION, MAX_CHECKPOINT_BYTES,
+};
 use rustforge_autograd::gpu::{GpuAutogradError, GpuVariable};
 use rustforge_tensor::gpu::{GpuContext, GpuError};
 use std::{error::Error, fmt};
@@ -36,6 +39,7 @@ impl GpuSacActionTransform {
 
 #[derive(Debug)]
 pub enum GpuSacError {
+    Checkpoint(GpuSacCheckpointError),
     Autograd(GpuAutogradError),
     Gaussian(GpuGaussianError),
     Module(rustforge_nn::gpu::GpuModuleError),
@@ -48,6 +52,7 @@ pub enum GpuSacError {
 impl fmt::Display for GpuSacError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Checkpoint(e) => e.fmt(f),
             Self::Module(e) => e.fmt(f),
             Self::Gaussian(e) => e.fmt(f),
             Self::Autograd(e) => e.fmt(f), Self::Device(e) => e.fmt(f),
@@ -61,6 +66,7 @@ impl fmt::Display for GpuSacError {
 impl Error for GpuSacError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            Self::Checkpoint(e) => Some(e),
             Self::Module(e) => Some(e),
             Self::Gaussian(e) => Some(e),
             Self::Autograd(e) => Some(e),
@@ -365,6 +371,11 @@ impl From<rustforge_nn::gpu::GpuModuleError> for GpuSacError {
     }
 }
 
+impl From<GpuSacCheckpointError> for GpuSacError {
+    fn from(e: GpuSacCheckpointError) -> Self {
+        Self::Checkpoint(e)
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;

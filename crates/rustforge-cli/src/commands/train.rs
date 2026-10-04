@@ -5,9 +5,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::Context;
 use rustforge_rl::agent::{
     cartpole_a2c_config, cartpole_ppo_config, cartpole_reinforce_config, pendulum_ppo_config,
-    pendulum_td3_config, A2cTrainerAdapter, DQNConfig, DqnTrainerAdapter,
+    pendulum_sac_config, pendulum_td3_config, A2cTrainerAdapter, DQNConfig, DqnTrainerAdapter,
     PpoContinuousTrainerAdapter, PpoDiscreteTrainerAdapter, ReinforceTrainerAdapter,
-    Td3TrainerAdapter,
+    SacTrainerAdapter, Td3TrainerAdapter,
 };
 use rustforge_rl::env::{CartPole, GridWorld, Pendulum, PendulumAction};
 use rustforge_rl::metrics::DqnCsvMetricSink;
@@ -35,6 +35,7 @@ pub fn execute(args: TrainArgs) -> anyhow::Result<()> {
         Algorithm::A2c => "target/cli_train_a2c.jsonl".into(),
         Algorithm::Reinforce => "target/cli_train_reinforce.jsonl".into(),
         Algorithm::Td3 => "target/cli_train_td3.jsonl".into(),
+        Algorithm::Sac => "target/cli_train_sac.jsonl".into(),
     });
     validate_checkpoint_paths(&args.execution, (!args.no_log).then_some(output.as_path()))?;
     let (trainer, metric_format): (Box<dyn Trainer>, HeadlessMetricFormat) =
@@ -131,7 +132,25 @@ pub fn execute(args: TrainArgs) -> anyhow::Result<()> {
                 )
             }
             (Algorithm::Td3, _) => unreachable!("validated above"),
-
+            (Algorithm::Sac, Environment::Pendulum) => {
+                println!("Training SAC on Pendulum for {} episodes...", args.episodes);
+                (
+                    Box::new(
+                        SacTrainerAdapter::new(
+                            Pendulum::with_max_steps(200),
+                            |a: &[f32]| Ok(PendulumAction::new(a[0])),
+                            pendulum_sac_config(),
+                            args.episodes,
+                            200,
+                            "pendulum",
+                            Some(2026),
+                        )
+                        .with_options(runtime_options.clone().into()),
+                    ),
+                    HeadlessMetricFormat::GenericJsonlV1,
+                )
+            }
+            (Algorithm::Sac, _) => unreachable!("validated above"),
             (Algorithm::Ppo, Environment::Gridworld) => unreachable!("validated above"),
             (Algorithm::A2c, Environment::Cartpole) => {
                 println!("Training A2C on CartPole for {} episodes...", args.episodes);
@@ -282,18 +301,27 @@ pub(crate) fn validate_algorithm_environment(
     env: Environment,
     use_per: bool,
 ) -> anyhow::Result<()> {
-    if matches!(algorithm, Algorithm::Td3) && env != Environment::Pendulum {
-        anyhow::bail!("TD3 supports only Pendulum");
+    if matches!(algorithm, Algorithm::Td3 | Algorithm::Sac) && env != Environment::Pendulum {
+        anyhow::bail!(
+            "{} supports only Pendulum",
+            if algorithm == Algorithm::Sac {
+                "SAC"
+            } else {
+                "TD3"
+            }
+        );
     }
-    if env == Environment::Pendulum && !matches!(algorithm, Algorithm::Ppo | Algorithm::Td3) {
-        anyhow::bail!("Pendulum supports only PPO and TD3");
+    if env == Environment::Pendulum
+        && !matches!(algorithm, Algorithm::Ppo | Algorithm::Td3 | Algorithm::Sac)
+    {
+        anyhow::bail!("Pendulum supports only PPO, TD3 and SAC");
     }
     if algorithm != Algorithm::Dqn && env == Environment::Gridworld {
         let name = match algorithm {
             Algorithm::Ppo => "PPO",
             Algorithm::A2c => "A2C",
             Algorithm::Reinforce => "REINFORCE",
-            Algorithm::Dqn | Algorithm::Td3 => unreachable!(),
+            Algorithm::Dqn | Algorithm::Td3 | Algorithm::Sac => unreachable!(),
         };
         if algorithm == Algorithm::Ppo {
             anyhow::bail!("PPO supports only CartPole and Pendulum");

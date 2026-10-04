@@ -1,7 +1,8 @@
 # Phase 5: GPU implementation
 
-The README roadmap identifies GPU support with wgpu as the next unfinished
-Phase 5 milestone. This plan delivers that work incrementally; stages 1–3
+The README roadmap tracks GPU support with wgpu as a Phase 5 milestone.
+Planned algorithm integration is complete; physical GPU validation remains
+deferred. This plan delivered the software incrementally; stages 1–3
 stage 4a/4b/4c autograd, module and DQN integration, and stages 5a/5b/5c checkpoints, runtime integration and prioritized replay
 are complete. Stages 6a–6c add categorical PPO losses, rollout training and
 runtime/checkpoint integration. Stage 7a adds continuous Gaussian/PPO objectives;
@@ -13,7 +14,16 @@ Stage 8c adds A2C worker/CLI routing, checkpoints and runtime controls.
 Stage 9a adds the REINFORCE categorical objective, optional mean baseline and
 seeded policy network. Stage 9b adds an owned REINFORCE agent, CPU episode-local
 Monte Carlo returns, guarded updates and environment learning. Stage 9c adds
-REINFORCE worker/CLI routing, checkpoints and runtime controls.
+REINFORCE worker/CLI routing, checkpoints and runtime controls. Stage 10a adds
+TD3 loss/target foundations and deterministic action scaling/smoothing. Stage 10b
+adds owned TD3 replay training, caller-owned noise streams, delayed updates and
+Polyak targets. Stage 10c adds Pendulum worker/CLI integration and resumable
+six-network/two-optimizer checkpoints. Stage 11a adds supplied-noise squashed
+Gaussian sampling, soft twin-critic targets and actor/temperature objectives.
+Stage 11b adds seeded SAC replay training with three resident optimizers,
+transactional updates, learned temperature and fresh continuous learning.
+Stage 11c completes SAC Pendulum runtime/CLI and five-network/temperature/
+three-optimizer checkpoint integration.
 
 ## Implementation stages
 
@@ -45,6 +55,7 @@ REINFORCE worker/CLI routing, checkpoints and runtime controls.
 | 10c | GPU TD3 runtime and checkpoints | Complete: Pendulum worker/CLI, six-network/two-Adam snapshots, delayed-clock resume, controls and finite JSONL metrics |
 | 11a | GPU SAC objective foundation | Complete: squashed Gaussian sampling, detached soft targets, actor/temperature objectives and CPU/f64 gradient/Adam parity |
 | 11b | GPU SAC agent training | Complete: seeded actor/twin critics/targets, transactional three-Adam updates, replay/noise streams, CPU parity and fresh learning |
+| 11c | GPU SAC runtime and checkpoints | Complete: Pendulum worker/CLI, five networks/log-alpha/three-Adam snapshots, exact resumed updates, controls and eight finite metrics |
 
 ## Architecture decisions
 
@@ -2543,6 +2554,129 @@ in `gpu_sac_agent`; focused verification totals **15 passing GPU checks**.
 Explicit GPU checks use Mesa llvmpipe GL; physical GPU performance is not asserted.
 Logs are under `/tmp/rustforge-gpu-stage11b-*.log`.
 
-## Next implementation: stage 11c
+## Stage 11c: SAC runtime and checkpoints
 
-Continue the next documented GPU stage; physical GPU validation remains deferred.
+`SacTrainerAdapter` constructs the backend inside its worker so GPU Rc leaves
+stay on their owning thread. `SacRuntimeOptions` defaults to CPU, replay capacity
+100,000, batch size 64, 1,000 uniform-action warm-up transitions and learning
+start at transition 64. Training can therefore start during warm-up. Collection,
+replay selection, target-policy sampling and actor-update sampling have separate
+seeded streams. The CLI uses a 3-observation/1-action, 64-hidden-unit Pendulum
+profile with bounds `[-2,2]` and a 200-step episode limit. Restored agent
+configuration overrides that profile; replay/runtime options remain part of
+the new run. CPU and GPU share SAC configuration validation.
+
+`train sac --env pendulum` and `run sac --env pendulum` support explicit device
+selection. Environment/PER/device/checkpoint/output-alias guards run before
+output mutation. CPU remains the default and CPU checkpoint flags are rejected.
+Live plans show restored configuration as such rather than presenting requested
+hyperparameters as effective saved values. The runtime validates environment
+observations, action bounds, rewards and running sums; failures preserve the
+previous checkpoint. Terminal transitions disable bootstrap; truncations and
+runtime step limits keep it. Pause retains the in-flight transition; graceful
+stop finishes the episode; force stop discards that transition/update and saves
+earlier completed updates. Interactive checkpoint requests remain unsupported;
+checkpoint flags save on completion or controlled stop.
+
+JSONL v1 emits eight metrics: episode/moving-average reward, latest critic,
+policy and temperature losses, current alpha, replay size and throughput. Critic
+loss is the primary loss and policy loss is the policy signal; all emitted
+values are finite. Alpha is initialized from the effective agent state before
+the first update, including on resume.
+
+Version-1 `RFGPUSAC` checkpoints contain the Gaussian actor (eight parameters),
+four critics (six parameters each), log-alpha, actor/joint-critic/temperature
+Adam states, configuration and the successful-update clock. Target entropy is
+derived from the saved action dimension. The complete little-endian file is
+bounded at 256 MiB including its 12-byte header. Host validation rejects bad
+headers/versions/truncation/trailing bytes, incompatible shapes/counts, nonfinite
+parameters/moments, negative variances, nonrepresentable temperatures, invalid
+configuration and optimizer clocks/rates/moment presence inconsistent with update
+progress. Loading validates host state before replacement network allocation;
+restored temperature is also checked on device.
+
+Saving validates/encodes before an exclusive same-directory temporary write,
+synchronization and rename. Failed writes/renames clean up temporary files.
+Loading constructs a complete candidate, restores all five networks/log-alpha/
+three optimizers and assigns it only after success. Targets remain frozen and
+live gradients are clear. Successful restore replaces parameter handles; failed
+restore preserves them. With fixed supplied noise, four continued updates and
+final saved bytes are bit-identical for Polyak rates 0, 0.2 and 1.
+
+Resume restores **agent training state**, not the complete experiment. Replay,
+environment state, RNG streams, gradients, episode/run counters and warm-up
+restart. Runtime continuation from a previously trained source advances the
+saved clock from 2 to 8 across six newly collected transitions; the CLI smoke
+check restores a saved 3-hidden-unit profile and custom temperature learning
+rate, then performs 137 updates in one 200-step Pendulum episode.
+
+```bash
+cargo test --locked -p rustforge-rl --features gpu --lib gpu_sac::agent::checkpoint
+cargo test --locked -p rustforge-rl --features gpu --test gpu_sac_checkpoint --test gpu_sac_runtime -- --include-ignored
+cargo test --locked -p rustforge-cli --features gpu --test device_selection gpu_sac_pendulum_cli -- --include-ignored
+cargo run --locked -p rustforge-cli --features gpu -- train sac --env pendulum --device gpu --episodes 1 --checkpoint target/sac.chk --no-log
+cargo run --locked -p rustforge-cli --features gpu -- train sac --env pendulum --device gpu --episodes 1 --resume target/sac.chk --checkpoint target/sac.chk --no-log
+cargo run --locked -p rustforge-cli --features gpu -- run sac --env pendulum --device gpu --episodes 10
+```
+
+### Deviations from Plan (stage 11c)
+
+- Added CPU SAC runtime/CLI routing alongside GPU selection so CPU stays the
+  default; CPU checkpoints remain unsupported. Shared config validation and
+  serde/PartialEq support enable consistent runtime and checkpoint contracts.
+- Reused the existing dedicated checkpoint codec/atomic-write pattern in a SAC
+  module, preserving other algorithm formats. No dependencies or lockfile
+  changes were needed.
+- Recorded eight SAC metrics instead of the six TD3 metrics because temperature
+  loss and alpha are separate training signals. The generic JSONL schema and
+  console metric roles remain unchanged.
+- As with TD3, force stop retains earlier per-transition updates and drops the
+  in-flight update; SAC has no on-policy rollout to discard as a unit.
+- Complete experiment-state persistence and physical GPU profiling remain
+  separate work. Fresh-learning math is unchanged, so the stage 11b example's
+  result remains historical rather than being rerun for this integration stage.
+
+### Issue Resolution Progress (stage 11c)
+
+| Work | Issue ID | Result |
+| --- | --- | --- |
+| Worker-owned CPU/GPU SAC backend and Pendulum profile | Unassigned | Complete, effective saved config and bounds validation |
+| Headless/live CLI routing and preflight guards | Unassigned | Complete, parsing, plans, output preservation and CPU/GPU Pendulum smoke checks |
+| Five-network/log-alpha/three-Adam checkpoints | Unassigned | Complete, bounded host validation, atomic save and candidate restore |
+| Exact temperature/target/optimizer continuation | Unassigned | Complete, supplied-noise updates and saved bytes for tau 0/0.2/1 |
+| Replay bootstrap and independent runtime noise streams | Unassigned | Complete, terminal/truncation/cutoff checks and fresh replay on resume |
+| Pause, stops and failure preservation | Unassigned | Complete, retained pause transition, prior completed updates and previous file preservation |
+| Eight finite JSONL metrics and live roles | Unassigned | Complete, temperature loss/alpha included and restored-config display |
+| Physical GPU validation/profiling | Unassigned | Deferred by user |
+
+### Verification (stage 11c)
+
+| Check | Passing result | Delta from stage 11b |
+| --- | --- | --- |
+| Native workspace/all features, excluding Python | 1,108 passed, 190 ignored, 0 failed | +8 ordinary tests; +8 adapter-required tests |
+| Host SAC checkpoint codec/file validation | 3 passed, 0 failed | Wire bits/header/format, malformed networks/temperature/Adam/clocks and size/atomic cleanup |
+| GPU SAC checkpoint continuation | 2 passed, 0 failed | Tau 0/0.2/1, frozen targets, exact resumed updates/bytes and failed I/O preservation |
+| GPU SAC runtime controls/bootstrap | 5 passed, 0 failed | Trained resume/JSONL, stops, pause, terminal/truncation/cutoff and failures |
+| GPU Pendulum CLI resume | 1 passed, 0 failed | Saved hidden profile/temperature rate; 200 steps and 137 updates |
+| SAC agent/objective/shared Gaussian regressions | 15 passed, 0 failed | Four SAC agent, seven objective and four continuous PPO checks |
+| Default-feature CLI device/output guards | 4 passed, 0 failed | SAC included in missing-feature/invalid environment/PER/CPU checkpoint guards |
+| Python editable rebuild and regression suite | 32 passed, 0 failed | Shared config validation/serde changes included in rebuilt extension |
+| Workspace Clippy/all targets, default and all features | Passed, warnings denied | Excluding Python |
+| Rust 1.75 workspace/all targets/all features | Passed | Excluding Python |
+| Formatting and patch whitespace | Passed | `cargo fmt --all -- --check`, `git diff --check` |
+
+The eight ordinary additions are three host checkpoint tests, one runtime-options
+test and four CLI tests (parse, invalid combinations/output preservation, live
+plan/roles and CPU Pendulum metrics). The eight adapter-required additions are
+two checkpoint, five runtime and one CLI checks. Explicit GPU verification runs
+these eight plus 15 regressions, for **23 passing adapter-required checks**.
+Checks use Mesa llvmpipe GL; physical GPU performance is not asserted. Logs are
+under `/tmp/rustforge-gpu-stage11c-*.log`.
+
+## Remaining work
+
+All planned GPU algorithm implementation stages 1–11c are complete. Physical GPU
+correctness/performance validation remains deferred at the user's request. Full
+experiment-state persistence, broader environment benchmarks and any further
+kernel tuning are separate follow-up work; no additional software stage is
+claimed complete by these checks.

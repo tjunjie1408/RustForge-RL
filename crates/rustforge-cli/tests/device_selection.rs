@@ -42,7 +42,7 @@ fn unsupported_device_combinations_preserve_existing_output() {
         (
             "dqn",
             vec!["--env", "pendulum"],
-            "Pendulum supports only PPO and TD3",
+            "Pendulum supports only PPO, TD3 and SAC",
         ),
         (
             "a2c",
@@ -89,13 +89,13 @@ fn unsupported_device_combinations_preserve_existing_output() {
 fn unavailable_gpu_feature_fails_before_creating_metrics() {
     let directory = directory("feature");
     let output = directory.join("output.csv");
-    for algorithm in ["dqn", "ppo", "a2c", "reinforce", "td3"] {
+    for algorithm in ["dqn", "ppo", "a2c", "reinforce", "td3", "sac"] {
         let args = match Cli::try_parse_from([
             "rustforge",
             "train",
             algorithm,
             "--env",
-            if algorithm == "td3" {
+            if algorithm == "td3" || algorithm == "sac" {
                 "pendulum"
             } else {
                 "cartpole"
@@ -123,7 +123,7 @@ fn checkpoint_metrics_alias_is_rejected_before_truncation_or_device_creation() {
     let directory = directory("alias");
     let output = directory.join("agent.chk");
     fs::write(&output, "existing checkpoint").unwrap();
-    for (algorithm, flag) in ["dqn", "ppo", "a2c", "reinforce", "td3"]
+    for (algorithm, flag) in ["dqn", "ppo", "a2c", "reinforce", "td3", "sac"]
         .into_iter()
         .flat_map(|algorithm| ["--resume", "--checkpoint"].map(|flag| (algorithm, flag)))
     {
@@ -132,7 +132,7 @@ fn checkpoint_metrics_alias_is_rejected_before_truncation_or_device_creation() {
             "train",
             algorithm,
             "--env",
-            if algorithm == "td3" {
+            if algorithm == "td3" || algorithm == "sac" {
                 "pendulum"
             } else {
                 "cartpole"
@@ -640,6 +640,93 @@ fn gpu_td3_pendulum_cli_resume_uses_saved_configuration_and_delayed_clocks() {
         .strip_suffix("}}\n")
         .unwrap();
     assert_eq!(m.split(',').count(), 6);
+    assert!(m.split(',').all(|m| m
+        .split_once(':')
+        .unwrap()
+        .1
+        .parse::<f64>()
+        .unwrap()
+        .is_finite()));
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn sac_rejects_bad_environment_per_and_cpu_checkpoint_before_output_mutation() {
+    let dir = directory("sac-invalid");
+    let output = dir.join("keep.jsonl");
+    fs::write(&output, "keep metrics").unwrap();
+    for flags in [
+        vec!["--env", "cartpole"],
+        vec!["--env", "gridworld"],
+        vec!["--env", "pendulum", "--use-per"],
+        vec!["--env", "pendulum", "--resume", "missing.chk"],
+        vec!["--env", "pendulum", "--checkpoint", "out.chk"],
+    ] {
+        let mut arguments = vec![
+            "rustforge",
+            "train",
+            "sac",
+            "--output",
+            output.to_str().unwrap(),
+            "--overwrite",
+        ];
+        arguments.extend(flags);
+        let args = match Cli::try_parse_from(arguments).unwrap().command {
+            Commands::Train(a) => a,
+            _ => unreachable!(),
+        };
+        assert!(rustforge_cli::commands::train::execute(args).is_err());
+        assert_eq!(fs::read_to_string(&output).unwrap(), "keep metrics");
+    }
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[cfg(feature = "gpu")]
+#[test]
+#[ignore = "requires a GPU adapter"]
+fn gpu_sac_pendulum_cli_resume_uses_saved_configuration_and_temperature_clock() {
+    use rustforge_cli::cli::{Algorithm, Device, Environment, ExecutionArgs, TrainArgs};
+    use rustforge_rl::agent::{gpu_sac::GpuSac, pendulum_sac_config};
+    let dir = directory("sac-cli");
+    let source = dir.join("source.chk");
+    let target = dir.join("target.chk");
+    let metrics = dir.join("metrics.jsonl");
+    let context = rustforge_tensor::gpu::GpuContext::new().unwrap();
+    let mut config = pendulum_sac_config();
+    config.hidden_dim = 3;
+    config.alpha_lr = 0.0007;
+    GpuSac::new_seeded(&context, config.clone(), 42)
+        .unwrap()
+        .save_checkpoint(&source)
+        .unwrap();
+    rustforge_cli::commands::train::execute(TrainArgs {
+        execution: ExecutionArgs {
+            device: Device::Gpu,
+            resume: Some(source),
+            checkpoint: Some(target.clone()),
+        },
+        algorithm: Algorithm::Sac,
+        env: Environment::Pendulum,
+        episodes: 1,
+        no_log: false,
+        output: Some(metrics.clone()),
+        overwrite: false,
+        use_per: false,
+    })
+    .unwrap();
+    let saved = GpuSac::load_checkpoint(&context, target).unwrap();
+    assert_eq!(saved.config(), &config);
+    assert_eq!(saved.updates(), 137);
+    assert!(saved.alpha().unwrap().is_finite() && saved.alpha().unwrap() > 0.);
+    let text = fs::read_to_string(metrics).unwrap();
+    assert_eq!(text.lines().count(), 1);
+    let m = text
+        .split_once("\"metrics\":{")
+        .unwrap()
+        .1
+        .strip_suffix("}}\n")
+        .unwrap();
+    assert_eq!(m.split(',').count(), 8);
     assert!(m.split(',').all(|m| m
         .split_once(':')
         .unwrap()

@@ -217,5 +217,9 @@ jobs:
         run: cargo test --locked -p rustforge-rl --features gpu --test gpu_sac_agent -- --include-ignored
       - name: Learn continuous actions with GPU SAC and temperature tuning
         run: cargo run --locked -p rustforge-rl --features gpu --example gpu_sac_training
+      - name: Verify GPU SAC checkpoint codec and host validation
+        run: cargo test --locked -p rustforge-rl --features gpu --lib gpu_sac::agent::checkpoint
+      - name: Verify GPU SAC checkpoint continuation and runtime controls
+        run: cargo test --locked -p rustforge-rl --features gpu --test gpu_sac_checkpoint --test gpu_sac_runtime -- --include-ignored
       - name: Verify GPU SAC Pendulum CLI resume and temperature clock
         run: cargo test --locked -p rustforge-cli --features gpu --test device_selection gpu_sac_pendulum_cli -- --include-ignored

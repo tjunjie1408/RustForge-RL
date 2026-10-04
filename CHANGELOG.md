@@ -9,6 +9,64 @@ contain breaking changes.
 
 ### Added
 
+- SAC worker/runtime and Pendulum headless/live CLI with explicit CPU/GPU selection,
+  eight finite JSONL metrics and pause/graceful/force-stop controls. Bounded
+  version-1 `RFGPUSAC` snapshots atomically save five networks, log temperature,
+  all three Adam states, agent configuration and successful-update clock.
+  Candidate restore preserves live state on failure; fixed-noise continued
+  updates and saved bytes match exactly. Replay/environment/RNG/warm-up restart
+  on resume. Shared CPU/GPU configuration validation and checkpoint/runtime/CLI
+  tests complete the planned SAC integration; physical GPU profiling remains
+  deferred.
+
+- Owned GPU SAC agent with seeded Gaussian actor, twin critics/frozen targets,
+  resident actor/joint-critic/log-temperature Adam states and one successful-update
+  clock. Independent caller noise streams and active-row continuous replay feed
+  transactional critic → actor → temperature → Polyak updates. Failure preserves
+  parameters, targets, moments and clocks, including late actor/temperature errors.
+  Seeded CPU SAC and explicit Gaussian/SAC noise hooks support complete parity;
+  new tests cover updates, sampling, partial rows and rollback. A fresh continuous
+  learning example and dedicated GPU CI steps exercise the agent. Runtime/CLI and
+  checkpoints are available through the SAC worker.
+
+- GPU SAC objective foundations: supplied-noise squashed/scaled Gaussian sampling,
+  entropy-adjusted detached twin-critic targets, summed critic MSE, differentiable
+  actor loss and learned-temperature loss with detached policy log probabilities.
+  Explicit checks validate shapes, devices, masks, finite raw/intermediate values,
+  and representable positive temperatures. CPU/f64 gradients, four Adam updates
+  of seeded critics/actual Gaussian actor/log temperature, fixed twin-critic
+  optimization and GPU CI cover the foundation. Owned agent, runtime and checkpoints are available.
+
+- TD3 worker/runtime and Pendulum headless/live CLI routing with explicit CPU/GPU
+  selection. Bounded version-1 `RFGPUTD3` checkpoints atomically save six networks,
+  both Adam states, agent configuration and delayed-update clocks; complete host
+  validation precedes candidate allocation. Resume retains actor cadence with
+  fresh replay/environment/RNG streams. Runtime supports seeded warm-up,
+  exploration, sampling and smoothing, terminal-only replay masks, pause/stop
+  controls and six finite JSONL metrics. Checkpoint continuation is bit-identical
+  for supplied noise at policy-delay boundaries; errors preserve prior files.
+  CPU checkpoints and interactive checkpoint requests remain unsupported.
+
+- Owned GPU TD3 agent with seeded actor/twin critics, frozen target copies,
+  separate resident Adam state, active-row continuous replay validation and
+  successful critic/actor clocks. Caller RNG streams control exploration,
+  smoothing and replay sampling. Device column concatenation preserves action
+  gradients; delayed actor updates use updated Q1 and synchronize all targets
+  through Polyak averaging. Device snapshots prepare transactional batches,
+  preserving live parameters, targets, Adam state and clocks on failure. Full
+  seeded CPU TD3 parity, rollback, replay guards and fresh continuous learning
+  checks accompany the agent. CPU TD3 adds seeded/caller-RNG hooks with its
+  default math preserved; Pendulum runtime and checkpoints remain stage 10c.
+
+- GPU TD3 objective foundations: detached twin-target Bellman estimates, summed
+  critic MSE and deterministic actor loss. Affine action scaling preserves actor
+  gradients; supplied-noise target smoothing clips in normalized space before
+  scaling and remains detached. Shapes, ownership, masks, bounds and finite raw
+  inputs/intermediates/objectives are validated, including overflow hidden by
+  clipping. CPU/f64 loss/gradient and four Adam-update parity tests, a fixed
+  twin-critic optimization example and GPU CI cover the foundation. CPU TD3 remains
+  unchanged by the objective foundation.
+
 - GPU REINFORCE worker/runtime integration and CartPole headless/live CLI routing.
   Distinct bounded version-1 `RFGPUREI` checkpoints atomically save policy parameters,
   Adam state, configuration/baseline flag and update counter. Host validation precedes
