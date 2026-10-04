@@ -1,6 +1,10 @@
 //! Owned TD3 networks and transactional device-resident updates.
+mod checkpoint;
 use super::*;
 use crate::{agent::td3::TD3Config, buffer::ContinuousTransitionBatch};
+pub use checkpoint::{
+    GpuTd3CheckpointError, CHECKPOINT_MAGIC, CHECKPOINT_VERSION, MAX_CHECKPOINT_BYTES,
+};
 use rand::Rng;
 use rustforge_autograd::{gpu::GpuAdam, no_grad};
 use rustforge_nn::gpu::{GpuLinear, GpuModule, GpuModuleError};

@@ -42,6 +42,7 @@ REINFORCE worker/CLI routing, checkpoints and runtime controls.
 | 9c | GPU REINFORCE runtime and checkpoints | Complete: worker-owned CPU/GPU agents, CartPole headless/live CLI, distinct policy/Adam checkpoints, metrics and controls |
 | 10a | GPU TD3 objective foundation | Complete: detached twin-critic targets/loss, actor objective, supplied-noise smoothing/scaling and CPU/f64 gradient/Adam parity |
 | 10b | GPU TD3 agent training | Complete: owned actor/twin critics/targets, seeded continuous replay/noise, transactional delayed updates, Polyak synchronization and fresh continuous learning |
+| 10c | GPU TD3 runtime and checkpoints | Complete: Pendulum worker/CLI, six-network/two-Adam snapshots, delayed-clock resume, controls and finite JSONL metrics |
 
 ## Architecture decisions
 
@@ -2221,6 +2222,142 @@ adapter tests ignored; explicit checks used Mesa llvmpipe GL. Physical GPU tests
 remain deferred. No dependencies or lockfile changes were needed. Logs are saved
 under `/tmp/rustforge-gpu-stage10b-*.log`.
 
-## Next implementation: stage 10c
+## Stage 10c: TD3 worker, Pendulum CLI and checkpoints
+
+`Td3TrainerAdapter` uses the shared `Trainer`/`LiveHooks` lifecycle, progress,
+metric persistence and controls. Backend construction, GPU ownership and
+checkpoint I/O happen inside `run` on the worker; device variables never cross
+threads. The new Pendulum profile uses three observations, one action in [-2,2]
+and 64-unit hidden layers. CPU remains the default; GPU requires the feature.
+`train td3` and `run td3` accept only Pendulum, reject prioritized replay, and
+check execution/checkpoint/output conflicts before truncating metrics or creating
+live run artifacts. The live plan displays saved configuration on resume.
+
+`Td3RuntimeOptions` sets replay capacity, mini-batch size, uniform-action warm-up,
+minimum training transitions and physical exploration deviation. Defaults use
+100,000 replay slots, batches of 64, 1,000 warm-up transitions, learning from
+transition 64 and deviation 0.1 after warm-up. Replay training starts during
+uniform collection; one critic update runs per accepted transition after the
+learning threshold. The GPU agent owns delayed actor/target cadence. Separate
+seed streams control initialization, environment reset, exploration, replay
+sampling and target smoothing. Unseeded runs use entropy-backed streams.
+
+The runtime validates effective restored dimensions/bounds against the environment,
+replay allocation products, finite observations/actions/rewards and episode/window
+reward sums. Invalid action conversion or environment output returns an error.
+Only true `terminated` flags disable bootstrap; truncation and runtime step limits
+end/reset the episode but keep replay done masks zero. Seeded checkpoint comparisons
+verify identical truncation/step-limit updates and distinct true-terminal updates.
+
+Pause blocks at the step boundary while retaining the in-flight transition.
+Graceful stop completes the current episode. Force stop discards the in-flight
+transition/update and saves earlier completed atomic updates; its environment step
+is included in the summary, while the interrupted episode is not completed.
+Completion/controlled stop saves the final checkpoint. Error returns skip save
+and preserve any prior checkpoint, including errors after earlier successful
+in-memory updates. Interactive checkpoint requests remain unsupported; capability
+metadata reports `checkpoint=false` and shared controls report their resolution.
+
+JSONL keeps schema `rustforge-metrics-jsonl-v1` with six finite named metrics:
+`reward.episode`, `reward.moving_average`, `loss.critic`, `loss.policy`, `replay.size`
+and `performance.steps_per_second`. Loss metrics report the latest successful
+critic/delayed actor update (zero until the first respective update). Metric roles
+bind episode reward, primary critic loss, actor signal and throughput to the live
+console. Human-readable labels describe these values.
+
+The bounded little-endian version-1 format uses magic **`RFGPUTD3`** and a 12-byte
+header, with a maximum complete size of 256 MiB. It saves the actor, Q1, Q2, all
+three frozen targets, actor Adam, joint critic Adam, `TD3Config`, critic clock and
+actor clock. Host validation checks all six architectures, shapes/value counts,
+finite parameters/targets, finite nonnegative Adam variances, optimizer settings,
+learning-rate agreement, moment presence, platform clock limits and delayed
+cadence (`actor_updates = critic_updates / policy_delay`, or zero for delay zero).
+Truncated/foreign/version-mismatched/trailing data and oversized files fail before
+replacement allocation. Config validation is shared by CPU runtime and GPU agent.
+
+Saving validates and encodes the complete snapshot before writing a same-directory
+exclusive temporary file, synchronizing it, closing it and renaming over the final
+path. Failed writes/renames clean up the temporary file. Loading validates the
+complete host state, constructs a candidate agent, restores all six networks and
+both optimizer states, and assigns it only after success. Targets remain frozen;
+live gradients are cleared. Successful restore replaces handles. Fixed supplied-
+noise continued updates and saved bytes are bit-identical for delays 0/1/2/3,
+including resume at the next actor boundary.
+
+Resume restores **agent training state**. Environment state, replay contents,
+exploration/replay/smoothing RNG streams, gradients, episode/run counters, metrics
+and warm-up counters restart. The serialized agent config overrides constructor
+config; runtime replay/exploration options remain part of the new run. This does
+not promise an identical resumed experiment with fresh data/RNG streams.
+
+```bash
+cargo test --locked -p rustforge-rl --features gpu --lib gpu_td3::agent::checkpoint
+cargo test --locked -p rustforge-rl --features gpu --test gpu_td3_checkpoint --test gpu_td3_runtime -- --include-ignored
+cargo test --locked -p rustforge-cli --features gpu --test device_selection gpu_td3_pendulum_cli -- --include-ignored
+cargo run --locked -p rustforge-cli --features gpu -- train td3 --env pendulum --device gpu --episodes 1 --checkpoint target/td3.chk --no-log
+cargo run --locked -p rustforge-cli --features gpu -- train td3 --env pendulum --device gpu --episodes 1 --resume target/td3.chk --checkpoint target/td3.chk --no-log
+cargo run --locked -p rustforge-cli --features gpu -- run td3 --env pendulum --device gpu --episodes 10
+```
+
+### Deviations from Plan (stage 10c)
+
+- Added CPU TD3 runtime/CLI routing alongside GPU selection so CPU remains the
+  default. CPU runtime uses the seeded/RNG hooks from 10b; CPU checkpoint flags
+  remain unsupported. No CPU TD3 update formulas or lower-layer GPU math changed.
+- Shared TD3 configuration validation between CPU runtime and GPU agent and added
+  serde support to `TD3Config` for the checkpoint wire format.
+- Runtime options explicitly separate uniform warm-up and learning start. Defaults
+  train during warm-up after transition 64; these options/replay/RNG/warm-up state
+  restart after resume and are not checkpointed.
+- Kept the generic JSONL schema with six TD3-specific metrics rather than reusing
+  the five REINFORCE metrics. Critic and delayed actor losses are distinct signals.
+- Force stop keeps earlier successful per-transition updates and discards the
+  in-flight update; TD3 has no on-policy rollout to discard as a unit.
+- Reused the established codec/atomic-write pattern in a dedicated TD3 module,
+  preserving other algorithm formats and checkpoint APIs. No dependencies or
+  lockfile changes were required.
+- Physical GPU profiling and complete experiment-state persistence stay deferred.
+
+### Issue Resolution Progress (stage 10c)
+
+| Work | Issue ID | Result |
+| --- | --- | --- |
+| Worker-owned CPU/GPU TD3 backend and Pendulum profile | Unassigned | Complete, effective saved config and environment/bounds validation |
+| Headless/live CLI selection and preflight validation | Unassigned | Complete, parsing, runtime plan, output/alias guards and CPU/GPU Pendulum smoke checks |
+| Six-network/two-Adam versioned checkpoints | Unassigned | Complete, bounded host validation, atomic save and candidate restore |
+| Resume delayed actor cadence | Unassigned | Complete, bit-identical supplied-noise updates/bytes for delays 0/1/2/3 |
+| Replay bootstrap and seeded runtime streams | Unassigned | Complete, terminal versus truncation/step-limit checks and independent streams |
+| Pause/graceful/force-stop and file preservation | Unassigned | Complete, retained in-flight pause, prior completed updates, conversion/environment/save errors |
+| Generic JSONL and live metric roles | Unassigned | Complete, six finite metrics and restored-configuration display |
+| GPU SAC objective foundation | Unassigned | Next (11a) |
+
+### Verification (stage 10c)
+
+| Check | Passing result | Delta from stage 10b |
+| --- | --- | --- |
+| Native workspace/all features, excluding Python | 1,097 passed, 171 ignored, 0 failed | +8 ordinary tests; +8 adapter-required tests |
+| Host TD3 checkpoint codec/file validation | 3 passed, 0 failed | Wire bits/header/format; malformed six-network/Adam/cadence data; size limit/atomic cleanup |
+| GPU TD3 checkpoint continuation | 2 passed, 0 failed | Delays 0/1/2/3, target freezing, bit-identical continuation/bytes and failed I/O preservation |
+| GPU TD3 runtime controls/bootstrap | 5 passed, 0 failed | Saved config/JSONL, stops, pause, terminal/truncation/cutoff and failure preservation |
+| GPU Pendulum CLI resume | 1 passed, 0 failed | 200-step episode, saved 3-unit hidden profile/delay 3; 137 critic/45 actor updates |
+| GPU TD3 agent/objective regressions | 9 passed, 0 failed | Four agent parity/guard/rollback tests plus five objective tests; prior fresh-learning result unchanged |
+| Default-feature CLI device guards | 3 passed, 0 failed | TD3 included in missing-feature, invalid environment/PER/CPU checkpoint checks |
+| Python editable rebuild and regression suite | 32 passed, 0 failed | Shared CPU config/serde changes included in rebuilt extension |
+| Workspace Clippy/all targets/all features, warnings denied | Passed | Excluding Python |
+| Rust 1.75 workspace/all targets/all features | Passed | Excluding Python |
+| Default-feature workspace/all-targets check | Passed | GPU checkpoints remain feature-gated |
+| Formatting and patch whitespace | Passed | `cargo fmt --all -- --check`, `git diff --check` |
+
+The eight ordinary additions are three host checkpoint tests, one runtime-option
+test and four CLI checks (parse, invalid combinations/output preservation, live
+plan/roles and CPU Pendulum metrics). The eight new adapter-required tests are two
+checkpoint, five runtime and one CLI tests. Explicit GPU verification runs these
+eight plus nine TD3 regressions, for **17 passing adapter-required checks**. The
+prior fresh-learning example was not rerun because update math is unchanged;
+its stage 10b result remains documented above. Other algorithm/lower-layer GPU
+suites were unaffected. Explicit GPU checks used Mesa llvmpipe GL; physical GPU
+performance is not asserted. Logs are under `/tmp/rustforge-gpu-stage10c-*.log`.
+
+## Next implementation: stage 11a
 
 Continue the next documented GPU stage; physical GPU validation remains deferred.

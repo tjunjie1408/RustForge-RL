@@ -31,6 +31,7 @@ pub enum Algorithm {
     Ppo,
     A2c,
     Reinforce,
+    Td3,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -59,7 +60,7 @@ impl Device {
 
 #[derive(Clone, Debug, Default, Args)]
 pub struct ExecutionArgs {
-    /// GPU supports DQN, PPO, A2C and REINFORCE; requires the gpu feature.
+    /// GPU supports DQN, PPO, A2C, REINFORCE and TD3; requires the gpu feature.
     #[arg(long, value_enum, default_value_t = Device::Cpu)]
     pub device: Device,
     /// Restore GPU training state; environment, rollout/replay and random streams restart.
@@ -90,6 +91,8 @@ impl ExecutionArgs {
             rustforge_rl::agent::A2cRuntimeOptions::from(options.clone()).validate()
         } else if algorithm == Algorithm::Reinforce {
             rustforge_rl::agent::ReinforceRuntimeOptions::from(options.clone()).validate()
+        } else if algorithm == Algorithm::Td3 {
+            rustforge_rl::agent::Td3RuntimeOptions::from(options.clone()).validate()
         } else {
             options.validate(use_per)
         }

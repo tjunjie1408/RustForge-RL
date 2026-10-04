@@ -26,6 +26,8 @@ pub mod returns;
 pub mod sac;
 pub mod schedule;
 pub mod td3;
+mod td3_backend;
+mod td3_runtime;
 pub mod utils;
 
 pub use a2c::{A2CConfig, ActorCriticNet, A2C};
@@ -48,6 +50,8 @@ pub use returns::{compute_discounted_returns, compute_gae};
 pub use sac::{SACConfig, SAC};
 pub use schedule::LRSchedule;
 pub use td3::{TD3Config, TD3};
+pub use td3_backend::{Td3Device, Td3RuntimeOptions};
+pub use td3_runtime::{pendulum_td3_config, Td3TrainerAdapter};
 pub use utils::{clamp_var, elementwise_min_var, hard_update, soft_update};
 
 #[cfg(feature = "gpu")]

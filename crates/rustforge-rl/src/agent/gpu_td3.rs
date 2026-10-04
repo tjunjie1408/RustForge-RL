@@ -1,6 +1,9 @@
 //! Device-resident TD3 objectives, owned networks, replay updates and target synchronization.
 mod agent;
-pub use agent::{GpuTd3, GpuTd3Net};
+pub use agent::{
+    GpuTd3, GpuTd3CheckpointError, GpuTd3Net, CHECKPOINT_MAGIC, CHECKPOINT_VERSION,
+    MAX_CHECKPOINT_BYTES,
+};
 use rustforge_autograd::gpu::{GpuAutogradError, GpuVariable};
 use rustforge_tensor::{
     gpu::{GpuContext, GpuError},
@@ -11,6 +14,7 @@ use std::{error::Error, fmt};
 #[derive(Debug)]
 pub enum GpuTd3Error {
     Autograd(GpuAutogradError),
+    Checkpoint(GpuTd3CheckpointError),
     Module(rustforge_nn::gpu::GpuModuleError),
     InvalidInput(&'static str),
     Device(GpuError),
@@ -22,7 +26,7 @@ pub enum GpuTd3Error {
 impl fmt::Display for GpuTd3Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Module(e)=>e.fmt(f), Self::InvalidInput(message)=>f.write_str(message),
+            Self::Checkpoint(e)=>e.fmt(f), Self::Module(e)=>e.fmt(f), Self::InvalidInput(message)=>f.write_str(message),
             Self::Autograd(e)=>e.fmt(f),Self::Device(e)=>e.fmt(f),
             Self::InvalidConfig=>f.write_str("TD3 requires positive compatible dimensions and finite learning rates, discount/tau in [0,1], and nonnegative finite smoothing deviation/clip"),
             Self::InvalidBounds=>f.write_str("TD3 bounds must be nonempty, finite, matching and strictly ordered with positive finite scale and finite bias"),
@@ -36,6 +40,7 @@ impl Error for GpuTd3Error {
         match self {
             Self::Autograd(e) => Some(e),
             Self::Module(e) => Some(e),
+            Self::Checkpoint(e) => Some(e),
             Self::Device(e) => Some(e),
             _ => None,
         }
@@ -339,6 +344,11 @@ pub fn td3_actor_loss(q1_for_actor: &GpuVariable) -> Result<GpuTd3ActorLoss> {
         loss: q1_for_actor.mean()?.scale(-1.)?,
         input: q1_for_actor.detach(),
     })
+}
+impl From<GpuTd3CheckpointError> for GpuTd3Error {
+    fn from(e: GpuTd3CheckpointError) -> Self {
+        Self::Checkpoint(e)
+    }
 }
 
 #[cfg(test)]
