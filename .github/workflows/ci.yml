@@ -213,5 +213,9 @@ jobs:
         run: cargo test --locked -p rustforge-rl --features gpu --test gpu_sac_loss -- --include-ignored
       - name: Optimize fixed GPU SAC twin-critic objective
         run: cargo run --locked -p rustforge-rl --features gpu --example gpu_sac_objective
+      - name: Verify complete GPU SAC updates, seeded CPU parity and rollback
+        run: cargo test --locked -p rustforge-rl --features gpu --test gpu_sac_agent -- --include-ignored
+      - name: Learn continuous actions with GPU SAC and temperature tuning
+        run: cargo run --locked -p rustforge-rl --features gpu --example gpu_sac_training
       - name: Verify GPU SAC Pendulum CLI resume and temperature clock
         run: cargo test --locked -p rustforge-cli --features gpu --test device_selection gpu_sac_pendulum_cli -- --include-ignored

@@ -1,9 +1,10 @@
 //! GPU SAC objectives with caller-supplied policy samples and critic estimates.
 //! Owned replay training is provided by GpuSac; runtime integration follows separately.
+mod agent;
 /// Reparameterized tanh-squashed Gaussian sampling, including action-scale density correction.
 pub use super::gpu_gaussian::GpuGaussianSample;
 use super::gpu_gaussian::{GpuGaussianError, GpuGaussianTransform};
-
+pub use agent::{GpuSac, GpuSacCritic, GpuSacPolicy};
 use rustforge_autograd::gpu::{GpuAutogradError, GpuVariable};
 use rustforge_tensor::gpu::{GpuContext, GpuError};
 use std::{error::Error, fmt};

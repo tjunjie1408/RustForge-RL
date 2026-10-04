@@ -44,6 +44,7 @@ REINFORCE worker/CLI routing, checkpoints and runtime controls.
 | 10b | GPU TD3 agent training | Complete: owned actor/twin critics/targets, seeded continuous replay/noise, transactional delayed updates, Polyak synchronization and fresh continuous learning |
 | 10c | GPU TD3 runtime and checkpoints | Complete: Pendulum worker/CLI, six-network/two-Adam snapshots, delayed-clock resume, controls and finite JSONL metrics |
 | 11a | GPU SAC objective foundation | Complete: squashed Gaussian sampling, detached soft targets, actor/temperature objectives and CPU/f64 gradient/Adam parity |
+| 11b | GPU SAC agent training | Complete: seeded actor/twin critics/targets, transactional three-Adam updates, replay/noise streams, CPU parity and fresh learning |
 
 ## Architecture decisions
 
@@ -2443,6 +2444,105 @@ not asserted. Python was not rebuilt for this GPU-only stage; its 32-test stage
 10c result remains historical. Logs are under
 `/tmp/rustforge-gpu-stage11a-*.log`.
 
-## Next implementation: stage 11b
+## Stage 11b: owned GPU SAC replay training
+
+`GpuSac` owns a Gaussian actor, twin Q-critics, two frozen critic targets and
+three resident Adam optimizers (actor, joint critics and log temperature). The
+actor's four affine layers match CPU GaussianPolicy's parameter/seed order;
+critics use two hidden ReLU layers with seed offsets 4 and 7. Collection,
+replay selection, next-action sampling and actor-update sampling can use
+independent caller RNG streams. Explicit standard-normal matrices also support
+reproducible updates. Deterministic evaluation uses the scaled tanh mean.
+
+Continuous replay remains caller-owned on CPU. Training validates active rows
+and uploads only those rows; unused capacity can contain stale nonfinite values.
+Empty batches return zero losses/current alpha without advancing clocks or
+consuming randomness. Nonempty training requires gradients enabled, matching
+finite state/action/reward/noise matrices and done masks in `[0,1]`. Construction
+validates dimensions, allocation arithmetic, action bounds, positive finite
+learning rates/initial temperature and discount/Polyak rates in `[0,1]`.
+
+Each batch caches alpha, updates the critics against detached soft targets,
+updates the actor through frozen copies of the **updated** critics, updates
+log-alpha from detached pre-actor-step sampled log probabilities, and Polyak-
+updates both targets. Candidate network leaves and optimizer forks hold all
+changes until loss, gradient, gradient-square, parameter, temperature and target
+checks pass. Live parameters, moments, targets and successful-update clock are
+preserved on failure. Successful commits retain existing public parameter
+handles and clear live gradients. Caller RNG draws are not rolled back after
+a device/arithmetic error; malformed host batches draw nothing.
+
+CPU SAC gains seeded construction, caller RNG streams, explicit-noise training
+and read-only critic accessors; GaussianPolicy gains a detached supplied-noise
+sampling hook. Existing entry points delegate to these hooks with thread RNGs.
+CPU equations and update order stay the same. Six complete CPU/GPU updates agree
+within 3e-4 for Polyak rates 0, 0.2 and 1, including terminal/fractional masks,
+parameters, both targets, learned alpha and continued Adam state. Initial
+parameters match exactly; host/device exponential rounding needs a small alpha
+tolerance. Three successful updates interleaved with late actor overflow failures
+remain bit-identical to an uninterrupted GPU reference, including retained leaf
+handles. A separate late temperature failure leaves every network unchanged.
+
+```bash
+cargo test --locked -p rustforge-rl --features gpu --test gpu_sac_agent -- --include-ignored
+cargo run --locked -p rustforge-rl --features gpu --example gpu_sac_training
+```
+
+The fresh-learning example collects 600 terminal continuous-control episodes
+with 64 uniform warm-up episodes, seeded replay and independent collection,
+target and actor noise streams. Each transition is newly collected from the
+environment; later actions come from the stochastic policy. Deterministic
+evaluation cost falls from **0.200846 to 0.000684**, with action **0.473848**
+for a target of 0.5, after **536 critic/actor/temperature updates**. This is a
+small reproducible control task, not a Pendulum or hardware performance claim.
+
+### Deviations from Plan (stage 11b)
+
+- Reused stage 10b's caller-owned continuous replay API rather than coupling
+  replay/RNG ownership to the agent. Collection, replay and two update-noise
+  streams remain independent.
+- Added a dedicated snapshot-capable Gaussian actor and critic wrapper because
+  the existing PPO policy uses a heterogeneous sequential trunk without a
+  transactional snapshot API. Sampling/loss math reuses stage 11a unchanged.
+- One successful-update clock covers all three optimizers and both targets:
+  SAC schedules each on every nonempty update. Optimizer moments/steps stay
+  resident and follow that clock; checkpoint persistence belongs to 11c.
+- Added CPU seeded/supplied-noise hooks to verify the actual complete SAC agent,
+  preserving existing unseeded entry points and formulas.
+- No dependencies or lockfile changes were needed. Physical GPU profiling and
+  full experiment-state persistence remain deferred.
+
+### Issue Resolution Progress (stage 11b)
+
+| Work | Issue ID | Result |
+| --- | --- | --- |
+| Seeded stochastic actor/twin critics/frozen targets | Unassigned | Complete, matching CPU parameter order and wrapping seed offsets |
+| Resident three-Adam update order and temperature tuning | Unassigned | Complete, cached alpha and updated-critic actor gradients |
+| Continuous replay, active rows and independent noise streams | Unassigned | Complete, partial/empty batches and deterministic evaluation |
+| Atomic candidate updates and finite-gradient/temperature guards | Unassigned | Complete, late failure rollback, bit-identical continued Adam and retained handles |
+| Complete seeded CPU SAC parity | Unassigned | Complete, six updates for tau 0/0.2/1 |
+| Fresh continuous learning and CI | Unassigned | Complete, seeded terminal control example and dedicated steps |
+| Pendulum runtime/CLI and three-optimizer checkpoints | Unassigned | Next (11c) |
+
+### Verification (stage 11b)
+
+| Check | Passing result | Delta from stage 11a |
+| --- | --- | --- |
+| Native workspace/all features, excluding Python | 1,100 passed, 182 ignored, 0 failed | +2 ordinary tests; +4 adapter-required tests |
+| Complete GPU SAC agent checks | 4 passed, 0 failed | CPU update parity, selection/partial rows, validation/temperature rollback, late actor overflow/continued Adam |
+| GPU SAC objective and shared Gaussian/PPO regressions | 11 passed, 0 failed | Seven SAC objectives and four continuous PPO regressions |
+| Fresh continuous-environment learning | Passed | Cost 0.200846 → 0.000684; action 0.473848; 536 updates per optimizer |
+| Python editable rebuild and regression suite | 32 passed, 0 failed | Shared CPU Gaussian/SAC hooks included in rebuilt extension |
+| Workspace Clippy/all targets, default and all features | Passed, warnings denied | Excluding Python |
+| Rust 1.75 workspace/all targets/all features | Passed | Excluding Python |
+| Formatting and patch whitespace | Passed | `cargo fmt --all -- --check`, `git diff --check` |
+
+The two ordinary additions are the GPU SAC host configuration test and CPU SAC
+seeded/noise/partial-row regression. The four adapter-required additions are
+in `gpu_sac_agent`; focused verification totals **15 passing GPU checks**.
+Explicit GPU checks use Mesa llvmpipe GL; physical GPU performance is not asserted.
+Logs are under `/tmp/rustforge-gpu-stage11b-*.log`.
+
+## Next implementation: stage 11c
 
 Continue the next documented GPU stage; physical GPU validation remains deferred.

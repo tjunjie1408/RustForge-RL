@@ -241,15 +241,19 @@ impl GaussianPolicy {
         state: &Variable,
         rng: &mut R,
     ) -> (Variable, Variable) {
+        let shape = [state.shape()[0], self.act_dim];
+        let noise_data = (0..shape.iter().product())
+            .map(|_| sample_standard_normal(rng))
+            .collect();
+        self.sample_with_noise(state, &Tensor::from_vec(noise_data, &shape))
+    }
+
+    /// Reparameterized sample with detached caller-supplied standard-normal noise.
+    pub fn sample_with_noise(&self, state: &Variable, noise: &Tensor) -> (Variable, Variable) {
         let (mean, log_std) = self.net.forward(state);
+        assert_eq!(noise.shape(), mean.shape());
         let std = log_std.exp();
-
-        let shape = mean.shape();
-        let numel: usize = shape.iter().product();
-
-        // ε ~ N(0, I)
-        let noise_data: Vec<f32> = (0..numel).map(|_| sample_standard_normal(rng)).collect();
-        let noise = Variable::from_tensor(Tensor::from_vec(noise_data, &shape));
+        let noise = Variable::from_tensor(noise.clone());
 
         // u = μ + ε · σ  (reparameterization)
         let u = &mean + &(&noise * &std);

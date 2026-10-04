@@ -82,3 +82,7 @@ serde_json = "1"
 proptest = { workspace = true }
 approx = { workspace = true }
 tempfile = "3"
+
+[[example]]
+name = "gpu_sac_training"
+required-features = ["gpu"]
