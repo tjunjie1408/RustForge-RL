@@ -31,11 +31,14 @@ impl EpisodeBoundary {
         }
     }
 
-    pub(crate) fn bootstrap_value(self, estimate: impl FnOnce() -> f32) -> Option<f32> {
+    pub(crate) fn bootstrap_value<E>(
+        self,
+        estimate: impl FnOnce() -> Result<f32, E>,
+    ) -> Result<Option<f32>, E> {
         match self {
-            Self::None => None,
-            Self::Terminated => Some(0.0),
-            Self::Truncated | Self::StepLimit => Some(estimate()),
+            Self::None => Ok(None),
+            Self::Terminated => Ok(Some(0.)),
+            Self::Truncated | Self::StepLimit => estimate().map(Some),
         }
     }
 
@@ -90,10 +93,12 @@ mod tests {
         assert_eq!(boundary, EpisodeBoundary::Terminated);
         assert_eq!(boundary.done_mask(), 1.0);
         assert_eq!(
-            boundary.bootstrap_value(|| {
-                calls.set(calls.get() + 1);
-                7.0
-            }),
+            boundary
+                .bootstrap_value(|| {
+                    calls.set(calls.get() + 1);
+                    Ok::<_, ()>(7.0)
+                })
+                .unwrap(),
             Some(0.0)
         );
         assert_eq!(calls.get(), 0);
@@ -104,7 +109,10 @@ mod tests {
         let boundary = EpisodeBoundary::classify(false, true, true);
         assert_eq!(boundary, EpisodeBoundary::Truncated);
         assert_eq!(boundary.done_mask(), 0.0);
-        assert_eq!(boundary.bootstrap_value(|| 3.5), Some(3.5));
+        assert_eq!(
+            boundary.bootstrap_value(|| Ok::<_, ()>(3.5)).unwrap(),
+            Some(3.5)
+        );
     }
 
     #[test]
@@ -112,9 +120,36 @@ mod tests {
         let boundary = EpisodeBoundary::classify(false, false, true);
         assert_eq!(boundary, EpisodeBoundary::StepLimit);
         assert_eq!(boundary.done_mask(), 0.0);
-        assert_eq!(boundary.bootstrap_value(|| -2.25), Some(-2.25));
+        assert_eq!(
+            boundary.bootstrap_value(|| Ok::<_, ()>(-2.25)).unwrap(),
+            Some(-2.25)
+        );
 
         assert_eq!(EpisodeBoundary::None.done_mask(), 0.0);
-        assert_eq!(EpisodeBoundary::None.bootstrap_value(|| 9.0), None);
+        assert_eq!(
+            EpisodeBoundary::None
+                .bootstrap_value(|| Ok::<_, ()>(9.0))
+                .unwrap(),
+            None
+        );
+    }
+    #[test]
+    fn bootstrap_errors_propagate_only_when_estimates_are_needed() {
+        assert_eq!(
+            EpisodeBoundary::Terminated.bootstrap_value(|| Err("failed")),
+            Ok(Some(0.))
+        );
+        assert_eq!(
+            EpisodeBoundary::None.bootstrap_value(|| Err("failed")),
+            Ok(None)
+        );
+        assert_eq!(
+            EpisodeBoundary::Truncated.bootstrap_value(|| Err("failed")),
+            Err("failed")
+        );
+        assert_eq!(
+            EpisodeBoundary::StepLimit.bootstrap_value(|| Err("failed")),
+            Err("failed")
+        );
     }
 }

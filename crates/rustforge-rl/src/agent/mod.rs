@@ -4,6 +4,7 @@
 //! PPO, TD3, SAC), and shared utilities (returns, LR scheduling, Gaussian policy).
 
 pub mod a2c;
+mod a2c_backend;
 mod a2c_runtime;
 pub mod dqn;
 mod dqn_backend;
@@ -27,6 +28,7 @@ pub mod td3;
 pub mod utils;
 
 pub use a2c::{A2CConfig, ActorCriticNet, A2C};
+pub use a2c_backend::{A2cDevice, A2cRuntimeOptions};
 pub use a2c_runtime::{cartpole_a2c_config, A2cTrainerAdapter};
 pub use dqn::{DQNConfig, DQN};
 pub use dqn_backend::{DqnDevice, DqnRuntimeOptions};
@@ -56,3 +58,6 @@ pub mod gpu_ppo;
 
 #[cfg(feature = "gpu")]
 pub mod gpu_gaussian;
+
+#[cfg(feature = "gpu")]
+pub mod gpu_a2c;
