@@ -114,3 +114,42 @@ async fn setup_failure_requests_shutdown_and_joins_the_trainer() {
     assert!(result.is_err());
     assert!(joined.load(std::sync::atomic::Ordering::Acquire));
 }
+
+#[test]
+fn space_pauses_and_key_repeat_cannot_escalate_graceful_stop() {
+    use crossterm::event::KeyEventKind;
+    let space = KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE);
+    assert_eq!(
+        map_live_key(space, TrainerStatus::Running, false, false),
+        LiveInput::Pause
+    );
+    assert_eq!(
+        map_live_key(space, TrainerStatus::Paused, false, false),
+        LiveInput::Resume
+    );
+    let mut quit = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE);
+    quit.kind = KeyEventKind::Repeat;
+    assert_eq!(
+        map_live_key(quit, TrainerStatus::Running, true, false),
+        LiveInput::Ignored
+    );
+    let mut pause = space;
+    pause.kind = KeyEventKind::Repeat;
+    assert_eq!(
+        map_live_key(pause, TrainerStatus::Paused, false, false),
+        LiveInput::Ignored
+    );
+    let copy = KeyEvent::new(
+        KeyCode::Char('c'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    );
+    assert_eq!(
+        map_live_key(copy, TrainerStatus::Running, false, false),
+        LiveInput::Ignored
+    );
+    let alt = KeyEvent::new(KeyCode::Char('p'), KeyModifiers::ALT);
+    assert_eq!(
+        map_live_key(alt, TrainerStatus::Running, false, false),
+        LiveInput::Ignored
+    );
+}

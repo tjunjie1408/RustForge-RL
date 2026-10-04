@@ -1517,6 +1517,7 @@ dependencies = [
  "rustforge-rl",
  "rustforge-tensor",
  "rustforge-tui",
+ "serde_json",
  "tokio",
 ]
 

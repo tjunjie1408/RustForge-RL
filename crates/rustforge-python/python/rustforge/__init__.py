@@ -10,7 +10,10 @@ from ._core import (
     Space,
 )
 
+from .workflows import available_envs, make_env, train
+
 __all__ = [
+    "available_envs", "make_env", "train",
     "_core",
     "CartPole",
     "GridWorld",

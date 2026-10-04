@@ -9,6 +9,16 @@ contain breaking changes.
 
 ### Added
 
+- Human/agent workflow helpers: typed Python `make_env`, `available_envs` and
+  `train`, native/Gym name aliases, pathlib training outputs and early validation.
+  Existing native/Gym entry points remain available. Python training remains CPU
+  DQN; other algorithms and GPU execution are available through the CLI.
+- Read-only `rustforge plan` JSON discovery, algorithm-aware environment defaults,
+  case-insensitive values, short flags and fit/live/watch command aliases.
+- Shared console key map with Space pause/resume and F1 help; held keys cannot
+  escalate graceful stop or repeatedly toggle pause. Modifier combinations avoid
+  accidental actions. README is shortened with detailed material in linked guides.
+
 - SAC worker/runtime and Pendulum headless/live CLI with explicit CPU/GPU selection,
   eight finite JSONL metrics and pause/graceful/force-stop controls. Bounded
   version-1 `RFGPUSAC` snapshots atomically save five networks, log temperature,

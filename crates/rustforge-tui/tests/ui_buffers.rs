@@ -211,13 +211,13 @@ fn live_header_badge_and_footer_hints_follow_trainer_state() {
     let running = text(&rendered(&app, 110, 30));
     assert!(running.contains("dqn · cartpole"));
     assert!(running.contains("RUNNING"));
-    assert!(running.contains("p pause"));
+    assert!(running.contains("Space pause"));
     assert!(running.contains("q stop"));
 
     app.set_trainer_status(Some(TrainerStatus::Paused));
     let paused = text(&rendered(&app, 110, 30));
     assert!(paused.contains("PAUSED"));
-    assert!(paused.contains("p resume"));
+    assert!(paused.contains("Space resume"));
     assert!(!paused.contains("IDLE"));
 
     app.set_trainer_status(Some(TrainerStatus::Running));
@@ -225,7 +225,7 @@ fn live_header_badge_and_footer_hints_follow_trainer_state() {
     let stopping = text(&rendered(&app, 110, 30));
     assert!(stopping.contains("STOPPING"));
     assert!(stopping.contains("q force stop"));
-    assert!(!stopping.contains("p pause"));
+    assert!(!stopping.contains("Space pause"));
 
     app.set_trainer_status(Some(TrainerStatus::Stopped));
     app.set_finished(true);
@@ -243,7 +243,7 @@ fn live_controls_are_not_advertised_without_the_capability() {
     let mut app = live_app();
     app.set_live_controls_available(false);
     let output = text(&rendered(&app, 110, 30));
-    assert!(!output.contains("p pause"));
+    assert!(!output.contains("Space pause"));
     assert!(output.contains("q stop"));
 }
 

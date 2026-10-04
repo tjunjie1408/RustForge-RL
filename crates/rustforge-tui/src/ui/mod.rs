@@ -264,9 +264,9 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: Theme
         AppMode::Live => {
             if app.live_controls_visible() {
                 if app.trainer_status() == Some(TrainerStatus::Paused) {
-                    hints.push(("p", "resume"));
+                    hints.push(("Space", "resume"));
                 } else {
-                    hints.push(("p", "pause"));
+                    hints.push(("Space", "pause"));
                 }
             }
             hints.push(("q", "stop"));
@@ -381,11 +381,11 @@ fn render_help(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: Theme) 
         ("f", "follow / freeze"),
         ("g", "alert settings"),
         ("t", "cycle palette"),
-        ("? / Esc", "close dialog"),
+        ("? / F1 / Esc", "help / close dialog"),
     ];
     if app.mode() == AppMode::Live {
         if app.live_controls_visible() {
-            keys.push(("p", "pause / resume training"));
+            keys.push(("Space / p", "pause / resume training"));
         }
         keys.push(("q", "graceful stop (finish episode)"));
         keys.push(("q again", "force stop (after current step)"));

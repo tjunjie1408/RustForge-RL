@@ -6,7 +6,8 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 #[command(
     name = "rustforge",
     version,
-    about = "RustForge native RL training console"
+    about = "Train, inspect and monitor RustForge RL experiments",
+    after_help = "Examples:\n  rustforge train sac -n 10\n  rustforge run ppo -e pendulum\n  rustforge plan sac\n\nDefault environments: Pendulum for SAC/TD3; CartPole otherwise."
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -16,11 +17,16 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum Commands {
     /// Train an agent without an interactive terminal.
+    #[command(visible_alias = "fit")]
     Train(TrainArgs),
     /// Inspect a completed or actively written metrics CSV file.
+    #[command(visible_alias = "watch")]
     Monitor(MonitorArgs),
     /// Train an agent with the native live terminal console.
+    #[command(visible_alias = "live")]
     Run(RunArgs),
+    /// Print a validated JSON training plan without starting training or writing files.
+    Plan(PlanArgs),
     /// Export a DQN computation graph as Graphviz DOT.
     ExportGraph,
 }
@@ -37,9 +43,26 @@ pub enum Algorithm {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub enum Environment {
+    /// Choose Pendulum for SAC/TD3, CartPole for the other algorithms.
+    Auto,
+    #[value(alias = "cart-pole", alias = "CartPole-v1")]
     Cartpole,
+    #[value(alias = "grid-world")]
     Gridworld,
+    #[value(alias = "Pendulum-v1")]
     Pendulum,
+}
+
+impl Environment {
+    pub fn resolve(self, algorithm: Algorithm) -> Self {
+        match self {
+            Self::Auto => match algorithm {
+                Algorithm::Sac | Algorithm::Td3 => Self::Pendulum,
+                _ => Self::Cartpole,
+            },
+            environment => environment,
+        }
+    }
 }
 
 /// Training backend requested explicitly by the user.
@@ -62,7 +85,7 @@ impl Device {
 #[derive(Clone, Debug, Default, Args)]
 pub struct ExecutionArgs {
     /// GPU supports DQN, PPO, A2C, REINFORCE, TD3 and SAC; requires the gpu feature.
-    #[arg(long, value_enum, default_value_t = Device::Cpu)]
+    #[arg(short = 'd', long, value_enum, ignore_case = true, default_value_t = Device::Cpu)]
     pub device: Device,
     /// Restore GPU training state; environment, rollout/replay and random streams restart.
     #[arg(long)]
@@ -108,15 +131,15 @@ impl ExecutionArgs {
 pub struct TrainArgs {
     #[command(flatten)]
     pub execution: ExecutionArgs,
-    #[arg(value_enum)]
+    #[arg(value_enum, ignore_case = true)]
     pub algorithm: Algorithm,
-    #[arg(long, value_enum, default_value_t = Environment::Cartpole)]
+    #[arg(short = 'e', long, value_enum, ignore_case = true, default_value_t = Environment::Auto)]
     pub env: Environment,
-    #[arg(long, default_value_t = 100, value_parser = parse_positive_usize)]
+    #[arg(short = 'n', long, default_value_t = 100, value_parser = parse_positive_usize)]
     pub episodes: usize,
     #[arg(long)]
     pub no_log: bool,
-    #[arg(long)]
+    #[arg(short = 'o', long)]
     pub output: Option<PathBuf>,
     #[arg(long, requires = "output")]
     pub overwrite: bool,
@@ -143,13 +166,13 @@ pub struct MonitorArgs {
 pub struct RunArgs {
     #[command(flatten)]
     pub execution: ExecutionArgs,
-    #[arg(value_enum)]
+    #[arg(value_enum, ignore_case = true)]
     pub algorithm: Algorithm,
-    #[arg(long, value_enum, default_value_t = Environment::Cartpole)]
+    #[arg(short = 'e', long, value_enum, ignore_case = true, default_value_t = Environment::Auto)]
     pub env: Environment,
-    #[arg(long, default_value_t = 100, value_parser = parse_positive_usize)]
+    #[arg(short = 'n', long, default_value_t = 100, value_parser = parse_positive_usize)]
     pub episodes: usize,
-    #[arg(long)]
+    #[arg(short = 'o', long)]
     pub output: Option<PathBuf>,
     #[arg(long, requires = "output")]
     pub overwrite: bool,
@@ -161,6 +184,21 @@ pub struct RunArgs {
     pub ascii: bool,
     #[arg(long, value_parser = parse_finite_f64)]
     pub target_reward: Option<f64>,
+}
+
+/// Noninteractive discovery for scripts and coding agents; stdout is JSON only.
+#[derive(Debug, Args)]
+pub struct PlanArgs {
+    #[command(flatten)]
+    pub execution: ExecutionArgs,
+    #[arg(value_enum, ignore_case = true)]
+    pub algorithm: Algorithm,
+    #[arg(short = 'e', long, value_enum, ignore_case = true, default_value_t = Environment::Auto)]
+    pub env: Environment,
+    #[arg(short = 'n', long, default_value_t = 100, value_parser = parse_positive_usize)]
+    pub episodes: usize,
+    #[arg(long)]
+    pub use_per: bool,
 }
 
 fn parse_positive_usize(value: &str) -> Result<usize, String> {

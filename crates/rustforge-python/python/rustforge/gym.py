@@ -14,18 +14,6 @@ except ImportError as exc:  # pragma: no cover
         "Install it with: pip install 'rustforge-rl[gym]'"
     ) from exc
 
-from . import _core
-
-# Friendly id -> native class.
-_REGISTRY = {
-    "CartPole": _core.CartPole,
-    "GridWorld": _core.GridWorld,
-    "MountainCar": _core.MountainCar,
-    "MountainCarContinuous": _core.MountainCarContinuous,
-    "Pendulum": _core.Pendulum,
-}
-
-
 def _to_gym_space(space: Any) -> "gym.Space":
     if space.kind == "discrete":
         return spaces.Discrete(space.n)
@@ -73,7 +61,5 @@ def make(env_id: str, **kwargs: Any) -> RustForgeEnv:
     Valid ids: 'CartPole', 'GridWorld', 'MountainCar',
     'MountainCarContinuous', 'Pendulum'.
     """
-    if env_id not in _REGISTRY:
-        raise ValueError(f"unknown env_id {env_id!r}; valid ids: {sorted(_REGISTRY)}")
-    native = _REGISTRY[env_id](**kwargs)
-    return RustForgeEnv(native)
+    from .workflows import make_env
+    return make_env(env_id, api="gymnasium", **kwargs)

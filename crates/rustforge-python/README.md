@@ -1,57 +1,39 @@
-# rustforge (Python bindings)
+# RustForge Python
 
-PyO3 bindings to the RustForge RL framework: native environments and a DQN agent,
-plus a Gymnasium-compatible adapter.
-
-## Install
+Native environments and CPU DQN, with an optional Gymnasium bridge. Import
+`rustforge`; the package distribution is `rustforge-rl` (CPython 3.9+).
 
 ```bash
-pip install rustforge-rl            # native environments + DQN
-pip install "rustforge-rl[gym]"     # plus the Gymnasium bridge
+pip install rustforge-rl
+pip install "rustforge-rl[gym]"  # optional Gymnasium support
 ```
 
-The distribution is named `rustforge-rl`; the import name is `rustforge`.
-Wheels are abi3 (one per platform, CPython ≥ 3.9) for Linux x86_64/aarch64,
-macOS universal2, and Windows x86_64.
-
-## Install (development)
-
-```bash
-cd crates/rustforge-python
-python -m venv .venv
-# Windows: .venv\Scripts\Activate.ps1   |   Unix: source .venv/bin/activate
-pip install "maturin>=1.9,<2.0" pytest "gymnasium>=0.29" "numpy>=1.21"
-maturin develop
-```
-
-## Usage
+To use the new convenience functions from this checkout, activate a virtualenv,
+install maturin and run `maturin develop` in this directory.
 
 ```python
-import rustforge
+import rustforge as rf
 
-# Gymnasium-style env
-env = rustforge.make("CartPole")
-obs, info = env.reset(seed=0)
-obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
+print(rf.available_envs())
+env = rf.make_env("CartPole-v1")
+agent = rf.train("cartpole", episodes=10, output="dqn.csv")
+action = agent.predict(env.reset(42))
 
-# Train + run a DQN
-agent = rustforge.DQN.train("cartpole", episodes=200)
-action = agent.predict([float(x) for x in obs])
+# Optional Gymnasium: float32 NumPy observations and standard tuples.
+env = rf.make_env("pendulum", api="gymnasium")
+obs, info = env.reset(seed=42)
 ```
 
-Available env ids: `CartPole`, `GridWorld`, `MountainCar`, `MountainCarContinuous`, `Pendulum`.
-`DQN.train` supports the discrete envs: `"cartpole"`, `"gridworld"`, `"mountaincar"`.
+`make_env` defaults to native reset/step tuples. Environment names accept case,
+hyphens/underscores and supported Gym ids. Native classes, `DQN.train` and
+Gymnasium `make` remain available. Python DQN supports CartPole, GridWorld and
+MountainCar; use the CLI for other algorithms and GPU training. Episode-limit
+defaults in `train` are 500, 100 and 200 respectively. Training randomness is not
+fully seed-controlled.
 
-## Error handling
+`output` accepts strings or pathlib paths. Invalid training settings raise
+`ValueError` before opening output; training/log I/O failures raise `RuntimeError`.
+Native negative discrete actions raise `OverflowError`; out-of-range actions and
+invalid action dimensions raise `ValueError`.
 
-Discrete environments (`CartPole`, `GridWorld`, `MountainCar`) validate the
-`action` passed to `step`:
-
-- An **out-of-range** action (e.g. `5` when only `0`, `1` are valid) raises
-  `ValueError`.
-- A **negative** action (e.g. `-1`) raises `OverflowError`, *not* `ValueError`.
-  The action is a Rust `usize`, so PyO3 rejects negative integers during
-  argument conversion, before the range check runs.
-
-Continuous environments (`Pendulum`, `MountainCarContinuous`) raise
-`ValueError` when the action list has the wrong length (they expect length 1).
+[Workflow details](../../docs/usability.md) · [Project README](../../README.md)

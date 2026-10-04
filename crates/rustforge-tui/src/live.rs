@@ -85,9 +85,12 @@ pub fn map_live_key(
     if key.kind == KeyEventKind::Release {
         return LiveInput::Ignored;
     }
-    let quit = key.code == KeyCode::Char('q')
-        || (key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c'));
+    let quit = (crate::keys::plain_key(key) && key.code == KeyCode::Char('q'))
+        || (key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('c'));
     if quit {
+        if key.kind != KeyEventKind::Press {
+            return LiveInput::Ignored;
+        }
         return if final_state {
             LiveInput::Acknowledge
         } else if stop_already_requested {
@@ -99,37 +102,21 @@ pub fn map_live_key(
     if final_state && key.code == KeyCode::Enter {
         return LiveInput::Acknowledge;
     }
-    if key.code == KeyCode::Char('p') && !stop_already_requested && !final_state {
+    if crate::keys::plain_key(key)
+        && matches!(key.code, KeyCode::Char('p') | KeyCode::Char(' '))
+        && !stop_already_requested
+        && !final_state
+    {
+        if key.kind != KeyEventKind::Press {
+            return LiveInput::Ignored;
+        }
         return if status == TrainerStatus::Paused {
             LiveInput::Resume
         } else {
             LiveInput::Pause
         };
     }
-    let action = match key.code {
-        KeyCode::Tab => Action::NextView,
-        KeyCode::BackTab => Action::PreviousView,
-        KeyCode::Left => Action::PreviousRange,
-        KeyCode::Right => Action::NextRange,
-        KeyCode::Up => Action::ScrollUp(1),
-        KeyCode::Down => Action::ScrollDown(1),
-        KeyCode::PageUp => Action::ScrollUp(10),
-        KeyCode::PageDown => Action::ScrollDown(10),
-        KeyCode::Home => Action::JumpToFirst,
-        KeyCode::End => Action::JumpToLatest,
-        KeyCode::Char('f') => Action::ToggleFollow,
-        KeyCode::Char('t') => Action::CyclePalette,
-        KeyCode::Char('g') => Action::ToggleAlertSettings,
-        KeyCode::Char('?') => Action::ToggleHelp,
-        KeyCode::Esc => Action::DismissDialog,
-        KeyCode::Backspace => Action::AlertTargetBackspace,
-        KeyCode::Enter => Action::ApplyAlertTarget,
-        KeyCode::Char(character) if character.is_ascii_digit() || ".eE+-".contains(character) => {
-            Action::AlertTargetChar(character)
-        }
-        _ => return LiveInput::Ignored,
-    };
-    LiveInput::Action(action)
+    crate::keys::navigation(key).map_or(LiveInput::Ignored, LiveInput::Action)
 }
 
 pub async fn run_live(
