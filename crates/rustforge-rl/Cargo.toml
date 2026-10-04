@@ -20,6 +20,22 @@ required-features = ["gpu"]
 name = "gpu_dqn_training"
 required-features = ["gpu"]
 
+[[example]]
+name = "gpu_ppo_objective"
+required-features = ["gpu"]
+
+[[example]]
+name = "gpu_ppo_training"
+required-features = ["gpu"]
+
+[[example]]
+name = "gpu_continuous_ppo_objective"
+required-features = ["gpu"]
+
+[[example]]
+name = "gpu_continuous_ppo_training"
+required-features = ["gpu"]
+
 [dependencies]
 bincode = { workspace = true, optional = true }
 rustforge-tensor = { path = "../rustforge-tensor" }

@@ -1,7 +1,5 @@
-//! PPO Discrete adapter for the generic live-training runtime.
+//! PPO Continuous adapter for the generic live-training runtime.
 
-use std::convert::TryFrom;
-use std::fmt::Debug;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
@@ -13,9 +11,9 @@ use super::live_runtime::{
     progress_scalars, throughput, LiveHooks, RewardWindow, StepDecision, StepPosition,
 };
 use super::on_policy_runtime::{derive_seed, finite_values, EpisodeBoundary};
-use super::ppo_backend::PpoBackend;
-use super::{PPOConfig, PPODiscreteConfig, PpoRuntimeOptions};
-use crate::buffer::RolloutBuffer;
+use super::ppo_continuous_backend::PpoContinuousBackend;
+use super::{PPOConfig, PPOContinuousConfig, PpoRuntimeOptions};
+use crate::buffer::ContinuousRolloutBuffer;
 use crate::env::{Environment, IntoTensorBuffer};
 use crate::runtime::event::MetricValue;
 use crate::runtime::progress::ProgressScalar;
@@ -28,27 +26,29 @@ const REWARD_EPISODE: MetricId = MetricId::new(101);
 const REWARD_MOVING_AVERAGE: MetricId = MetricId::new(102);
 const LOSS_POLICY: MetricId = MetricId::new(103);
 const LOSS_VALUE: MetricId = MetricId::new(104);
-const POLICY_ENTROPY: MetricId = MetricId::new(105);
 const ROLLOUT_SIZE: MetricId = MetricId::new(106);
 const STEPS_PER_SECOND: MetricId = MetricId::new(107);
 
 static NEXT_RUN_ID: AtomicU64 = AtomicU64::new(0);
 
-/// Returns the approved PPO Discrete integration profile for CartPole.
-pub fn cartpole_ppo_config() -> PPODiscreteConfig {
-    PPODiscreteConfig {
+/// Returns the continuous PPO integration profile for Pendulum.
+pub fn pendulum_ppo_config() -> PPOContinuousConfig {
+    PPOContinuousConfig {
         base: PPOConfig {
-            obs_dim: 4,
+            obs_dim: 3,
             lr: 1e-3,
             ..PPOConfig::default()
         },
-        num_actions: 2,
+        act_dim: 1,
+        action_low: vec![-2.],
+        action_high: vec![2.],
     }
 }
 
-pub struct PpoDiscreteTrainerAdapter<E> {
+pub struct PpoContinuousTrainerAdapter<E, F> {
     env: E,
-    config: PPODiscreteConfig,
+    action: F,
+    config: PPOContinuousConfig,
     episodes: usize,
     max_steps_per_episode: usize,
     environment: String,
@@ -57,10 +57,12 @@ pub struct PpoDiscreteTrainerAdapter<E> {
     options: PpoRuntimeOptions,
 }
 
-impl<E> PpoDiscreteTrainerAdapter<E> {
+impl<E, F> PpoContinuousTrainerAdapter<E, F> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         env: E,
-        config: PPODiscreteConfig,
+        action: F,
+        config: PPOContinuousConfig,
         episodes: usize,
         max_steps_per_episode: usize,
         environment: impl Into<String>,
@@ -69,12 +71,13 @@ impl<E> PpoDiscreteTrainerAdapter<E> {
         let sequence = NEXT_RUN_ID.fetch_add(1, Ordering::Relaxed) + 1;
         Self {
             env,
+            action,
             config,
             episodes,
             max_steps_per_episode,
             environment: environment.into(),
             seed,
-            run_id: format!("ppo-discrete-{sequence}"),
+            run_id: format!("ppo-continuous-{sequence}"),
             options: PpoRuntimeOptions::default(),
         }
     }
@@ -85,15 +88,14 @@ impl<E> PpoDiscreteTrainerAdapter<E> {
     }
 }
 
-impl<E> Trainer for PpoDiscreteTrainerAdapter<E>
+impl<E, F> Trainer for PpoContinuousTrainerAdapter<E, F>
 where
     E: Environment + Send + 'static,
-    E::Act: TryFrom<usize>,
-    <E::Act as TryFrom<usize>>::Error: Debug,
+    F: FnMut(&[f32]) -> Result<E::Act, TrainerError> + Send + 'static,
 {
     fn metadata(&self) -> TrainerMetadata {
         TrainerMetadata {
-            algorithm: "ppo-discrete".into(),
+            algorithm: "ppo-continuous".into(),
             environment: self.environment.clone(),
             run_id: self.run_id.clone(),
             capabilities: TrainerCapabilities {
@@ -109,8 +111,9 @@ where
     fn run(self: Box<Self>, context: TrainerContext) -> Result<TrainingSummary, TrainerError> {
         let metadata = self.metadata();
         let mut hooks = LiveHooks::new(context, metadata);
-        let result = train_ppo_discrete_core(
+        let result = train_ppo_continuous_core(
             self.env,
+            self.action,
             self.config,
             self.episodes,
             self.max_steps_per_episode,
@@ -150,13 +153,13 @@ struct EpisodeState {
     moving_average: f32,
     policy_loss: f32,
     value_loss: f32,
-    entropy: f32,
 }
 
 #[allow(clippy::too_many_arguments)]
-fn train_ppo_discrete_core<E>(
+fn train_ppo_continuous_core<E, F>(
     mut env: E,
-    config: PPODiscreteConfig,
+    mut action: F,
+    config: PPOContinuousConfig,
     episodes: usize,
     max_steps_per_episode: usize,
     seed: Option<u64>,
@@ -165,8 +168,7 @@ fn train_ppo_discrete_core<E>(
 ) -> Result<TrainingSummary, TrainerError>
 where
     E: Environment,
-    E::Act: TryFrom<usize>,
-    <E::Act as TryFrom<usize>>::Error: Debug,
+    F: FnMut(&[f32]) -> Result<E::Act, TrainerError>,
 {
     let started = Instant::now();
     if episodes > 0 && max_steps_per_episode == 0 {
@@ -185,9 +187,13 @@ where
         ),
         None => (None, None, None),
     };
-    let mut agent = PpoBackend::new(config, seed.map(|s| derive_seed(s, 0)), options)?;
+    let mut agent = PpoContinuousBackend::new(config, seed.map(|s| derive_seed(s, 0)), options)?;
     if agent.config().base.obs_dim != obs_dim
-        || env.action_space() != crate::env::Space::Discrete(agent.config().num_actions)
+        || env.action_space()
+            != crate::env::Space::continuous(
+                agent.config().action_low.clone(),
+                agent.config().action_high.clone(),
+            )
     {
         return Err(TrainerError {
             message: "PPO agent dimensions do not match the environment".into(),
@@ -195,7 +201,15 @@ where
     }
     let gamma = agent.config().base.gamma;
     let gae_lambda = agent.config().base.gae_lambda;
-    let mut rollout = RolloutBuffer::new(max_steps_per_episode, obs_dim);
+    let act_dim = agent.config().act_dim;
+    if max_steps_per_episode.checked_mul(obs_dim).is_none()
+        || max_steps_per_episode.checked_mul(act_dim).is_none()
+    {
+        return Err(TrainerError {
+            message: "continuous rollout capacity overflow".into(),
+        });
+    }
+    let mut rollout = ContinuousRolloutBuffer::new(max_steps_per_episode, obs_dim, act_dim);
     let mut global_step = 0usize;
     let mut completed_episodes = 0usize;
     let mut rewards_window = RewardWindow::new(100);
@@ -208,6 +222,11 @@ where
         let (state, _) = env.reset(episode_seed);
         let mut state_buf = vec![0.0; obs_dim];
         state.write_to_buffer(&mut state_buf);
+        if state_buf.iter().any(|v| !v.is_finite()) {
+            return Err(TrainerError {
+                message: "continuous PPO observation must be finite".into(),
+            });
+        }
         let mut episode_reward = 0.0;
         let mut episode_length = 0usize;
         let mut last_value = 0.0;
@@ -215,28 +234,44 @@ where
         let mut force_after_episode = false;
 
         for step_index in 0..max_steps_per_episode {
-            let (action_index, old_log_probability, value) = match action_rng.as_mut() {
+            let (action_vector, old_log_probability, value) = match action_rng.as_mut() {
                 Some(rng) => agent.select_action_with_rng(&state_buf, rng),
                 None => agent.select_action(&state_buf),
             }?;
-            let action = E::Act::try_from(action_index).map_err(|error| TrainerError {
-                message: format!(
-                    "PPO action index {action_index} was rejected by the environment: {error:?}"
-                ),
-            })?;
+            if !old_log_probability.is_finite()
+                || !value.is_finite()
+                || action_vector.len() != act_dim
+                || action_vector.iter().enumerate().any(|(i, a)| {
+                    !a.is_finite()
+                        || *a < agent.config().action_low[i]
+                        || *a > agent.config().action_high[i]
+                })
+            {
+                return Err(TrainerError {
+                    message:
+                        "continuous PPO action/value must be finite and within configured bounds"
+                            .into(),
+                });
+            }
+            let converted_action = action(&action_vector)?;
             let step_limit = step_index + 1 == max_steps_per_episode;
-            let (next_state, reward, terminated, truncated, _) = env.step(action);
+            let (next_state, reward, terminated, truncated, _) = env.step(converted_action);
             let boundary = EpisodeBoundary::classify(terminated, truncated, step_limit);
             let mut next_state_buf = vec![0.0; obs_dim];
             next_state.write_to_buffer(&mut next_state_buf);
-            rollout.push_with_log_prob(
+            rollout.push(
                 &state_buf,
-                action_index,
+                &action_vector,
                 reward,
                 value,
                 boundary.done_mask(),
                 old_log_probability,
             );
+            if !reward.is_finite() || next_state_buf.iter().any(|v| !v.is_finite()) {
+                return Err(TrainerError {
+                    message: "continuous PPO environment returned nonfinite values".into(),
+                });
+            }
             state_buf = next_state_buf;
             episode_reward += reward;
             episode_length += 1;
@@ -276,9 +311,11 @@ where
             continue;
         }
         rollout.compute_returns_and_advantages(gamma, gae_lambda, last_value);
+        let mut batch = crate::buffer::ContinuousRolloutBatch::new(rollout.len(), obs_dim, act_dim);
+        rollout.fill_batch(&mut batch);
         let losses = match shuffle_rng.as_mut() {
-            Some(rng) => agent.train_on_batch_with_rng(&rollout.to_batch(), rng),
-            None => agent.train_on_batch(&rollout.to_batch()),
+            Some(rng) => agent.train_on_batch_with_rng(&batch, rng),
+            None => agent.train_on_batch(&batch),
         }?;
         let completed_state = StepState {
             global_step: global_step as u64,
@@ -299,7 +336,6 @@ where
             moving_average,
             policy_loss: losses.0,
             value_loss: losses.1,
-            entropy: losses.2,
         });
         hooks.publish_episode(completed_state.position(), values.clone());
         hooks.publish_progress(completed_state.position(), progress_scalars(&values));
@@ -350,13 +386,6 @@ fn metric_descriptors() -> Vec<MetricDescriptor> {
             LOSS_VALUE,
             "loss.value",
             "PPO value loss",
-            None,
-            MetricKind::Gauge,
-        ),
-        metric(
-            POLICY_ENTROPY,
-            "policy.entropy",
-            "PPO policy entropy",
             None,
             MetricKind::Gauge,
         ),
@@ -436,10 +465,6 @@ fn episode_values(state: EpisodeState) -> SmallVec<[MetricValue; 8]> {
             value: f64::from(state.value_loss)
         },
         MetricValue {
-            metric: POLICY_ENTROPY,
-            value: f64::from(state.entropy)
-        },
-        MetricValue {
             metric: ROLLOUT_SIZE,
             value: state.step.rollout_size as f64
         },
@@ -448,33 +473,4 @@ fn episode_values(state: EpisodeState) -> SmallVec<[MetricValue; 8]> {
             value: throughput(state.step.global_step, state.step.elapsed)
         },
     ])
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn non_finite_losses_are_omitted_without_dropping_the_reward() {
-        let values = episode_values(EpisodeState {
-            step: StepState {
-                global_step: 10,
-                episode: 0,
-                episode_step: 10,
-                episode_reward: 12.0,
-                rollout_size: 10,
-                elapsed: Duration::from_secs(1),
-            },
-            moving_average: 12.0,
-            policy_loss: f32::NAN,
-            value_loss: 0.5,
-            entropy: f32::INFINITY,
-        });
-        assert!(values.iter().all(|value| value.value.is_finite()));
-        assert!(values
-            .iter()
-            .any(|value| value.metric == REWARD_EPISODE && value.value == 12.0));
-        assert!(!values.iter().any(|value| value.metric == LOSS_POLICY));
-        assert!(!values.iter().any(|value| value.metric == POLICY_ENTROPY));
-    }
 }

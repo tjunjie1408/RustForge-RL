@@ -14,6 +14,9 @@ pub mod gaussian_policy;
 mod live_runtime;
 mod on_policy_runtime;
 pub mod ppo;
+mod ppo_backend;
+mod ppo_continuous_backend;
+mod ppo_continuous_runtime;
 mod ppo_runtime;
 pub mod reinforce;
 mod reinforce_runtime;
@@ -32,6 +35,8 @@ pub use dqn_train::{train_dqn, try_train_dqn};
 pub use epsilon_greedy::EpsilonGreedy;
 pub use gaussian_policy::{GaussianPolicy, GaussianPolicyNet};
 pub use ppo::{PPOConfig, PPOContinuous, PPOContinuousConfig, PPODiscrete, PPODiscreteConfig};
+pub use ppo_backend::{PpoDevice, PpoRuntimeOptions};
+pub use ppo_continuous_runtime::{pendulum_ppo_config, PpoContinuousTrainerAdapter};
 pub use ppo_runtime::{cartpole_ppo_config, PpoDiscreteTrainerAdapter};
 pub use reinforce::{REINFORCEConfig, REINFORCE};
 pub use reinforce_runtime::{cartpole_reinforce_config, ReinforceTrainerAdapter};
@@ -45,3 +50,9 @@ pub use utils::{clamp_var, elementwise_min_var, hard_update, soft_update};
 pub mod gpu_dqn;
 #[cfg(feature = "gpu")]
 pub use gpu_dqn::{GpuDqn, GpuDqnBatch, GpuDqnError};
+
+#[cfg(feature = "gpu")]
+pub mod gpu_ppo;
+
+#[cfg(feature = "gpu")]
+pub mod gpu_gaussian;

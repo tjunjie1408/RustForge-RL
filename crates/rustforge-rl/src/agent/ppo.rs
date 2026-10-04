@@ -63,6 +63,7 @@ fn log_softmax_var(logits: &Variable) -> Variable {
 }
 
 /// Shared configuration for PPO.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PPOConfig {
     /// Observation dimensionality.
     pub obs_dim: usize,
@@ -155,6 +156,7 @@ impl PPOContinuousMiniBatch {
 // ─────────────────────────────────────────────────────────
 
 /// PPO configuration specific to discrete action spaces.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PPODiscreteConfig {
     /// Base PPO config.
     pub base: PPOConfig,
@@ -421,6 +423,7 @@ impl PPODiscrete {
 // ─────────────────────────────────────────────────────────
 
 /// PPO configuration specific to continuous action spaces.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PPOContinuousConfig {
     /// Base PPO config.
     pub base: PPOConfig,
@@ -480,15 +483,69 @@ impl PPOContinuous {
         }
     }
 
+    /// Seeded actor (offsets 0..3) and independent value critic (offsets 4..6).
+    pub fn new_seeded(config: PPOContinuousConfig, seed: u64) -> Self {
+        let actor = GaussianPolicy::new_seeded(
+            config.base.obs_dim,
+            config.base.hidden_dim,
+            config.act_dim,
+            &config.action_low,
+            &config.action_high,
+            seed,
+        );
+
+        let critic = Sequential::new(vec![
+            Box::new(Linear::new_seeded(
+                config.base.obs_dim,
+                config.base.hidden_dim,
+                seed.wrapping_add(4),
+            )),
+            Box::new(ReLU),
+            Box::new(Linear::new_seeded(
+                config.base.hidden_dim,
+                config.base.hidden_dim,
+                seed.wrapping_add(5),
+            )),
+            Box::new(ReLU),
+            Box::new(Linear::new_seeded(
+                config.base.hidden_dim,
+                1,
+                seed.wrapping_add(6),
+            )),
+        ]);
+
+        let actor_optimizer = Adam::new(actor.parameters(), config.base.lr);
+        let critic_optimizer = Adam::new(critic.parameters(), config.base.lr);
+
+        PPOContinuous {
+            actor,
+            critic,
+            actor_optimizer,
+            critic_optimizer,
+            config,
+        }
+    }
+
+    pub fn critic(&self) -> &Sequential {
+        &self.critic
+    }
+
     /// Samples an action from the policy.
     ///
     /// Returns `(action_vec, log_prob_scalar, value_scalar)`.
     pub fn select_action(&self, state: &[f32]) -> (Vec<f32>, f32, f32) {
+        self.select_action_with_rng(state, &mut rand::thread_rng())
+    }
+    pub fn select_action_with_rng<R: Rng + ?Sized>(
+        &self,
+        state: &[f32],
+        rng: &mut R,
+    ) -> (Vec<f32>, f32, f32) {
         let state_tensor = Tensor::from_vec(state.to_vec(), &[1, self.config.base.obs_dim]);
         let state_var = Variable::from_tensor(state_tensor);
 
         let (action, log_prob, value) = no_grad(|| {
-            let (action, log_prob) = self.actor.sample(&state_var);
+            let (action, log_prob) = self.actor.sample_with_rng(&state_var, rng);
             (action, log_prob, self.critic.forward(&state_var))
         });
 
@@ -512,6 +569,13 @@ impl PPOContinuous {
     ///
     /// Returns `(policy_loss, value_loss)` averaged over mini-batches.
     pub fn train_on_batch(&mut self, batch: &ContinuousRolloutBatch) -> (f32, f32) {
+        self.train_on_batch_with_rng(batch, &mut rand::thread_rng())
+    }
+    pub fn train_on_batch_with_rng<R: Rng + ?Sized>(
+        &mut self,
+        batch: &ContinuousRolloutBatch,
+        rng: &mut R,
+    ) -> (f32, f32) {
         let n = batch.size;
         if n == 0 {
             return (0.0, 0.0);
@@ -534,14 +598,12 @@ impl PPOContinuous {
         let mut mb = PPOContinuousMiniBatch::new(mini_batch_size, obs_dim, act_dim);
 
         let mut indices: Vec<usize> = (0..n).collect();
-        let mut rng = rand::thread_rng();
-
         let mut total_policy_loss = 0.0_f32;
         let mut total_value_loss = 0.0_f32;
         let mut num_updates = 0;
 
         for _epoch in 0..self.config.base.ppo_epochs {
-            indices.shuffle(&mut rng);
+            indices.shuffle(rng);
 
             for start in (0..n).step_by(mini_batch_size) {
                 let end = (start + mini_batch_size).min(n);
