@@ -310,3 +310,66 @@ fn invalid_resume_and_save_fail_explicitly_without_checkpoint_corruption() {
     assert!(Box::new(adapter).run(ctx).is_err());
     assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
 }
+
+#[test]
+#[ignore = "requires a GPU adapter"]
+fn prioritized_runtime_resumes_saved_replay_mode_and_beta_schedule() {
+    let device = GpuContext::new().expect("GPU runtime tests require an adapter");
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("per.chk");
+    let output = directory.path().join("updated.chk");
+    let mut cfg = config();
+    cfg.use_per = true;
+    cfg.per_beta_annealing_steps = 150;
+    let mut original = GpuDqn::new_seeded(&device, cfg, 42).unwrap();
+    let weights = rustforge_tensor::Tensor::ones(&[32, 1]);
+    for _ in 0..7 {
+        original
+            .train_step_with_weights(&batch(), Some(&weights))
+            .unwrap();
+    }
+    original.save_checkpoint(&source).unwrap();
+    // Resume without --use-per must use the saved PER setting.
+    let adapter = DqnTrainerAdapter::new(
+        ConstantEnv {
+            resets: Default::default(),
+        },
+        config(),
+        1,
+        130,
+        "constant",
+    )
+    .with_options(DqnRuntimeOptions {
+        device: DqnDevice::Gpu,
+        resume: Some(source),
+        checkpoint: Some(output.clone()),
+    });
+    let (ctx, _) = context(TrainerControl::new());
+    let summary = std::thread::spawn(move || Box::new(adapter).run(ctx))
+        .join()
+        .unwrap()
+        .unwrap();
+    assert_eq!(summary.total_steps, 130);
+    let restored = GpuDqn::load_checkpoint(&device, output).unwrap();
+    assert!(restored.config().use_per);
+    assert_eq!(restored.config().per_beta_annealing_steps, 150);
+    assert_eq!(restored.train_steps(), 10);
+    assert_eq!(bits(&restored, false), bits(&restored, true));
+    // Priority feedback changes weights as sampled rows are updated and new
+    // transitions retain maximum priority. The runtime sampler is stochastic;
+    // exact update equivalence is tested separately with seeded replay buffers.
+    for p in restored.q_net().parameters() {
+        assert!(p
+            .to_cpu()
+            .unwrap()
+            .to_vec()
+            .iter()
+            .all(|value| value.is_finite()));
+        assert!(p.requires_grad());
+    }
+    assert!(restored
+        .target_net()
+        .parameters()
+        .iter()
+        .all(|p| !p.requires_grad()));
+}

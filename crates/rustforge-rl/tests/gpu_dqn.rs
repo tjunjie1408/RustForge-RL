@@ -256,7 +256,10 @@ fn configuration_validation_and_seed_reproducibility() {
             2 => c.hidden_dim = 0,
             3 => c.lr = f32::NAN,
             4 => c.gamma = 1.1,
-            _ => c.use_per = true,
+            _ => {
+                c.use_per = true;
+                c.per_beta_annealing_steps = 0;
+            }
         }
         assert!(GpuDqn::new_seeded(context(), c, 1).is_err());
     }
@@ -330,4 +333,235 @@ fn single_transition_overfit_and_two_state_policy_converge() {
         .parameters()
         .iter()
         .all(|p| p.grad().is_none()));
+}
+
+#[test]
+#[ignore = "requires a GPU adapter"]
+fn weighted_td_loss_gradients_errors_and_updates_match_cpu() {
+    for double in [false, true] {
+        let mut cfg = config(double, 2);
+        cfg.use_per = true;
+        let mut gpu = GpuDqn::new_seeded(context(), cfg, 42).unwrap();
+        let mut cfg = config(double, 2);
+        cfg.use_per = true;
+        let mut cpu = DQN::new(cfg);
+        for (c, g) in cpu
+            .q_net()
+            .parameters()
+            .iter()
+            .zip(gpu.q_net().parameters())
+        {
+            c.set_data(g.to_cpu().unwrap());
+        }
+        cpu.update_target();
+        let b = batch();
+        // Extra inactive capacity is ignored, including its invalid values.
+        let weights = Tensor::from_vec(vec![0., 0.25, 0.7, 1.5, f32::NAN, -1.], &[6, 1]);
+        let resident = gpu.upload_batch_with_weights(&b, Some(&weights)).unwrap();
+        for step in 1..=4 {
+            let prediction = no_grad(|| {
+                cpu.q_net()
+                    .forward(&Variable::from_tensor(b.states.clone()))
+            })
+            .data()
+            .gather(1, &b.actions)
+            .unwrap();
+            let expected_errors: Vec<f32> = (&prediction - &cpu_targets(&cpu, &b))
+                .to_vec()
+                .into_iter()
+                .map(f32::abs)
+                .collect();
+            let (gl, ge) = gpu.train_device_batch_with_td_errors(&resident).unwrap();
+            let (cl, ce) = cpu.train_step(&b, Some(&weights));
+            close(&[gl], &[cl], 4e-6);
+            close(ge.as_ref().unwrap(), &expected_errors, 3e-6);
+            close(ge.as_ref().unwrap(), ce.as_ref().unwrap(), 3e-6);
+            assert_eq!(gpu.train_steps(), step);
+            for (g, c) in gpu
+                .q_net()
+                .parameters()
+                .iter()
+                .zip(cpu.q_net().parameters())
+            {
+                close(
+                    &g.grad_cpu().unwrap().unwrap().to_vec(),
+                    &c.grad().unwrap().to_vec(),
+                    4e-6,
+                );
+                close(&g.to_cpu().unwrap().to_vec(), &c.data().to_vec(), 4e-6);
+            }
+            for (g, c) in gpu
+                .target_net()
+                .parameters()
+                .iter()
+                .zip(cpu.target_net().parameters())
+            {
+                close(&g.to_cpu().unwrap().to_vec(), &c.data().to_vec(), 4e-6);
+                assert!(!g.requires_grad() && g.grad().is_none());
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires a GPU adapter"]
+fn seeded_prioritized_sampling_and_priority_feedback_match_cpu() {
+    use rustforge_rl::buffer::PrioritizedReplayBuffer;
+    let mut cfg = config(true, 3);
+    cfg.use_per = true;
+    let mut gpu = GpuDqn::new_seeded(context(), cfg, 7).unwrap();
+    let mut cfg = config(true, 3);
+    cfg.use_per = true;
+    let mut cpu = DQN::new(cfg);
+    for (c, g) in cpu
+        .q_net()
+        .parameters()
+        .iter()
+        .zip(gpu.q_net().parameters())
+    {
+        c.set_data(g.to_cpu().unwrap());
+    }
+    cpu.update_target();
+    let mut gr = PrioritizedReplayBuffer::with_seed(16, 2, 0.6, 77);
+    let mut cr = PrioritizedReplayBuffer::with_seed(16, 2, 0.6, 77);
+    for i in 0..12 {
+        let state = [i as f32 / 12., 0.5];
+        for replay in [&mut gr, &mut cr] {
+            replay.push(&state, i % 2, i as f32 / 6. - 1., &[0.5, 0.2], i % 3 == 0);
+        }
+    }
+    let mut gb = TransitionBatch::new(4, 2);
+    let mut cb = TransitionBatch::new(4, 2);
+    let mut gw = Tensor::zeros(&[4, 1]);
+    let mut cw = Tensor::zeros(&[4, 1]);
+    let mut gi = [0; 4];
+    let mut ci = [0; 4];
+    let mut saw_nonuniform = false;
+    for step in 0..12 {
+        let beta = 0.4 + step as f32 * 0.05;
+        gr.sample(4, beta, &mut gb, &mut gw, &mut gi);
+        cr.sample(4, beta, &mut cb, &mut cw, &mut ci);
+        assert_eq!(gi, ci);
+        assert_eq!(gb.actions, cb.actions);
+        close(&gw.to_vec(), &cw.to_vec(), 5e-5);
+        saw_nonuniform |= gw.to_vec().iter().any(|v| *v < 0.99);
+        let (gl, ge) = gpu.train_step_with_weights(&gb, Some(&gw)).unwrap();
+        let (cl, ce) = cpu.train_step(&cb, Some(&cw));
+        close(&[gl], &[cl], 5e-5);
+        close(ge.as_ref().unwrap(), ce.as_ref().unwrap(), 5e-5);
+        gr.update_priorities(&gi[..gb.size], ge.as_ref().unwrap());
+        cr.update_priorities(&ci[..cb.size], ce.as_ref().unwrap());
+    }
+    assert!(
+        saw_nonuniform,
+        "priority feedback must produce nonuniform importance weights"
+    );
+    for (g, c) in gpu
+        .q_net()
+        .parameters()
+        .iter()
+        .zip(cpu.q_net().parameters())
+    {
+        close(&g.to_cpu().unwrap().to_vec(), &c.data().to_vec(), 5e-5);
+    }
+}
+
+#[test]
+#[ignore = "requires a GPU adapter"]
+fn invalid_weights_preserve_state_and_zero_weights_keep_unweighted_priorities() {
+    use std::rc::Rc;
+    let directory = tempfile::tempdir().unwrap();
+    let before = directory.path().join("before.chk");
+    let after = directory.path().join("after.chk");
+    let mut gpu = GpuDqn::new_seeded(context(), config(true, 5), 42).unwrap();
+    let b = batch();
+    gpu.train_step(&b).unwrap();
+    gpu.save_checkpoint(&before).unwrap();
+    let params = gpu.q_net().parameters();
+    let data: Vec<_> = params.iter().map(GpuVariable::data).collect();
+    let gradients: Vec<_> = params.iter().map(|p| p.grad().unwrap()).collect();
+    for weights in [
+        Tensor::zeros(&[3, 1]),
+        Tensor::zeros(&[4]),
+        Tensor::zeros(&[4, 2]),
+        Tensor::from_vec(vec![-1., 1., 1., 1.], &[4, 1]),
+        Tensor::from_vec(vec![f32::NAN, 1., 1., 1.], &[4, 1]),
+        Tensor::from_vec(vec![f32::INFINITY, 1., 1., 1.], &[4, 1]),
+    ] {
+        assert!(matches!(
+            gpu.train_step_with_weights(&b, Some(&weights)),
+            Err(GpuDqnError::InvalidBatch(_))
+        ));
+        for ((p, d), g) in params.iter().zip(&data).zip(&gradients) {
+            assert!(Rc::ptr_eq(&p.data(), d));
+            assert!(Rc::ptr_eq(&p.grad().unwrap(), g));
+        }
+        gpu.save_checkpoint(&after).unwrap();
+        assert_eq!(
+            std::fs::read(&before).unwrap(),
+            std::fs::read(&after).unwrap()
+        );
+    }
+    let mut fresh = GpuDqn::new_seeded(context(), config(true, 5), 42).unwrap();
+    let original: Vec<_> = fresh
+        .q_net()
+        .parameters()
+        .iter()
+        .map(|p| p.to_cpu().unwrap().to_vec())
+        .collect();
+    let (loss, errors) = fresh
+        .train_step_with_weights(&b, Some(&Tensor::zeros(&[4, 1])))
+        .unwrap();
+    assert_eq!(loss, 0.);
+    assert!(errors.unwrap().iter().any(|v| *v > 0.));
+    assert_eq!(fresh.train_steps(), 1);
+    for (p, expected) in fresh.q_net().parameters().iter().zip(original) {
+        close(&p.to_cpu().unwrap().to_vec(), &expected, 0.);
+        assert!(p
+            .grad_cpu()
+            .unwrap()
+            .unwrap()
+            .to_vec()
+            .iter()
+            .all(|v| *v == 0.));
+    }
+    assert!(fresh.train_step_with_weights(&b, None).unwrap().1.is_none());
+    // Finite parameters can still overflow the raw TD difference. Reject it
+    // before returning priorities or modifying the optimizer/target clock.
+    for p in fresh
+        .q_net()
+        .parameters()
+        .iter()
+        .chain(fresh.target_net().parameters().iter())
+    {
+        p.copy_data_from(
+            &GpuVariable::from_device(context(), context().zeros(p.data().shape()).unwrap(), false)
+                .unwrap(),
+        )
+        .unwrap();
+    }
+    fresh.q_net().parameters()[3]
+        .copy_data_from(
+            &GpuVariable::new(context(), &Tensor::from_vec(vec![f32::MAX; 2], &[2]), false)
+                .unwrap(),
+        )
+        .unwrap();
+    fresh.target_net().parameters()[3]
+        .copy_data_from(
+            &GpuVariable::new(
+                context(),
+                &Tensor::from_vec(vec![-f32::MAX; 2], &[2]),
+                false,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let step = fresh.train_steps();
+    let data = fresh.q_net().parameters()[3].data();
+    assert!(matches!(
+        fresh.train_step_with_weights(&b, Some(&Tensor::ones(&[4, 1]))),
+        Err(GpuDqnError::NonFiniteTdErrors)
+    ));
+    assert_eq!(fresh.train_steps(), step);
+    assert!(Rc::ptr_eq(&fresh.q_net().parameters()[3].data(), &data));
 }

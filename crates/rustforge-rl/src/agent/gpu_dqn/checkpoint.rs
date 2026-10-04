@@ -491,6 +491,21 @@ mod tests {
         assert!(decode(b"RFPARAMS\x01\x00\x00\x00").is_err());
     }
     #[test]
+    fn prioritized_config_round_trips_in_existing_checkpoint_version() {
+        let mut saved = fixture();
+        saved.config.use_per = true;
+        saved.config.per_beta_annealing_steps = 123;
+        let bytes = saved.encode().unwrap();
+        let decoded = decode(&bytes).unwrap();
+        assert!(decoded.config.use_per);
+        assert_eq!(decoded.config.per_beta_annealing_steps, 123);
+        assert_eq!(decoded.encode().unwrap(), bytes);
+        saved.config.use_per = false;
+        saved.config.per_beta_annealing_steps = 0;
+        assert!(saved.encode().is_ok()); // Uniform files retain their prior compatibility.
+    }
+
+    #[test]
     fn malformed_checkpoint_metadata_is_rejected_before_tensor_construction() {
         for kind in 0..13 {
             let mut bad = fixture();
@@ -498,7 +513,10 @@ mod tests {
                 0 => bad.online.pop().map(|_| ()).unwrap(),
                 1 => bad.target[3].shape = vec![1, 2],
                 2 => bad.online[0].values.pop().map(|_| ()).unwrap(),
-                3 => bad.config.use_per = true,
+                3 => {
+                    bad.config.use_per = true;
+                    bad.config.per_beta_annealing_steps = 0;
+                }
                 4 => bad.config.gamma = f32::NAN,
                 5 => bad.adam.timestep = 2,
                 6 => bad.adam.lr = 0.5,

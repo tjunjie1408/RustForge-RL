@@ -1,8 +1,8 @@
-//! Optional uniform-replay DQN/Double DQN with resident network training.
+//! Optional uniform/prioritized-replay DQN/Double DQN with resident training.
 //! Environment interaction and replay storage remain on CPU. Upload batches
-//! explicitly to reuse them; each training step downloads only its loss scalar.
-//! Versioned checkpoints explicitly transfer state. Prioritized replay and CLI
-//! runtime support are not enabled here.
+//! explicitly to reuse them; uniform training downloads only its loss scalar.
+//! Weighted training additionally returns absolute TD errors for CPU replay
+//! priority updates. Versioned checkpoints explicitly transfer training state.
 mod checkpoint;
 use crate::{agent::DQNConfig, buffer::TransitionBatch};
 pub use checkpoint::{
@@ -29,6 +29,7 @@ pub enum GpuDqnError {
     InvalidBatch(&'static str),
     NonFiniteLoss,
     GradientsDisabled,
+    NonFiniteTdErrors,
     StepOverflow,
 }
 impl fmt::Display for GpuDqnError {
@@ -41,6 +42,9 @@ impl fmt::Display for GpuDqnError {
             Self::InvalidConfig(message) | Self::InvalidBatch(message) => f.write_str(message),
             Self::NonFiniteLoss => {
                 f.write_str("GPU DQN loss is nonfinite; optimizer step was not applied")
+            }
+            Self::NonFiniteTdErrors => {
+                f.write_str("GPU DQN TD errors are nonfinite; optimizer step was not applied")
             }
             Self::GradientsDisabled => f.write_str("GPU DQN training requires gradient recording"),
             Self::StepOverflow => f.write_str("GPU DQN training step overflow"),
@@ -83,6 +87,7 @@ pub struct GpuDqnBatch {
     rewards: GpuVariable,
     dones: GpuVariable,
     actions: Rc<GpuIndices>,
+    weights: Option<GpuVariable>,
 }
 impl GpuDqnBatch {
     pub fn len(&self) -> usize {
@@ -130,6 +135,16 @@ impl GpuDqn {
         })
     }
     pub fn upload_batch(&self, batch: &TransitionBatch) -> Result<GpuDqnBatch> {
+        self.upload_batch_with_weights(batch, None)
+    }
+    /// Uploads active replay rows and optional importance weights together.
+    /// Weights must be finite, nonnegative `[capacity, 1]` values; inactive
+    /// capacity is ignored. Weights are frozen and retained for batch reuse.
+    pub fn upload_batch_with_weights(
+        &self,
+        batch: &TransitionBatch,
+        weights: Option<&Tensor>,
+    ) -> Result<GpuDqnBatch> {
         let n = batch.size;
         let matrix_valid =
             |t: &Tensor, cols| t.shape().len() == 2 && t.shape()[0] >= n && t.shape()[1] == cols;
@@ -172,7 +187,31 @@ impl GpuDqn {
             }
             .into());
         }
+        let weights = weights
+            .map(|weights| {
+                if !matrix_valid(weights, 1) {
+                    return Err(GpuDqnError::InvalidBatch(
+                        "importance weights must have shape [capacity, 1] with enough active rows",
+                    ));
+                }
+                let active = slice(weights)?;
+                if active
+                    .to_vec()
+                    .iter()
+                    .any(|value| !value.is_finite() || *value < 0.)
+                {
+                    return Err(GpuDqnError::InvalidBatch(
+                        "active importance weights must be finite and nonnegative",
+                    ));
+                }
+                Ok(active)
+            })
+            .transpose()?;
         Ok(GpuDqnBatch {
+            weights: weights
+                .as_ref()
+                .map(|weights| GpuVariable::new(&self.context, weights, false))
+                .transpose()?,
             states: GpuVariable::new(&self.context, &states, false)?,
             next_states: GpuVariable::new(&self.context, &next_states, false)?,
             rewards: GpuVariable::new(&self.context, &rewards, false)?,
@@ -224,10 +263,30 @@ impl GpuDqn {
     /// Uploads active CPU replay rows, then trains. Use train_device_batch to
     /// reuse an already uploaded batch without repeating those transfers.
     pub fn train_step(&mut self, batch: &TransitionBatch) -> Result<f32> {
-        let batch = self.upload_batch(batch)?;
-        self.train_device_batch(&batch)
+        self.train_step_with_weights(batch, None)
+            .map(|result| result.0)
+    }
+    /// Weighted MSE is mean(w * TD²), matching CPU DQN (no sum-of-weights
+    /// normalization). Returns absolute, unweighted, pre-update TD errors only
+    /// when weights are supplied. The caller updates its CPU replay priorities.
+    pub fn train_step_with_weights(
+        &mut self,
+        batch: &TransitionBatch,
+        weights: Option<&Tensor>,
+    ) -> Result<(f32, Option<Vec<f32>>)> {
+        let batch = self.upload_batch_with_weights(batch, weights)?;
+        self.train_device_batch_with_td_errors(&batch)
     }
     pub fn train_device_batch(&mut self, batch: &GpuDqnBatch) -> Result<f32> {
+        self.train_device_batch_with_td_errors(batch)
+            .map(|result| result.0)
+    }
+    /// Reuses an uploaded weighted or uniform batch. Scalar loss and optional
+    /// priority errors are checked before gradients, parameters or clocks change.
+    pub fn train_device_batch_with_td_errors(
+        &mut self,
+        batch: &GpuDqnBatch,
+    ) -> Result<(f32, Option<Vec<f32>>)> {
         if !rustforge_autograd::is_grad_enabled() {
             return Err(GpuDqnError::GradientsDisabled);
         }
@@ -240,7 +299,17 @@ impl GpuDqn {
             .q_net
             .forward(&batch.states)?
             .gather_actions(&batch.actions)?;
-        let loss = prediction.mse_loss(&self.td_targets(batch)?)?;
+        let target = self.td_targets(batch)?;
+        let (loss, td_errors) = if let Some(weights) = &batch.weights {
+            let diff = prediction.sub(&target)?;
+            let errors: Vec<f32> = diff.to_cpu()?.to_vec().into_iter().map(f32::abs).collect();
+            if errors.iter().any(|value| !value.is_finite()) {
+                return Err(GpuDqnError::NonFiniteTdErrors);
+            }
+            (diff.mul(&diff)?.mul(weights)?.mean()?, Some(errors))
+        } else {
+            (prediction.mse_loss(&target)?, None)
+        };
         let value = loss.to_cpu()?.item();
         if !value.is_finite() {
             return Err(GpuDqnError::NonFiniteLoss);
@@ -252,7 +321,7 @@ impl GpuDqn {
         if self.config.target_update_freq != 0 && next_step % self.config.target_update_freq == 0 {
             self.update_target()?;
         }
-        Ok(value)
+        Ok((value, td_errors))
     }
     /// Hard synchronization replaces frozen parameter snapshots without copies.
     /// Online updates allocate new buffers, so target values remain fixed between syncs.
@@ -312,9 +381,9 @@ fn validate_config(config: &DQNConfig) -> Result<()> {
             "DQN dimensions/lr must be positive; gamma must be finite and in [0, 1]",
         ));
     }
-    if config.use_per {
+    if config.use_per && config.per_beta_annealing_steps == 0 {
         return Err(GpuDqnError::InvalidConfig(
-            "GPU DQN currently supports uniform replay; prioritized replay is not enabled",
+            "prioritized replay beta annealing steps must be positive",
         ));
     }
     Ok(())
