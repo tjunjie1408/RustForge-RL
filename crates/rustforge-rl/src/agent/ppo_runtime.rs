@@ -13,7 +13,8 @@ use super::live_runtime::{
     progress_scalars, throughput, LiveHooks, RewardWindow, StepDecision, StepPosition,
 };
 use super::on_policy_runtime::{derive_seed, finite_values, EpisodeBoundary};
-use super::{PPOConfig, PPODiscrete, PPODiscreteConfig};
+use super::ppo_backend::PpoBackend;
+use super::{PPOConfig, PPODiscreteConfig, PpoRuntimeOptions};
 use crate::buffer::RolloutBuffer;
 use crate::env::{Environment, IntoTensorBuffer};
 use crate::runtime::event::MetricValue;
@@ -53,6 +54,7 @@ pub struct PpoDiscreteTrainerAdapter<E> {
     environment: String,
     seed: Option<u64>,
     run_id: String,
+    options: PpoRuntimeOptions,
 }
 
 impl<E> PpoDiscreteTrainerAdapter<E> {
@@ -73,7 +75,13 @@ impl<E> PpoDiscreteTrainerAdapter<E> {
             environment: environment.into(),
             seed,
             run_id: format!("ppo-discrete-{sequence}"),
+            options: PpoRuntimeOptions::default(),
         }
+    }
+    /// Construction and checkpoint I/O occur inside `run`, on the owning worker.
+    pub fn with_options(mut self, options: PpoRuntimeOptions) -> Self {
+        self.options = options;
+        self
     }
 }
 
@@ -107,6 +115,7 @@ where
             self.episodes,
             self.max_steps_per_episode,
             self.seed,
+            &self.options,
             &mut hooks,
         );
         hooks.flush_metrics();
@@ -144,12 +153,14 @@ struct EpisodeState {
     entropy: f32,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn train_ppo_discrete_core<E>(
     mut env: E,
     config: PPODiscreteConfig,
     episodes: usize,
     max_steps_per_episode: usize,
     seed: Option<u64>,
+    options: &PpoRuntimeOptions,
     hooks: &mut LiveHooks,
 ) -> Result<TrainingSummary, TrainerError>
 where
@@ -165,17 +176,25 @@ where
         });
     }
     let obs_dim = E::Obs::DIM;
-    let gamma = config.base.gamma;
-    let gae_lambda = config.base.gae_lambda;
-    let (mut agent, environment_seed, mut action_rng, mut shuffle_rng) = match seed {
+    options.validate()?;
+    let (environment_seed, mut action_rng, mut shuffle_rng) = match seed {
         Some(base_seed) => (
-            PPODiscrete::new_seeded(config, derive_seed(base_seed, 0)),
             Some(derive_seed(base_seed, 1)),
             Some(StdRng::seed_from_u64(derive_seed(base_seed, 2))),
             Some(StdRng::seed_from_u64(derive_seed(base_seed, 3))),
         ),
-        None => (PPODiscrete::new(config), None, None, None),
+        None => (None, None, None),
     };
+    let mut agent = PpoBackend::new(config, seed.map(|s| derive_seed(s, 0)), options)?;
+    if agent.config().base.obs_dim != obs_dim
+        || env.action_space() != crate::env::Space::Discrete(agent.config().num_actions)
+    {
+        return Err(TrainerError {
+            message: "PPO agent dimensions do not match the environment".into(),
+        });
+    }
+    let gamma = agent.config().base.gamma;
+    let gae_lambda = agent.config().base.gae_lambda;
     let mut rollout = RolloutBuffer::new(max_steps_per_episode, obs_dim);
     let mut global_step = 0usize;
     let mut completed_episodes = 0usize;
@@ -199,7 +218,7 @@ where
             let (action_index, old_log_probability, value) = match action_rng.as_mut() {
                 Some(rng) => agent.select_action_with_rng(&state_buf, rng),
                 None => agent.select_action(&state_buf),
-            };
+            }?;
             let action = E::Act::try_from(action_index).map_err(|error| TrainerError {
                 message: format!(
                     "PPO action index {action_index} was rejected by the environment: {error:?}"
@@ -243,8 +262,12 @@ where
                     }
                 }
             }
-            if let Some(bootstrap_value) = boundary.bootstrap_value(|| agent.value_of(&state_buf)) {
-                last_value = bootstrap_value;
+            if boundary != EpisodeBoundary::None {
+                last_value = if boundary == EpisodeBoundary::Terminated {
+                    0.
+                } else {
+                    agent.value_of(&state_buf)?
+                };
                 break;
             }
         }
@@ -256,7 +279,7 @@ where
         let losses = match shuffle_rng.as_mut() {
             Some(rng) => agent.train_on_batch_with_rng(&rollout.to_batch(), rng),
             None => agent.train_on_batch(&rollout.to_batch()),
-        };
+        }?;
         let completed_state = StepState {
             global_step: global_step as u64,
             episode: episode as u64,
@@ -291,6 +314,7 @@ where
         }
     }
 
+    agent.save(options)?;
     Ok(TrainingSummary::stopped(
         global_step as u64,
         completed_episodes as u64,

@@ -1,6 +1,5 @@
 //! REINFORCE adapter for the generic live-training runtime.
 
-use rustforge_autograd::no_grad;
 use std::convert::TryFrom;
 use std::fmt::Debug;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -14,7 +13,7 @@ use super::live_runtime::{
     progress_scalars, throughput, LiveHooks, RewardWindow, StepDecision, StepPosition,
 };
 use super::on_policy_runtime::{derive_seed, finite_values, EpisodeBoundary};
-use super::{REINFORCEConfig, REINFORCE};
+use super::{reinforce_backend::ReinforceBackend, REINFORCEConfig, ReinforceRuntimeOptions};
 use crate::buffer::RolloutBuffer;
 use crate::env::{Environment, IntoTensorBuffer};
 use crate::runtime::event::MetricValue;
@@ -49,6 +48,7 @@ pub struct ReinforceTrainerAdapter<E> {
     environment: String,
     seed: Option<u64>,
     run_id: String,
+    options: ReinforceRuntimeOptions,
 }
 
 impl<E> ReinforceTrainerAdapter<E> {
@@ -69,7 +69,12 @@ impl<E> ReinforceTrainerAdapter<E> {
             environment: environment.into(),
             seed,
             run_id: format!("reinforce-{sequence}"),
+            options: ReinforceRuntimeOptions::default(),
         }
+    }
+    pub fn with_options(mut self, options: ReinforceRuntimeOptions) -> Self {
+        self.options = options;
+        self
     }
 }
 
@@ -103,6 +108,7 @@ where
             self.episodes,
             self.max_steps_per_episode,
             self.seed,
+            &self.options,
             &mut hooks,
         );
         hooks.flush_metrics();
@@ -144,6 +150,7 @@ fn train_reinforce_core<E>(
     episodes: usize,
     max_steps_per_episode: usize,
     seed: Option<u64>,
+    options: &ReinforceRuntimeOptions,
     hooks: &mut LiveHooks,
 ) -> Result<TrainingSummary, TrainerError>
 where
@@ -158,24 +165,32 @@ where
                 .into(),
         });
     }
+    options.validate()?;
     let obs_dim = E::Obs::DIM;
-    if config.obs_dim != obs_dim {
+    let check_spaces = |config: &REINFORCEConfig| -> Result<(), TrainerError> {
+        if config.obs_dim != obs_dim {
+            return Err(TrainerError {message: format!("REINFORCE config observation dimension {} does not match environment observation dimension {obs_dim}", config.obs_dim)});
+        }
+        if env.action_space() != crate::env::Space::discrete(config.num_actions) {
+            return Err(TrainerError {
+                message: "REINFORCE configuration does not match environment action count".into(),
+            });
+        }
+        Ok(())
+    };
+    if options.resume.is_none() {
+        check_spaces(&config)?;
+    }
+    let mut agent = ReinforceBackend::new(config, seed.map(|s| derive_seed(s, 0)), options)?;
+    check_spaces(agent.config())?;
+    if max_steps_per_episode.checked_mul(obs_dim).is_none() {
         return Err(TrainerError {
-            message: format!(
-                "REINFORCE config observation dimension {} does not match environment observation dimension {obs_dim}",
-                config.obs_dim
-            ),
+            message: "REINFORCE rollout size overflow".into(),
         });
     }
-    let gamma = config.gamma;
-    let (mut agent, environment_seed, mut action_rng) = match seed {
-        Some(base_seed) => (
-            REINFORCE::new_seeded(config, derive_seed(base_seed, 0)),
-            Some(derive_seed(base_seed, 1)),
-            Some(StdRng::seed_from_u64(derive_seed(base_seed, 2))),
-        ),
-        None => (REINFORCE::new(config), None, None),
-    };
+    let gamma = agent.config().gamma;
+    let environment_seed = seed.map(|s| derive_seed(s, 1));
+    let mut action_rng = seed.map(|s| StdRng::seed_from_u64(derive_seed(s, 2)));
     let mut rollout = RolloutBuffer::new(max_steps_per_episode, obs_dim);
     let mut global_step = 0usize;
     let mut completed_episodes = 0usize;
@@ -195,11 +210,20 @@ where
         let mut force_after_episode = false;
 
         for step_index in 0..max_steps_per_episode {
-            let logits = no_grad(|| agent.forward(&state_buf));
+            if state_buf.iter().any(|v| !v.is_finite()) {
+                return Err(TrainerError {
+                    message: "REINFORCE observation must be finite".into(),
+                });
+            }
             let action_index = match action_rng.as_mut() {
-                Some(rng) => REINFORCE::sample_action(&logits.data(), rng),
-                None => REINFORCE::sample_action_default(&logits.data()),
+                Some(rng) => agent.select_action_with_rng(&state_buf, rng)?,
+                None => agent.select_action(&state_buf)?,
             };
+            if action_index >= agent.config().num_actions {
+                return Err(TrainerError {
+                    message: "REINFORCE sampled action is out of range".into(),
+                });
+            }
             let action = E::Act::try_from(action_index).map_err(|error| TrainerError {
                 message: format!(
                     "REINFORCE action index {action_index} was rejected by the environment: {error:?}"
@@ -210,6 +234,14 @@ where
             let boundary = EpisodeBoundary::classify(terminated, truncated, step_limit);
             let mut next_state_buf = vec![0.0; obs_dim];
             next_state.write_to_buffer(&mut next_state_buf);
+            if !reward.is_finite()
+                || next_state_buf.iter().any(|v| !v.is_finite())
+                || !(episode_reward + reward).is_finite()
+            {
+                return Err(TrainerError {
+                    message: "REINFORCE reward and next observation must be finite".into(),
+                });
+            }
             rollout.push(&state_buf, action_index, reward, 0.0, boundary.done_mask());
             state_buf = next_state_buf;
             episode_reward += reward;
@@ -245,7 +277,13 @@ where
             continue;
         }
         rollout.compute_returns_and_advantages(gamma, 1.0, 0.0);
-        let policy_loss = agent.train_on_rollout(&rollout.to_batch());
+        let batch = rollout.to_batch();
+        if batch.advantages.to_vec().iter().any(|v| !v.is_finite()) {
+            return Err(TrainerError {
+                message: "REINFORCE Monte Carlo returns must be finite".into(),
+            });
+        }
+        let policy_loss = agent.train_on_rollout(&batch)?;
         let completed_state = StepState {
             global_step: global_step as u64,
             episode: episode as u64,
@@ -278,6 +316,7 @@ where
         }
     }
 
+    agent.save(options)?;
     Ok(TrainingSummary::stopped(
         global_step as u64,
         completed_episodes as u64,

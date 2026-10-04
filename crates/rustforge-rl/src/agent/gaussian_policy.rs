@@ -92,6 +92,24 @@ impl GaussianPolicyNet {
         }
     }
 
+    /// Reproducible initialization: trunk seed offsets 0/1, mean/std offsets 2/3.
+    pub fn new_seeded(obs_dim: usize, hidden_dim: usize, act_dim: usize, seed: u64) -> Self {
+        Self {
+            trunk: Sequential::new(vec![
+                Box::new(Linear::new_seeded(obs_dim, hidden_dim, seed)),
+                Box::new(ReLU),
+                Box::new(Linear::new_seeded(
+                    hidden_dim,
+                    hidden_dim,
+                    seed.wrapping_add(1),
+                )),
+                Box::new(ReLU),
+            ]),
+            mean_head: Linear::new_seeded(hidden_dim, act_dim, seed.wrapping_add(2)),
+            log_std_head: Linear::new_seeded(hidden_dim, act_dim, seed.wrapping_add(3)),
+        }
+    }
+
     /// Forward pass: returns (mean, clamped_log_std).
     ///
     /// - `mean`: `[batch, act_dim]` — unbounded mean.
@@ -176,6 +194,37 @@ impl GaussianPolicy {
         }
     }
 
+    /// Seeded counterpart with the same action scaling and parameter order.
+    pub fn new_seeded(
+        obs_dim: usize,
+        hidden_dim: usize,
+        act_dim: usize,
+        action_low: &[f32],
+        action_high: &[f32],
+        seed: u64,
+    ) -> Self {
+        assert_eq!(action_low.len(), act_dim);
+        assert_eq!(action_high.len(), act_dim);
+
+        let scale: Vec<f32> = action_low
+            .iter()
+            .zip(action_high.iter())
+            .map(|(l, h)| (h - l) / 2.0)
+            .collect();
+        let bias: Vec<f32> = action_low
+            .iter()
+            .zip(action_high.iter())
+            .map(|(l, h)| (h + l) / 2.0)
+            .collect();
+
+        GaussianPolicy {
+            net: GaussianPolicyNet::new_seeded(obs_dim, hidden_dim, act_dim, seed),
+            scale,
+            bias,
+            act_dim,
+        }
+    }
+
     /// Samples an action using reparameterization trick + tanh squashing.
     ///
     /// Returns `(action_variable, log_prob_variable)` where:
@@ -184,18 +233,27 @@ impl GaussianPolicy {
     ///
     /// Gradient flows through both outputs (reparameterization trick).
     pub fn sample(&self, state: &Variable) -> (Variable, Variable) {
-        let (mean, log_std) = self.net.forward(state);
-        let std = log_std.exp();
-
-        let shape = mean.shape();
-        let numel: usize = shape.iter().product();
-
-        // ε ~ N(0, I)
-        let mut rng = rand::thread_rng();
-        let noise_data: Vec<f32> = (0..numel)
-            .map(|_| sample_standard_normal(&mut rng))
+        self.sample_with_rng(state, &mut rand::thread_rng())
+    }
+    /// Uses the caller's standard-normal noise stream (two draws per action).
+    pub fn sample_with_rng<R: Rng + ?Sized>(
+        &self,
+        state: &Variable,
+        rng: &mut R,
+    ) -> (Variable, Variable) {
+        let shape = [state.shape()[0], self.act_dim];
+        let noise_data = (0..shape.iter().product())
+            .map(|_| sample_standard_normal(rng))
             .collect();
-        let noise = Variable::from_tensor(Tensor::from_vec(noise_data, &shape));
+        self.sample_with_noise(state, &Tensor::from_vec(noise_data, &shape))
+    }
+
+    /// Reparameterized sample with detached caller-supplied standard-normal noise.
+    pub fn sample_with_noise(&self, state: &Variable, noise: &Tensor) -> (Variable, Variable) {
+        let (mean, log_std) = self.net.forward(state);
+        assert_eq!(noise.shape(), mean.shape());
+        let std = log_std.exp();
+        let noise = Variable::from_tensor(noise.clone());
 
         // u = μ + ε · σ  (reparameterization)
         let u = &mean + &(&noise * &std);
@@ -252,7 +310,9 @@ impl GaussianPolicy {
             .collect();
         drop(normalized_data);
 
-        let u_data: Vec<f32> = clamped.iter().map(|x| x.atanh()).collect();
+        // Use f64 for the host inverse: some f32 atanh implementations lose
+        // precision near the negative endpoint and produce asymmetric densities.
+        let u_data: Vec<f32> = clamped.iter().map(|x| (*x as f64).atanh() as f32).collect();
         let u = Variable::from_tensor(Tensor::from_vec(u_data, &[batch, self.act_dim]));
 
         let tanh_u_data: Vec<f32> = clamped; // tanh(atanh(x)) = x (clamped normalized)
@@ -359,7 +419,7 @@ impl GaussianPolicy {
 }
 
 /// Samples from N(0,1) using Box-Muller transform.
-fn sample_standard_normal<R: Rng>(rng: &mut R) -> f32 {
+pub(crate) fn sample_standard_normal<R: Rng + ?Sized>(rng: &mut R) -> f32 {
     let u1: f32 = rng.gen_range(1e-7..1.0);
     let u2: f32 = rng.gen_range(0.0..std::f32::consts::TAU);
     (-2.0 * u1.ln()).sqrt() * u2.cos()
@@ -525,5 +585,23 @@ mod tests {
             has_grad,
             "No gradients flowed through reparameterized sampling"
         );
+    }
+    #[test]
+    fn stored_action_endpoint_density_is_symmetric_and_matches_f64_reference() {
+        let policy = GaussianPolicy::new(1, 2, 1, &[-1.], &[1.]);
+        for parameter in policy.parameters() {
+            parameter.set_data(Tensor::zeros(&parameter.shape()));
+        }
+        let state = Variable::from_tensor(Tensor::ones(&[2, 1]));
+        let action = Variable::from_tensor(Tensor::from_vec(vec![-1., 1.], &[2, 1]));
+        let actual = policy.log_prob_from_action(&state, &action).data().to_vec();
+        let t = (1f32 - ATANH_EPS) as f64;
+        let u = t.atanh();
+        let expected =
+            -0.5 * u * u - 0.5 * (2. * std::f64::consts::PI).ln() - (1. - t * t + 1e-6).ln();
+        approx::assert_abs_diff_eq!(actual[0], actual[1], epsilon = 1e-6);
+        for value in actual {
+            approx::assert_abs_diff_eq!(value as f64, expected, epsilon = 2e-5);
+        }
     }
 }

@@ -145,5 +145,81 @@ jobs:
         run: cargo run --locked -p rustforge-rl --features gpu --example gpu_dqn_checkpoint -- "$RUNNER_TEMP/gpu-dqn-resume.chk"
       - name: Verify GPU runtime worker ownership, resume and controls
         run: cargo test --locked -p rustforge-rl --features gpu --test gpu_runtime -- --include-ignored
-      - name: Verify GPU CLI checkpoint routing and CSV compatibility
+      - name: Verify GPU CLI checkpoint routing and CSV/JSONL compatibility
         run: cargo test --locked -p rustforge-cli --features gpu --test device_selection -- --include-ignored
+      - name: Verify GPU PPO categorical losses and gradients
+        run: cargo test --locked -p rustforge-rl --features gpu --test gpu_ppo_loss -- --include-ignored
+      - name: Run fixed GPU PPO objective example
+        run: cargo run --locked -p rustforge-rl --features gpu --example gpu_ppo_objective
+      - name: GPU PPO agent and environment rollouts
+        run: cargo test --locked -p rustforge-rl --features gpu --test gpu_ppo_agent -- --include-ignored
+      - name: Verify GPU PPO checkpoint codec without adapter allocation
+        run: cargo test --locked -p rustforge-rl --features gpu --lib gpu_ppo::agent::checkpoint
+      - name: GPU PPO checkpoint and runtime resume/controls
+        run: cargo test --locked -p rustforge-rl --features gpu --test gpu_ppo_checkpoint --test gpu_ppo_runtime -- --include-ignored
+      - name: GPU PPO environment learning example
+        run: cargo run --locked -p rustforge-rl --features gpu --example gpu_ppo_training
+      - name: Verify Gaussian operators and continuous PPO objective parity
+        run: cargo test --locked -p rustforge-rl --features gpu --test gpu_continuous_ppo -- --include-ignored
+      - name: Optimize fixed continuous GPU PPO minibatch
+        run: cargo run --locked -p rustforge-rl --features gpu --example gpu_continuous_ppo_objective
+      - name: Verify continuous GPU PPO agent sampling, rollout and updates
+        run: cargo test --locked -p rustforge-rl --features gpu --test gpu_continuous_agent -- --include-ignored
+      - name: Learn continuous target action from environment rollouts
+        run: cargo run --locked -p rustforge-rl --features gpu --example gpu_continuous_ppo_training
+      - name: Verify continuous PPO checkpoint codec without adapter allocation
+        run: cargo test --locked -p rustforge-rl --features gpu --lib gpu_ppo::continuous_agent::checkpoint
+      - name: Verify continuous GPU PPO checkpoint and runtime resume/controls
+        run: cargo test --locked -p rustforge-rl --features gpu --test gpu_continuous_checkpoint --test gpu_continuous_runtime -- --include-ignored
+      - name: Verify GPU A2C objectives, gradients and actual CPU Adam parity
+        run: cargo test --locked -p rustforge-rl --features gpu --test gpu_a2c_loss -- --include-ignored
+      - name: Optimize fixed GPU A2C objective
+        run: cargo run --locked -p rustforge-rl --features gpu --example gpu_a2c_objective
+      - name: Verify GPU A2C agent sampling, rollout/GAE and guarded updates
+        run: cargo test --locked -p rustforge-rl --features gpu --test gpu_a2c_agent -- --include-ignored
+      - name: Learn rewarding categorical action with GPU A2C
+        run: cargo run --locked -p rustforge-rl --features gpu --example gpu_a2c_training
+      - name: Verify GPU A2C checkpoint codec without adapter allocation
+        run: cargo test --locked -p rustforge-rl --features gpu --lib gpu_a2c::agent::checkpoint
+      - name: Verify GPU A2C checkpoint/runtime resume and control handling
+        run: cargo test --locked -p rustforge-rl --features gpu --test gpu_a2c_checkpoint --test gpu_a2c_runtime -- --include-ignored
+      - name: Verify GPU REINFORCE objective and actual CPU Adam parity
+        run: cargo test --locked -p rustforge-rl --features gpu --test gpu_reinforce_loss -- --include-ignored
+      - name: Optimize fixed GPU REINFORCE objective
+        run: cargo run --locked -p rustforge-rl --features gpu --example gpu_reinforce_objective
+      - name: Verify GPU REINFORCE agent Monte Carlo rollouts and guarded updates
+        run: cargo test --locked -p rustforge-rl --features gpu --test gpu_reinforce_agent -- --include-ignored
+      - name: Learn rewarding action from GPU REINFORCE rollouts
+        run: cargo run --locked -p rustforge-rl --features gpu --example gpu_reinforce_training
+      - name: Verify GPU REINFORCE checkpoint codec without adapter allocation
+        run: cargo test --locked -p rustforge-rl --features gpu --lib gpu_reinforce::agent::checkpoint
+      - name: Verify GPU REINFORCE checkpoint/runtime continuation and controls
+        run: cargo test --locked -p rustforge-rl --features gpu --test gpu_reinforce_checkpoint --test gpu_reinforce_runtime -- --include-ignored
+      - name: Verify GPU TD3 objectives, action smoothing and CPU Adam parity
+        run: cargo test --locked -p rustforge-rl --features gpu --test gpu_td3_loss -- --include-ignored
+      - name: Optimize fixed GPU TD3 twin-critic objective
+        run: cargo run --locked -p rustforge-rl --features gpu --example gpu_td3_objective
+      - name: Verify GPU TD3 replay, seeded CPU parity and delayed updates
+        run: cargo test --locked -p rustforge-rl --features gpu --test gpu_td3_agent -- --include-ignored
+      - name: Learn fresh continuous episodes with GPU TD3
+        run: cargo run --locked -p rustforge-rl --features gpu --example gpu_td3_training
+      - name: Validate GPU TD3 checkpoint format and host metadata
+        run: cargo test --locked -p rustforge-rl --features gpu --lib gpu_td3::agent::checkpoint
+      - name: Verify GPU TD3 checkpoint continuation and runtime controls
+        run: cargo test --locked -p rustforge-rl --features gpu --test gpu_td3_checkpoint --test gpu_td3_runtime -- --include-ignored
+      - name: Verify GPU TD3 Pendulum CLI resume
+        run: cargo test --locked -p rustforge-cli --features gpu --test device_selection gpu_td3_pendulum_cli -- --include-ignored
+      - name: Verify GPU SAC sampling, objectives and CPU Adam parity
+        run: cargo test --locked -p rustforge-rl --features gpu --test gpu_sac_loss -- --include-ignored
+      - name: Optimize fixed GPU SAC twin-critic objective
+        run: cargo run --locked -p rustforge-rl --features gpu --example gpu_sac_objective
+      - name: Verify complete GPU SAC updates, seeded CPU parity and rollback
+        run: cargo test --locked -p rustforge-rl --features gpu --test gpu_sac_agent -- --include-ignored
+      - name: Learn continuous actions with GPU SAC and temperature tuning
+        run: cargo run --locked -p rustforge-rl --features gpu --example gpu_sac_training
+      - name: Verify GPU SAC checkpoint codec and host validation
+        run: cargo test --locked -p rustforge-rl --features gpu --lib gpu_sac::agent::checkpoint
+      - name: Verify GPU SAC checkpoint continuation and runtime controls
+        run: cargo test --locked -p rustforge-rl --features gpu --test gpu_sac_checkpoint --test gpu_sac_runtime -- --include-ignored
+      - name: Verify GPU SAC Pendulum CLI resume and temperature clock
+        run: cargo test --locked -p rustforge-cli --features gpu --test device_selection gpu_sac_pendulum_cli -- --include-ignored

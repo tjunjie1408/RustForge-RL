@@ -20,11 +20,12 @@ use rustforge_tensor::Tensor;
 
 #[test]
 fn test_xor_training() {
+    // Fixed initialization makes the convergence assertion reproducible.
     // Model: Linear(2, 16) → ReLU → Linear(16, 1) → Sigmoid
     let model = Sequential::new(vec![
-        Box::new(Linear::new(2, 16)),
+        Box::new(Linear::new_seeded(2, 16, 42)),
         Box::new(ReLU),
-        Box::new(Linear::new(16, 1)),
+        Box::new(Linear::new_seeded(16, 1, 43)),
         Box::new(Sigmoid),
     ]);
 

@@ -291,7 +291,7 @@ rustforge monitor logs/progress.csv   # rolling mean reward, loss, exploration/e
 | **Phase 5** | Python Bindings (PyO3) | ✅ Complete |
 | **Phase 5** | Terminal Training Console (`rustforge run` / `monitor`) | ✅ Complete |
 | **Phase 5** | Benchmarks vs SB3 | ✅ Complete (DQN/CartPole; ~22× faster) |
-| **Phase 5** | GPU Support (wgpu) | 🚧 Device tensors, autograd, neural-network modules and GPU DQN/Double DQN and checkpoint/resume and CLI/runtime device selection implemented; hardware validation next |
+| **Phase 5** | GPU Support (wgpu) | 🚧 Device tensors, autograd, neural-network modules and GPU DQN/Double DQN and checkpoint/resume, CLI/runtime device selection, prioritized replay and discrete PPO rollout/GAE training with CLI/runtime and checkpoints implemented; continuous Gaussian/PPO objectives, seeded continuous rollout/GAE agent training and Pendulum CLI/runtime/checkpoints implemented; GPU A2C objectives implemented; GPU A2C rollout/GAE agent training implemented; A2C CartPole runtime/CLI and checkpoints implemented; REINFORCE objective foundation implemented; REINFORCE Monte Carlo agent training implemented; REINFORCE CartPole runtime/CLI and checkpoints implemented; TD3 objective foundations implemented; TD3 owned actor/twin-critic replay training with seeded noise, delayed updates and Polyak targets implemented; TD3 Pendulum runtime/CLI and six-network/two-optimizer checkpoints implemented; SAC GPU sampling/critic/actor/temperature objectives implemented; SAC owned actor/twin-critic replay training with three Adam optimizers, learned temperature and transactional updates implemented; SAC Pendulum runtime/CLI and five-network/three-optimizer checkpoints implemented; hardware validation pending |
 
 ### GPU development
 
@@ -389,16 +389,316 @@ cargo run --locked -p rustforge-cli --features gpu -- train dqn --device gpu --e
 cargo run --locked -p rustforge-cli --features gpu -- run dqn --device gpu --checkpoint /tmp/gpu-live.chk
 ```
 
-CPU remains the default. Unsupported GPU algorithms, prioritized replay and
-builds without GPU support fail explicitly. Checkpoint saves atomically replace
+CPU remains the default. Unsupported GPU algorithms and builds without GPU support fail explicitly. Checkpoint saves atomically replace
 the requested file after completion or controlled stop. Resume retains the saved
 agent configuration and update cadence, checks the selected environment's
 observation/action dimensions, and starts new replay and exploration state.
 The live display records the selected backend; its checkpoint key remains
 unsupported. Keep checkpoint files outside a live run's output directory.
 The process compute device and pipelines are cached; distinct contexts retain
-separate tensor ownership scopes. Prioritized GPU replay and physical hardware
-performance validation remain upcoming work.
+separate tensor ownership scopes. GPU prioritized experience replay is enabled
+with `--use-per` in both CLI modes:
+
+```bash
+cargo run --release --locked -p rustforge-cli --features gpu -- train dqn --device gpu --use-per --env gridworld --episodes 20 --no-log --checkpoint gpu-per.chk
+cargo run --release --locked -p rustforge-cli --features gpu -- train dqn --device gpu --env gridworld --episodes 20 --no-log --resume gpu-per.chk --checkpoint gpu-per.chk
+cargo test --locked -p rustforge-rl --features gpu --test gpu_dqn --test gpu_checkpoint --test gpu_runtime -- --include-ignored
+```
+
+The saved PER mode and beta schedule are restored without requiring `--use-per`
+on resume. Replay priorities and sampler RNG restart with the new replay buffer.
+GPU training returns unweighted absolute TD errors for CPU priority updates,
+using the same importance-weighted mean squared loss as CPU DQN. Library users
+can call `train_step_with_weights` or upload a reusable batch through
+`upload_batch_with_weights`. Physical hardware performance validation remains
+upcoming work.
+The categorical GPU PPO foundation provides stable log-softmax/softmax,
+exponentials, entropy and clipped-policy/value losses with GPU gradients. A fixed
+minibatch example verifies actor/critic optimization:
+
+```bash
+cargo run --locked -p rustforge-rl --features gpu --example gpu_ppo_objective
+cargo test --locked -p rustforge-rl --features gpu --test gpu_ppo_loss -- --include-ignored
+```
+
+Library callers use `agent::gpu_ppo::discrete_ppo_loss` and call
+`checked_metrics()` before backward/optimizer updates to reject nonfinite loss
+or overflowing importance ratios. Old log probabilities, advantages and returns
+are automatically detached. `agent::gpu_ppo::GpuPpoDiscrete` adds a seeded shared
+actor/critic, reproducible categorical sampling, per-episode CPU rollout/GAE,
+shuffled partial minibatches and resident Adam. A seeded environment example
+learns a rewarding action from a 4.7% initial probability to 99.6%:
+
+```bash
+cargo run --locked -p rustforge-rl --features gpu --example gpu_ppo_training
+cargo test --locked -p rustforge-rl --features gpu --test gpu_ppo_agent -- --include-ignored
+```
+
+GPU PPO Discrete supports both headless `train` and live `run` on CartPole:
+
+```bash
+cargo run --locked -p rustforge-cli --features gpu -- train ppo --device gpu --episodes 10 --checkpoint target/ppo.chk
+cargo run --locked -p rustforge-cli --features gpu -- train ppo --device gpu --episodes 10 --resume target/ppo.chk --checkpoint target/ppo.chk
+cargo run --locked -p rustforge-cli --features gpu -- run ppo --device gpu --episodes 10 --resume target/ppo.chk --checkpoint target/ppo.chk
+```
+
+PPO checkpoints save actor/critic parameters, Adam moments, configuration and
+update count in a bounded, versioned format separate from DQN. Saved configuration
+overrides defaults on resume. Environment, rollout, random streams, metrics and run
+counters restart; this restores training state without reproducing an entire
+experiment. Completion and controlled stops save atomically, while failed runs
+leave the checkpoint unchanged. Force-stop during an episode discards its partial
+rollout; pause/resume retains it. Interactive checkpoint requests remain unsupported.
+`--use-per` is DQN only. GPU routes require rebuilding with `--features gpu`.
+
+Continuous-policy GPU foundations provide stable logarithm/tanh and gradients,
+action-column reductions, and tanh-squashed diagonal Gaussian densities with
+action scaling. `agent::gpu_gaussian::GpuGaussianTransform` supports detached
+stored actions and reparameterized sampling from caller-supplied noise.
+`agent::gpu_ppo::continuous_ppo_loss` builds separate clipped policy and value
+objectives, matching CPU continuous PPO. Call `checked_metrics()` before backward
+or optimizer updates. Base Gaussian entropy is diagnostic; it is not the entropy
+of the squashed distribution, and no entropy bonus is added.
+
+```bash
+cargo run --locked -p rustforge-rl --features gpu --example gpu_continuous_ppo_objective
+cargo test --locked -p rustforge-rl --features gpu --test gpu_continuous_ppo -- --include-ignored
+```
+
+`agent::gpu_ppo::GpuPpoContinuous` adds seeded Gaussian actor/value networks,
+caller-controlled sampling and shuffle RNGs, CPU continuous rollout/GAE, partial
+minibatches and separate device-resident Adam optimizers. Rollout collection uses
+an action-conversion callback for the environment's action type. True terminals
+bootstrap zero; truncation and step limits bootstrap the final observation.
+
+```bash
+cargo run --locked -p rustforge-rl --features gpu --example gpu_continuous_ppo_training
+cargo test --locked -p rustforge-rl --features gpu --test gpu_continuous_agent -- --include-ignored
+```
+
+The seeded target-action environment example learns from fresh rollouts.
+`PpoContinuousTrainerAdapter` also supports worker-owned CPU/GPU PPO on Pendulum
+through both headless and live CLI routes:
+
+```bash
+cargo run --locked -p rustforge-cli --features gpu -- train ppo --env pendulum --device gpu --episodes 1 --checkpoint target/pendulum-ppo.chk --no-log
+cargo run --locked -p rustforge-cli --features gpu -- train ppo --env pendulum --device gpu --episodes 1 --resume target/pendulum-ppo.chk --checkpoint target/pendulum-ppo.chk --no-log
+cargo run --locked -p rustforge-cli --features gpu -- run ppo --env pendulum --device gpu --episodes 10
+```
+
+Continuous checkpoints have their own `RFGPUPC0` version-1 format, holding action
+bounds, actor/critic parameters, both Adam states and separate update counters.
+Saved configuration overrides requested defaults and must match the environment.
+Environment state, rollout, run counters and sampling/shuffle streams start a new
+run. Controlled stops save completed training; a forced partial episode is
+discarded. Interactive checkpoint requests remain unsupported. CPU checkpoints
+are not supported. Continuous JSONL metrics report policy/value loss, episode and
+moving-average reward, rollout size and throughput; they omit categorical entropy.
+Pendulum runs verify routing and finite training, without a convergence claim.
+Physical GPU validation remains deferred.
+The CPU Gaussian stored-action inverse now uses `f64` arithmetic before returning
+`f32`, avoiding asymmetric endpoint densities on affected Rust builds.
+
+GPU A2C objectives are available through `agent::gpu_a2c::a2c_loss` and the
+shared seeded `GpuA2cNet`. The combined actor/value/categorical-entropy loss
+matches CPU A2C, using detached, unnormalized advantages and fixed returns.
+`checked_metrics()` validates frozen inputs and objective scalars; check gradients
+before applying Adam. The fixed-batch example checks gradients and optimizes
+resident parameters without environment rollouts:
+
+```bash
+cargo run --locked -p rustforge-rl --features gpu --example gpu_a2c_objective
+cargo test --locked -p rustforge-rl --features gpu --test gpu_a2c_loss -- --include-ignored
+```
+
+`agent::gpu_a2c::GpuA2c` owns the seeded shared network and resident Adam state.
+It samples categorical actions with a caller-owned RNG, collects episode-local
+CPU rollout/GAE, and applies one combined update over each rollout's active rows.
+True terminals bootstrap zero; truncation and step limits use the final value.
+Training ignores unused capacity and old log probabilities, preserving raw
+advantages. Loss, gradient and squared-gradient guards run before Adam.
+
+```bash
+cargo run --locked -p rustforge-rl --features gpu --example gpu_a2c_training
+cargo test --locked -p rustforge-rl --features gpu --test gpu_a2c_agent -- --include-ignored
+```
+
+The seeded bandit example learns from fresh rollouts, raising the rewarding
+action's probability from 0.046995 to 0.998541 in 60 updates. GPU A2C also supports
+CartPole headless/live training with a worker-owned agent:
+
+```bash
+cargo run --locked -p rustforge-cli --features gpu -- train a2c --device gpu --episodes 1 --checkpoint target/a2c.chk --no-log
+cargo run --locked -p rustforge-cli --features gpu -- train a2c --device gpu --episodes 1 --resume target/a2c.chk --checkpoint target/a2c.chk --no-log
+cargo run --locked -p rustforge-cli --features gpu -- run a2c --device gpu --episodes 10
+```
+
+Version-1 `RFGPUA2C` checkpoints atomically save configuration, the shared network,
+Adam moments and successful-update counter. Resume uses the saved configuration
+and starts fresh environment, rollout and random streams. CPU checkpoint flags
+and interactive checkpoint requests are unsupported. JSONL metrics include reward,
+policy/value/total loss, categorical entropy, rollout size and throughput.
+Pause/resume retains the current rollout; graceful stop finishes it, while forced
+stop discards a partial rollout and saves the last completed update. Physical GPU
+validation remains deferred.
+
+GPU REINFORCE foundations are available through
+`agent::gpu_reinforce::{GpuReinforceNet, reinforce_loss}`. The seeded policy matches
+CPU REINFORCE's Linear/ReLU/Linear architecture. Its loss uses detached Monte Carlo
+advantages with an optional batch-mean baseline, without variance normalization.
+Mean subtraction stays on device. `checked_loss()` validates inputs, centered
+advantages and the scalar loss before backward; check gradients and their squares
+before Adam. Owned rollout training and CartPole runtime/CLI/checkpoints are
+available as described below.
+
+```bash
+cargo test --locked -p rustforge-rl --features gpu --test gpu_reinforce_loss -- --include-ignored
+cargo run --locked -p rustforge-rl --features gpu --example gpu_reinforce_objective
+```
+
+The fixed objective example reduces loss from 0.774196 to 0.000944 in 80 updates.
+This validates objective optimization on llvmpipe; physical GPU tests remain deferred.
+
+`agent::gpu_reinforce::GpuReinforce` owns the policy, resident Adam and successful
+update counter. It samples with a caller-owned RNG and collects episode-local
+CPU Monte Carlo returns, using zero final bootstrap at termination, truncation
+and step limits. Training applies one update over active rows; mean-baseline
+subtraction excludes unused capacity. Returns and old log probabilities are unused
+by the loss. Finite input/loss/gradient/squared-gradient checks precede Adam.
+
+```bash
+cargo test --locked -p rustforge-rl --features gpu --test gpu_reinforce_agent -- --include-ignored
+cargo run --locked -p rustforge-rl --features gpu --example gpu_reinforce_training
+```
+
+The seeded bandit example raises the rewarding action's probability from 0.046995
+to 0.999581 in 60 fresh rollout updates with the mean baseline enabled.
+
+GPU REINFORCE also supports CartPole headless/live training:
+
+```bash
+cargo run --locked -p rustforge-cli --features gpu -- train reinforce --device gpu --episodes 1 --checkpoint target/reinforce.chk --no-log
+cargo run --locked -p rustforge-cli --features gpu -- train reinforce --device gpu --episodes 1 --resume target/reinforce.chk --checkpoint target/reinforce.chk --no-log
+cargo run --locked -p rustforge-cli --features gpu -- run reinforce --device gpu --episodes 10
+```
+
+Version-1 `RFGPUREI` checkpoints atomically save the policy, Adam moments,
+configuration (including the mean-baseline flag) and update counter. Resume uses
+saved configuration with fresh environment, rollout and action RNG streams.
+Pause retains the rollout; graceful stop completes it, while forced stop discards
+a partial rollout and saves completed updates. Runtime errors preserve the prior
+checkpoint. CPU checkpoint flags and interactive checkpoint requests are unsupported.
+The five-metric JSONL schema reports episode/moving-average reward, policy loss,
+rollout size and throughput. Physical GPU validation remains deferred.
+
+GPU TD3 objective foundations are available through `agent::gpu_td3`:
+`td3_critic_loss` uses detached twin-target Bellman estimates and summed critic MSE;
+`td3_actor_loss` maximizes Q1. `GpuTd3ActionTransform` preserves actor gradients
+through action-bound scaling and detaches target smoothing, clipping supplied noise
+in normalized space before scaling. Construction stays on device; explicit checks
+validate shapes, ownership, masks and finite raw/intermediate values before backward.
+The owned `GpuTd3` agent checks gradients and their squares before Adam. It owns
+a seeded actor, twin critics, frozen targets and separate resident optimizers,
+with delayed actor updates and Polyak synchronization. Continuous replay uploads
+only active rows; failed updates preserve parameters, optimizer state and clocks.
+Caller-owned RNGs control exploration, target smoothing and replay sampling.
+`train_step_with_target_noise` accepts pre-scaled noise in normalized action units;
+the objective-level smoothing helper accepts standard-normal samples. CPU TD3
+adds seeded construction and caller-RNG hooks while retaining its default math.
+Pendulum runtime/CLI and checkpoints are available with GPU TD3.
+
+```bash
+cargo test --locked -p rustforge-rl --features gpu --test gpu_td3_loss -- --include-ignored
+cargo run --locked -p rustforge-rl --features gpu --example gpu_td3_objective
+cargo test --locked -p rustforge-rl --features gpu --test gpu_td3_agent -- --include-ignored
+cargo run --locked -p rustforge-rl --features gpu --example gpu_td3_training
+```
+
+The fixed twin-critic example reduces loss from 6.055205 to 3.031658480e-9 in 200
+Adam updates on llvmpipe. This validates objective optimization without environment
+learning or physical GPU performance claims. The fresh continuous training example
+collects 600 terminal episodes, performs 536 critic/268 actor updates and reduces
+deterministic target cost from 0.291425 to 0.000515 on llvmpipe. Physical GPU
+validation remains deferred.
+
+GPU TD3 supports Pendulum headless/live training (CPU remains the default):
+
+```bash
+cargo run --locked -p rustforge-cli --features gpu -- train td3 --env pendulum --device gpu --episodes 1 --checkpoint target/td3.chk --no-log
+cargo run --locked -p rustforge-cli --features gpu -- train td3 --env pendulum --device gpu --episodes 1 --resume target/td3.chk --checkpoint target/td3.chk --no-log
+cargo run --locked -p rustforge-cli --features gpu -- run td3 --env pendulum --device gpu --episodes 10
+```
+
+Version-1 `RFGPUTD3` checkpoints atomically save the actor, twin critics, all three
+frozen targets, both Adam states, configuration and successful critic/actor clocks.
+Resume uses the saved agent configuration and retains policy-delay cadence; the
+environment, replay, exploration/smoothing streams and run counters restart.
+`Td3RuntimeOptions` controls replay capacity, batch size, uniform-action warm-up,
+learning start and physical exploration deviation. Defaults use 1,000 warm-up
+steps and start replay training at transition 64, with one critic update per
+collected transition thereafter. Pause retains the in-flight transition; graceful
+stop finishes the episode; force stop discards the in-flight transition/update and
+saves earlier completed updates. Runtime errors preserve the previous checkpoint.
+CPU checkpoint flags and interactive checkpoint requests are unsupported.
+JSONL v1 emits six metrics: episode/moving-average reward, latest critic/delayed
+actor loss, replay size and throughput. Terminal flags disable bootstrap;
+truncations and runtime step limits keep it. Physical GPU validation remains
+deferred.
+
+GPU SAC objective foundations are available through `agent::gpu_sac`:
+`GpuSacActionTransform` reuses supplied-noise reparameterized Gaussian sampling,
+with tanh squashing and action-scale log-density corrections. `sac_critic_loss`
+uses detached entropy-adjusted twin targets; `sac_actor_loss` retains action and
+policy-density gradients; `sac_temperature_loss` updates log temperature while
+detaching policy log probabilities. Explicit checks reject invalid masks, shapes,
+contexts, nonfinite raw/intermediate values and temperature overflow/underflow.
+Critic/actor loss alpha is a cached scalar (zero is allowed for entropy-free losses);
+learned temperature must be representably positive. Call sample/loss checks before
+backward, and check gradients and their squares before Adam.
+
+```bash
+cargo test --locked -p rustforge-rl --features gpu --test gpu_sac_loss -- --include-ignored
+cargo run --locked -p rustforge-rl --features gpu --example gpu_sac_objective
+```
+
+Tests compare CPU/f64 gradients and four Adam updates of seeded twin critics, an
+actual seeded Gaussian policy and log temperature. The fixed twin-critic example
+reduces loss from 6.306413 to 8.549555730e-9 in 200 updates on llvmpipe.
+
+`GpuSac` now owns the seeded Gaussian actor, twin critics/targets and three
+resident Adam states. Continuous replay stays on CPU; only active batch rows
+upload. Separate caller RNG streams drive collection, target samples and actor
+updates. Critic, actor, temperature and Polyak updates commit together after
+validation; failed batches preserve live training state and parameter handles.
+Empty batches draw no noise and leave clocks unchanged. CPU SAC exposes matching
+seeded construction and supplied-noise hooks for complete update parity.
+
+```bash
+cargo test --locked -p rustforge-rl --features gpu --test gpu_sac_agent -- --include-ignored
+cargo run --locked -p rustforge-rl --features gpu --example gpu_sac_training
+```
+
+Tests cover six complete CPU/GPU updates with Polyak rates 0/0.2/1, stochastic
+and deterministic actions, partial replay rows, and Adam continuation after
+late arithmetic failures. Fresh terminal continuous episodes reduce evaluation
+cost from 0.200846 to 0.000684 after 536 updates on llvmpipe. SAC now supports Pendulum through the shared CPU/GPU worker and headless/live CLI.
+
+```bash
+cargo run --locked -p rustforge-cli --features gpu -- train sac --env pendulum --device gpu --episodes 1 --checkpoint target/sac.chk --no-log
+cargo run --locked -p rustforge-cli --features gpu -- train sac --env pendulum --device gpu --episodes 1 --resume target/sac.chk --checkpoint target/sac.chk --no-log
+cargo run --locked -p rustforge-cli --features gpu -- run sac --env pendulum --device gpu --episodes 10
+```
+
+CPU is the default; CPU SAC checkpoint flags are unsupported. Bounded version-1
+`RFGPUSAC` checkpoints atomically save the Gaussian actor, twin critics/targets,
+log temperature, three Adam states, configuration and successful-update clock.
+Resume restores that state with fresh replay/environment/noise streams and warm-up.
+Pause retains the in-flight transition; graceful stop finishes the episode; force
+stop saves prior completed updates. Errors preserve the previous checkpoint.
+JSONL v1 emits eight finite metrics, including critic, policy and temperature
+losses plus alpha. True termination disables bootstrap; truncation/step limits
+retain it. Physical GPU validation remains deferred.
+
 See [the GPU implementation plan](docs/gpu-development.md) and its saved benchmark.
 
 ---

@@ -122,6 +122,13 @@ impl GpuLinear {
             bias: self.bias.as_ref().map(GpuVariable::detach),
         }
     }
+    /// Independent trainable leaves sharing immutable values, with no live gradients.
+    pub fn trainable_snapshot(&self) -> Self {
+        Self {
+            weight: self.weight.leaf_snapshot(true),
+            bias: self.bias.as_ref().map(|b| b.leaf_snapshot(true)),
+        }
+    }
     pub fn in_features(&self) -> usize {
         self.weight.data().shape()[1]
     }

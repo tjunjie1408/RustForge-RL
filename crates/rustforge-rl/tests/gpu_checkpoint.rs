@@ -180,3 +180,65 @@ fn failed_restore_or_save_preserves_live_state_and_existing_checkpoint() {
         .to_string_lossy()
         .contains(".tmp-")));
 }
+
+#[test]
+#[ignore = "requires a GPU adapter"]
+fn prioritized_checkpoint_preserves_settings_and_weighted_optimizer_resume() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("per.chk");
+    let mut original = GpuDqn::new_seeded(
+        context(),
+        DQNConfig {
+            obs_dim: 2,
+            num_actions: 2,
+            hidden_dim: 8,
+            lr: 0.03,
+            gamma: 0.9,
+            target_update_freq: 5,
+            double_dqn: true,
+            use_per: true,
+            per_beta_annealing_steps: 123,
+        },
+        42,
+    )
+    .unwrap();
+    let batch = gpu_chain::TinyChain::default().full_replay();
+    let weights = Tensor::from_vec(vec![0.2, 1., 0.5, 0.8], &[4, 1]);
+    for _ in 0..7 {
+        original
+            .train_step_with_weights(&batch, Some(&weights))
+            .unwrap();
+    }
+    original.save_checkpoint(&path).unwrap();
+    let mut restored = GpuDqn::load_checkpoint(context(), &path).unwrap();
+    assert!(restored.config().use_per);
+    assert_eq!(restored.config().per_beta_annealing_steps, 123);
+    assert_eq!(rustforge_rl::agent::gpu_dqn::CHECKPOINT_VERSION, 1);
+    assert_agents_equal(&original, &restored);
+    for _ in 0..8 {
+        let (loss, errors) = original
+            .train_step_with_weights(&batch, Some(&weights))
+            .unwrap();
+        let (resumed_loss, resumed_errors) = restored
+            .train_step_with_weights(&batch, Some(&weights))
+            .unwrap();
+        assert_eq!(loss.to_bits(), resumed_loss.to_bits());
+        assert_eq!(
+            errors
+                .unwrap()
+                .iter()
+                .map(|v| v.to_bits())
+                .collect::<Vec<_>>(),
+            resumed_errors
+                .unwrap()
+                .iter()
+                .map(|v| v.to_bits())
+                .collect::<Vec<_>>()
+        );
+        assert_agents_equal(&original, &restored);
+    }
+    let second = directory.path().join("restored.chk");
+    original.save_checkpoint(&path).unwrap();
+    restored.save_checkpoint(&second).unwrap();
+    assert_eq!(fs::read(path).unwrap(), fs::read(second).unwrap());
+}

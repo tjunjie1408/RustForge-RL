@@ -20,6 +20,50 @@ required-features = ["gpu"]
 name = "gpu_dqn_training"
 required-features = ["gpu"]
 
+[[example]]
+name = "gpu_ppo_objective"
+required-features = ["gpu"]
+
+[[example]]
+name = "gpu_ppo_training"
+required-features = ["gpu"]
+
+[[example]]
+name = "gpu_continuous_ppo_objective"
+required-features = ["gpu"]
+
+[[example]]
+name = "gpu_continuous_ppo_training"
+required-features = ["gpu"]
+
+[[example]]
+name = "gpu_a2c_objective"
+required-features = ["gpu"]
+
+[[example]]
+name = "gpu_a2c_training"
+required-features = ["gpu"]
+
+[[example]]
+name = "gpu_reinforce_objective"
+required-features = ["gpu"]
+
+[[example]]
+name = "gpu_reinforce_training"
+required-features = ["gpu"]
+
+[[example]]
+name = "gpu_td3_objective"
+required-features = ["gpu"]
+
+[[example]]
+name = "gpu_td3_training"
+required-features = ["gpu"]
+
+[[example]]
+name = "gpu_sac_objective"
+required-features = ["gpu"]
+
 [dependencies]
 bincode = { workspace = true, optional = true }
 rustforge-tensor = { path = "../rustforge-tensor" }
@@ -38,3 +82,7 @@ serde_json = "1"
 proptest = { workspace = true }
 approx = { workspace = true }
 tempfile = "3"
+
+[[example]]
+name = "gpu_sac_training"
+required-features = ["gpu"]

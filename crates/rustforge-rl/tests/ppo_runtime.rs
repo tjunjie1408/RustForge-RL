@@ -745,3 +745,23 @@ fn persistence_failure_recovery_and_flush_failure_are_tracked() {
     assert_eq!(status.first_error.as_deref(), Some("first emit failed"));
     assert_eq!(status.last_error.as_deref(), Some("flush failed"));
 }
+
+#[test]
+fn ppo_runtime_options_validate_device_and_checkpoint_requirements() {
+    use rustforge_rl::agent::{PpoDevice, PpoRuntimeOptions};
+    let options = PpoRuntimeOptions {
+        checkpoint: Some("not-written.chk".into()),
+        ..Default::default()
+    };
+    assert!(options
+        .validate()
+        .unwrap_err()
+        .message
+        .contains("require --device gpu"));
+    assert!(PpoRuntimeOptions::default().validate().is_ok());
+    let options = PpoRuntimeOptions {
+        device: PpoDevice::Gpu,
+        ..Default::default()
+    };
+    assert_eq!(options.validate().is_ok(), cfg!(feature = "gpu"));
+}

@@ -140,6 +140,7 @@ impl ActorCriticNet {
 }
 
 /// Configuration for the A2C agent.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct A2CConfig {
     /// Observation dimensionality.
     pub obs_dim: usize,
@@ -306,6 +307,29 @@ impl A2C {
     pub fn net(&self) -> &ActorCriticNet {
         &self.net
     }
+}
+
+/// Shared host validation for runtime construction and GPU checkpoint loading.
+pub(crate) fn validate_a2c_config(c: &A2CConfig) -> Result<(), &'static str> {
+    if c.obs_dim == 0
+        || c.hidden_dim == 0
+        || c.num_actions == 0
+        || !c.lr.is_finite()
+        || c.lr <= 0.
+        || !c.gamma.is_finite()
+        || !(0. ..=1.).contains(&c.gamma)
+        || !c.lambda.is_finite()
+        || !(0. ..=1.).contains(&c.lambda)
+        || !c.c_value.is_finite()
+        || c.c_value < 0.
+        || !c.c_entropy.is_finite()
+        || c.c_entropy < 0.
+        || c.hidden_dim.checked_mul(c.obs_dim).is_none()
+        || c.hidden_dim.checked_mul(c.num_actions).is_none()
+    {
+        return Err("invalid A2C dimensions, coefficients or hyperparameters");
+    }
+    Ok(())
 }
 
 #[cfg(test)]

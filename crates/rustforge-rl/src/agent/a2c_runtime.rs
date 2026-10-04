@@ -1,6 +1,5 @@
 //! A2C adapter for the generic live-training runtime.
 
-use rustforge_autograd::no_grad;
 use std::convert::TryFrom;
 use std::fmt::Debug;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -10,11 +9,12 @@ use rand::rngs::StdRng;
 use rand::SeedableRng;
 use smallvec::{smallvec, SmallVec};
 
+use super::a2c_backend::A2cBackend;
 use super::live_runtime::{
     progress_scalars, throughput, LiveHooks, RewardWindow, StepDecision, StepPosition,
 };
 use super::on_policy_runtime::{derive_seed, finite_values, EpisodeBoundary};
-use super::{A2CConfig, A2C};
+use super::{A2CConfig, A2cRuntimeOptions};
 use crate::buffer::RolloutBuffer;
 use crate::env::{Environment, IntoTensorBuffer};
 use crate::runtime::event::MetricValue;
@@ -52,6 +52,7 @@ pub struct A2cTrainerAdapter<E> {
     environment: String,
     seed: Option<u64>,
     run_id: String,
+    options: A2cRuntimeOptions,
 }
 
 impl<E> A2cTrainerAdapter<E> {
@@ -72,7 +73,13 @@ impl<E> A2cTrainerAdapter<E> {
             environment: environment.into(),
             seed,
             run_id: format!("a2c-{sequence}"),
+            options: A2cRuntimeOptions::default(),
         }
+    }
+    /// Construct and restore agents inside `run` on the owning worker.
+    pub fn with_options(mut self, options: A2cRuntimeOptions) -> Self {
+        self.options = options;
+        self
     }
 }
 
@@ -106,6 +113,7 @@ where
             self.episodes,
             self.max_steps_per_episode,
             self.seed,
+            &self.options,
             &mut hooks,
         );
         hooks.flush_metrics();
@@ -144,12 +152,14 @@ struct EpisodeState {
     entropy: f32,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn train_a2c_core<E>(
     mut env: E,
     config: A2CConfig,
     episodes: usize,
     max_steps_per_episode: usize,
     seed: Option<u64>,
+    options: &A2cRuntimeOptions,
     hooks: &mut LiveHooks,
 ) -> Result<TrainingSummary, TrainerError>
 where
@@ -165,16 +175,29 @@ where
         });
     }
     let obs_dim = E::Obs::DIM;
-    let gamma = config.gamma;
-    let lambda = config.lambda;
-    let (mut agent, environment_seed, mut action_rng) = match seed {
-        Some(base_seed) => (
-            A2C::new_seeded(config, derive_seed(base_seed, 0)),
-            Some(derive_seed(base_seed, 1)),
-            Some(StdRng::seed_from_u64(derive_seed(base_seed, 2))),
+    options.validate()?;
+    let (environment_seed, mut action_rng) = match seed {
+        Some(base) => (
+            Some(derive_seed(base, 1)),
+            Some(StdRng::seed_from_u64(derive_seed(base, 2))),
         ),
-        None => (A2C::new(config), None, None),
+        None => (None, None),
     };
+    let mut agent = A2cBackend::new(config, seed.map(|s| derive_seed(s, 0)), options)?;
+    if agent.config().obs_dim != obs_dim
+        || env.action_space() != crate::env::Space::discrete(agent.config().num_actions)
+    {
+        return Err(TrainerError {
+            message: "A2C agent dimensions do not match environment".into(),
+        });
+    }
+    if max_steps_per_episode.checked_mul(obs_dim).is_none() {
+        return Err(TrainerError {
+            message: "A2C rollout capacity overflow".into(),
+        });
+    }
+    let gamma = agent.config().gamma;
+    let lambda = agent.config().lambda;
     let mut rollout = RolloutBuffer::new(max_steps_per_episode, obs_dim);
     let mut global_step = 0usize;
     let mut completed_episodes = 0usize;
@@ -195,11 +218,20 @@ where
         let mut force_after_episode = false;
 
         for step_index in 0..max_steps_per_episode {
-            let (logits, value) = no_grad(|| agent.forward(&state_buf));
-            let action_index = match action_rng.as_mut() {
-                Some(rng) => A2C::sample_action(&logits.data(), rng),
-                None => A2C::sample_action_default(&logits.data()),
-            };
+            if state_buf.iter().any(|v| !v.is_finite()) {
+                return Err(TrainerError {
+                    message: "A2C observation must be finite".into(),
+                });
+            }
+            let (action_index, value) = match action_rng.as_mut() {
+                Some(rng) => agent.select_action_with_rng(&state_buf, rng),
+                None => agent.select_action(&state_buf),
+            }?;
+            if !value.is_finite() || action_index >= agent.config().num_actions {
+                return Err(TrainerError {
+                    message: "A2C sampled invalid action/value".into(),
+                });
+            }
             let action = E::Act::try_from(action_index).map_err(|error| TrainerError {
                 message: format!(
                     "A2C action index {action_index} was rejected by the environment: {error:?}"
@@ -214,9 +246,14 @@ where
                 &state_buf,
                 action_index,
                 reward,
-                value.data().item(),
+                value,
                 boundary.done_mask(),
             );
+            if !reward.is_finite() || next_state_buf.iter().any(|v| !v.is_finite()) {
+                return Err(TrainerError {
+                    message: "A2C environment returned nonfinite values".into(),
+                });
+            }
             state_buf = next_state_buf;
             episode_reward += reward;
             episode_length += 1;
@@ -242,8 +279,8 @@ where
                     }
                 }
             }
-            if let Some(bootstrap_value) = boundary.bootstrap_value(|| agent.value_of(&state_buf)) {
-                last_value = bootstrap_value;
+            if let Some(value) = boundary.bootstrap_value(|| agent.value_of(&state_buf))? {
+                last_value = value;
                 break;
             }
         }
@@ -252,7 +289,7 @@ where
             continue;
         }
         rollout.compute_returns_and_advantages(gamma, lambda, last_value);
-        let losses = agent.train_on_rollout(&rollout.to_batch());
+        let losses = agent.train_on_rollout(&rollout.to_batch())?;
         let completed_state = StepState {
             global_step: global_step as u64,
             episode: episode as u64,
@@ -288,6 +325,7 @@ where
         }
     }
 
+    agent.save(options)?;
     Ok(TrainingSummary::stopped(
         global_step as u64,
         completed_episodes as u64,

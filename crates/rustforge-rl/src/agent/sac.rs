@@ -46,6 +46,7 @@ use crate::agent::utils::{elementwise_min_var, hard_update, soft_update};
 use crate::buffer::ContinuousTransitionBatch;
 
 /// Configuration for the SAC agent.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SACConfig {
     /// Observation dimensionality.
     pub obs_dim: usize,
@@ -95,6 +96,52 @@ impl SACConfig {
     }
 }
 
+pub(crate) fn validate_sac_config(c: &SACConfig) -> std::result::Result<(), &'static str> {
+    let input = c
+        .obs_dim
+        .checked_add(c.act_dim)
+        .ok_or("invalid SAC dimensions, rates, discount/tau or bounds")?;
+    if c.obs_dim == 0
+        || c.act_dim == 0
+        || c.hidden_dim == 0
+        || [c.actor_lr, c.critic_lr, c.alpha_lr, c.init_alpha]
+            .iter()
+            .any(|v| !v.is_finite() || *v <= 0.)
+        || [c.gamma, c.tau]
+            .iter()
+            .any(|v| !v.is_finite() || !(0. ..=1.).contains(v))
+        || [
+            (c.obs_dim, c.hidden_dim),
+            (input, c.hidden_dim),
+            (c.hidden_dim, c.hidden_dim),
+            (c.hidden_dim, c.act_dim),
+        ]
+        .iter()
+        .any(|(a, b)| {
+            a.checked_mul(*b)
+                .and_then(|n| u32::try_from(n).ok())
+                .is_none()
+        })
+        || c.action_low.len() != c.act_dim
+        || c.action_high.len() != c.act_dim
+        || c.action_low.iter().zip(&c.action_high).any(|(&l, &h)| {
+            !l.is_finite()
+                || !h.is_finite()
+                || l >= h
+                || !((h - l) / 2.).is_finite()
+                || (h - l) / 2. <= 0.
+                || !((h + l) / 2.).is_finite()
+        })
+    {
+        return Err("invalid SAC dimensions, rates, discount/tau or bounds");
+    }
+    let alpha = c.init_alpha.ln().exp();
+    if !alpha.is_finite() || alpha <= 0. {
+        return Err("SAC initial temperature must be representably positive");
+    }
+    Ok(())
+}
+
 /// Builds a Q-critic network (takes concatenated [state, action]).
 fn build_critic(obs_dim: usize, act_dim: usize, hidden_dim: usize) -> Sequential {
     Sequential::new(vec![
@@ -138,16 +185,61 @@ pub struct SAC {
 impl SAC {
     /// Creates a new SAC agent.
     pub fn new(config: SACConfig) -> Self {
-        let actor = GaussianPolicy::new(
-            config.obs_dim,
-            config.hidden_dim,
-            config.act_dim,
-            &config.action_low,
-            &config.action_high,
-        );
+        Self::build(config, None)
+    }
 
-        let critic1 = build_critic(config.obs_dim, config.act_dim, config.hidden_dim);
-        let critic2 = build_critic(config.obs_dim, config.act_dim, config.hidden_dim);
+    /// Reproducible actor and twin critics, with wrapping layer seed offsets.
+    pub fn new_seeded(config: SACConfig, seed: u64) -> Self {
+        Self::build(config, Some(seed))
+    }
+
+    fn build(config: SACConfig, seed: Option<u64>) -> Self {
+        let actor = if let Some(seed) = seed {
+            GaussianPolicy::new_seeded(
+                config.obs_dim,
+                config.hidden_dim,
+                config.act_dim,
+                &config.action_low,
+                &config.action_high,
+                seed,
+            )
+        } else {
+            GaussianPolicy::new(
+                config.obs_dim,
+                config.hidden_dim,
+                config.act_dim,
+                &config.action_low,
+                &config.action_high,
+            )
+        };
+
+        let critic = |offset| match seed {
+            None => build_critic(config.obs_dim, config.act_dim, config.hidden_dim),
+            Some(seed) => {
+                let seed = seed.wrapping_add(offset);
+                Sequential::new(vec![
+                    Box::new(Linear::new_seeded(
+                        config.obs_dim + config.act_dim,
+                        config.hidden_dim,
+                        seed,
+                    )),
+                    Box::new(ReLU),
+                    Box::new(Linear::new_seeded(
+                        config.hidden_dim,
+                        config.hidden_dim,
+                        seed.wrapping_add(1),
+                    )),
+                    Box::new(ReLU),
+                    Box::new(Linear::new_seeded(
+                        config.hidden_dim,
+                        1,
+                        seed.wrapping_add(2),
+                    )),
+                ])
+            }
+        };
+        let critic1 = critic(4);
+        let critic2 = critic(7);
         let critic1_target = build_critic(config.obs_dim, config.act_dim, config.hidden_dim);
         let critic2_target = build_critic(config.obs_dim, config.act_dim, config.hidden_dim);
 
@@ -182,6 +274,19 @@ impl SAC {
         }
     }
 
+    pub fn critic1(&self) -> &Sequential {
+        &self.critic1
+    }
+    pub fn critic2(&self) -> &Sequential {
+        &self.critic2
+    }
+    pub fn critic1_target(&self) -> &Sequential {
+        &self.critic1_target
+    }
+    pub fn critic2_target(&self) -> &Sequential {
+        &self.critic2_target
+    }
+
     /// Returns the current temperature α = exp(log_alpha).
     pub fn alpha(&self) -> f32 {
         self.log_alpha.data().to_vec()[0].exp()
@@ -191,9 +296,13 @@ impl SAC {
     ///
     /// Returns the action as a `Vec<f32>`.
     pub fn select_action(&self, state: &[f32]) -> Vec<f32> {
+        self.select_action_with_rng(state, &mut rand::thread_rng())
+    }
+
+    pub fn select_action_with_rng(&self, state: &[f32], rng: &mut impl rand::Rng) -> Vec<f32> {
         let state_tensor = Tensor::from_vec(state.to_vec(), &[1, self.config.obs_dim]);
         let state_var = Variable::from_tensor(state_tensor);
-        let (action, _log_prob) = no_grad(|| self.actor.sample(&state_var));
+        let (action, _log_prob) = no_grad(|| self.actor.sample_with_rng(&state_var, rng));
         let result = action.data().to_vec();
         result
     }
@@ -209,6 +318,35 @@ impl SAC {
     ///
     /// Returns `(critic_loss, actor_loss, alpha_loss, alpha_value)`.
     pub fn train_step(&mut self, batch: &ContinuousTransitionBatch) -> (f32, f32, f32, f32) {
+        self.train_step_with_rngs(batch, &mut rand::thread_rng(), &mut rand::thread_rng())
+    }
+
+    /// Independent target-policy and actor-update noise streams.
+    pub fn train_step_with_rngs(
+        &mut self,
+        batch: &ContinuousTransitionBatch,
+        target_rng: &mut impl rand::Rng,
+        actor_rng: &mut impl rand::Rng,
+    ) -> (f32, f32, f32, f32) {
+        let shape = [batch.size, self.config.act_dim];
+        let draw = |rng: &mut dyn rand::RngCore| {
+            Tensor::from_vec(
+                (0..shape.iter().product())
+                    .map(|_| super::gaussian_policy::sample_standard_normal(rng))
+                    .collect(),
+                &shape,
+            )
+        };
+        self.train_step_with_noise(batch, &draw(target_rng), &draw(actor_rng))
+    }
+
+    /// Supplied standard-normal matrices; capacity rows beyond batch.size are ignored.
+    pub fn train_step_with_noise(
+        &mut self,
+        batch: &ContinuousTransitionBatch,
+        target_noise: &Tensor,
+        actor_noise: &Tensor,
+    ) -> (f32, f32, f32, f32) {
         let n = batch.size;
         if n == 0 {
             return (0.0, 0.0, 0.0, self.alpha());
@@ -221,7 +359,10 @@ impl SAC {
         self.critic_optimizer.zero_grad();
 
         let next_states_var = Variable::from_tensor(batch.next_states.clone());
-        let (next_actions, next_log_probs) = self.actor.sample(&next_states_var);
+        let (next_actions, next_log_probs) = self.actor.sample_with_noise(
+            &next_states_var,
+            &target_noise.slice_axis(0, 0, n).expect("target noise rows"),
+        );
 
         // Target Q values (detached)
         let next_sa = self.concat_state_action(&next_states_var, &next_actions);
@@ -258,7 +399,10 @@ impl SAC {
         // ── 2. Actor update ──
         self.actor_optimizer.zero_grad();
 
-        let (new_actions, new_log_probs) = self.actor.sample(&states_var);
+        let (new_actions, new_log_probs) = self.actor.sample_with_noise(
+            &states_var,
+            &actor_noise.slice_axis(0, 0, n).expect("actor noise rows"),
+        );
         let new_sa = self.concat_state_action(&states_var, &new_actions);
         let q1_new = self.critic1.forward(&new_sa);
         let q2_new = self.critic2.forward(&new_sa);
@@ -329,6 +473,48 @@ mod tests {
             init_alpha: 0.2,
             action_low: vec![-1.0, -1.0],
             action_high: vec![1.0, 1.0],
+        }
+    }
+
+    #[test]
+    fn seeded_noise_hooks_are_reproducible_and_ignore_inactive_rows() {
+        use rand::{rngs::StdRng, Rng, SeedableRng};
+        let c = make_config();
+        let mut a = SAC::new_seeded(c.clone(), u64::MAX - 2);
+        let mut b = SAC::new_seeded(c, u64::MAX - 2);
+        let mut ar = StdRng::seed_from_u64(5);
+        let mut br = ar.clone();
+        assert_eq!(
+            a.select_action_with_rng(&[0.1; 4], &mut ar),
+            b.select_action_with_rng(&[0.1; 4], &mut br)
+        );
+        assert_eq!(ar.gen::<u64>(), br.gen::<u64>());
+        let mut batch = ContinuousTransitionBatch::new(8, 4, 2);
+        batch.size = 3;
+        batch.states = Tensor::from_vec(vec![0.2; 32], &[8, 4]);
+        batch.next_states = Tensor::from_vec(vec![0.3; 32], &[8, 4]);
+        batch.rewards = Tensor::from_vec(vec![0.7; 8], &[8, 1]);
+        for t in [
+            &mut batch.states,
+            &mut batch.next_states,
+            &mut batch.actions,
+            &mut batch.rewards,
+            &mut batch.dones,
+        ] {
+            let active = batch.size * t.shape()[1];
+            for v in t.data_mut().iter_mut().skip(active) {
+                *v = f32::NAN;
+            }
+        }
+        let noise = Tensor::from_vec(vec![0.3; 16], &[8, 2]);
+        for _ in 0..3 {
+            assert_eq!(
+                a.train_step_with_noise(&batch, &noise, &noise),
+                b.train_step_with_noise(&batch.valid_rows(), &noise, &noise)
+            );
+            for (a, b) in a.actor.parameters().iter().zip(b.actor.parameters()) {
+                assert_eq!(a.data().to_vec(), b.data().to_vec());
+            }
         }
     }
 

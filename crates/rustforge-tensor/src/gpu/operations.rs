@@ -54,6 +54,223 @@ pub(super) fn create_pipelines(
 }
 
 impl GpuContext {
+    /// Joins rank-two matrices along their feature axis without host transfers.
+    pub fn concat_columns_device(
+        &self,
+        left: &GpuTensor,
+        right: &GpuTensor,
+    ) -> Result<GpuTensor, GpuError> {
+        self.ensure_owner(left)?;
+        self.ensure_owner(right)?;
+        let (a, b) = (left.shape(), right.shape());
+        if a.len() != 2 || b.len() != 2 || a[0] != b[0] {
+            return Err(GpuError::ElementwiseShapeMismatch {
+                left: a.to_vec(),
+                right: b.to_vec(),
+            });
+        }
+        let columns = a[1].checked_add(b[1]).ok_or(GpuError::LimitExceeded)?;
+        let first = u32::try_from(a[1]).map_err(|_| GpuError::LimitExceeded)?;
+        let second = u32::try_from(b[1]).map_err(|_| GpuError::LimitExceeded)?;
+        u32::try_from(columns).map_err(|_| GpuError::LimitExceeded)?;
+        let output = self.zeros(&[a[0], columns])?;
+        if !output.is_empty() {
+            self.dispatch_operation_layout(
+                left,
+                right,
+                &output,
+                [output.numel() as u32, 20, 0],
+                [first, second, 0, 0],
+                &self.inner.elementwise_pipeline,
+            )?;
+        }
+        Ok(output)
+    }
+    /// Copies a contiguous column range from every row of a rank-two matrix.
+    pub fn slice_columns_device(
+        &self,
+        input: &GpuTensor,
+        start: usize,
+        len: usize,
+    ) -> Result<GpuTensor, GpuError> {
+        self.ensure_owner(input)?;
+        let shape = input.shape();
+        if shape.len() != 2 {
+            return Err(GpuError::ExpectedMatrix {
+                shape: shape.to_vec(),
+            });
+        }
+        if start > shape[1] || len > shape[1] - start {
+            return Err(GpuError::InvalidColumnRange {
+                columns: shape[1],
+                start,
+                len,
+            });
+        }
+        let stride = u32::try_from(shape[1]).map_err(|_| GpuError::LimitExceeded)?;
+        let width = u32::try_from(len).map_err(|_| GpuError::LimitExceeded)?;
+        let offset = u32::try_from(start).map_err(|_| GpuError::LimitExceeded)?;
+        let output = self.zeros(&[shape[0], len])?;
+        if !output.is_empty() {
+            self.dispatch_operation_layout(
+                input,
+                input,
+                &output,
+                [output.numel() as u32, 21, 0],
+                [stride, width, offset, 0],
+                &self.inner.elementwise_pipeline,
+            )?;
+        }
+        Ok(output)
+    }
+    /// Elementwise exponential, with shader floating-point semantics.
+    pub fn exp_device(&self, input: &GpuTensor) -> Result<GpuTensor, GpuError> {
+        self.elementwise(input, input, 11)
+    }
+
+    /// Elementwise natural logarithm: zero gives -infinity, negatives/NaN give NaN.
+    pub fn log_device(&self, input: &GpuTensor) -> Result<GpuTensor, GpuError> {
+        self.elementwise(input, input, 15)
+    }
+    /// Stable tanh, including saturated values, infinities and signed zero.
+    pub fn tanh_device(&self, input: &GpuTensor) -> Result<GpuTensor, GpuError> {
+        self.elementwise(input, input, 16)
+    }
+    /// Numeric clipping for detached data (distinct from autograd clamp composition).
+    pub fn clamp_device(
+        &self,
+        input: &GpuTensor,
+        lower: f32,
+        upper: f32,
+    ) -> Result<GpuTensor, GpuError> {
+        self.ensure_owner(input)?;
+        if !lower.is_finite() || !upper.is_finite() || lower > upper {
+            return Err(GpuError::InvalidBounds);
+        }
+        let bound = self.full(input.shape(), upper)?;
+        let output = self.zeros(input.shape())?;
+        if !input.is_empty() {
+            self.dispatch_operation(
+                input,
+                &bound,
+                &output,
+                [input.numel() as u32, 19, lower.to_bits()],
+                &self.inner.elementwise_pipeline,
+            )?;
+        }
+        Ok(output)
+    }
+    /// Sum columns of a rank-two matrix into [rows,1], keeping the action axis.
+    pub fn sum_columns_device(&self, matrix: &GpuTensor) -> Result<GpuTensor, GpuError> {
+        self.ensure_owner(matrix)?;
+        if matrix.shape().len() != 2 {
+            return Err(GpuError::ExpectedMatrix {
+                shape: matrix.shape().to_vec(),
+            });
+        }
+        let output = self.zeros(&[matrix.shape()[0], 1])?;
+        if !output.is_empty() {
+            self.dispatch_operation(
+                matrix,
+                matrix,
+                &output,
+                [output.numel() as u32, 17, matrix.shape()[1] as u32],
+                &self.inner.elementwise_pipeline,
+            )?;
+        }
+        Ok(output)
+    }
+    /// Repeat each [rows,1] element across a specified number of columns.
+    pub fn broadcast_columns_device(
+        &self,
+        column: &GpuTensor,
+        columns: usize,
+    ) -> Result<GpuTensor, GpuError> {
+        self.ensure_owner(column)?;
+        if column.shape().len() != 2 || column.shape()[1] != 1 {
+            return Err(GpuError::ExpectedMatrix {
+                shape: column.shape().to_vec(),
+            });
+        }
+        let output = self.zeros(&[column.shape()[0], columns])?;
+        if !output.is_empty() {
+            self.dispatch_operation(
+                column,
+                column,
+                &output,
+                [output.numel() as u32, 18, columns as u32],
+                &self.inner.elementwise_pipeline,
+            )?;
+        }
+        Ok(output)
+    }
+
+    /// Stable log-softmax over action columns of [batch, actions]. Empty batches
+    /// are supported, but an empty action axis is rejected. Nonfinite logits
+    /// produce NaN for the entire row. No intermediate data is downloaded.
+    pub fn log_softmax_device(&self, input: &GpuTensor) -> Result<GpuTensor, GpuError> {
+        self.ensure_owner(input)?;
+        if input.shape().len() != 2 || input.shape()[1] == 0 {
+            return Err(GpuError::InvalidCategoricalShape {
+                shape: input.shape().to_vec(),
+            });
+        }
+        let output = self.zeros(input.shape())?;
+        if !input.is_empty() {
+            self.dispatch_operation(
+                input,
+                input,
+                &output,
+                [input.numel() as u32, 12, input.shape()[1] as u32],
+                &self.inner.elementwise_pipeline,
+            )?;
+        }
+        Ok(output)
+    }
+
+    /// Stable categorical probabilities, composed from log-softmax and exp.
+    pub fn softmax_device(&self, input: &GpuTensor) -> Result<GpuTensor, GpuError> {
+        self.exp_device(&self.log_softmax_device(input)?)
+    }
+
+    /// Vector-Jacobian product: g - exp(log_probs) * sum(g, actions).
+    pub fn log_softmax_backward_device(
+        &self,
+        log_probs: &GpuTensor,
+        gradient: &GpuTensor,
+    ) -> Result<GpuTensor, GpuError> {
+        self.ensure_owner(log_probs)?;
+        self.ensure_owner(gradient)?;
+        if log_probs.shape().len() != 2 || log_probs.shape()[1] == 0 {
+            return Err(GpuError::InvalidCategoricalShape {
+                shape: log_probs.shape().to_vec(),
+            });
+        }
+        if log_probs.shape() != gradient.shape() {
+            return Err(GpuError::ElementwiseShapeMismatch {
+                left: log_probs.shape().to_vec(),
+                right: gradient.shape().to_vec(),
+            });
+        }
+        let output = self.zeros(log_probs.shape())?;
+        if !log_probs.is_empty() {
+            self.dispatch_operation(
+                log_probs,
+                gradient,
+                &output,
+                [log_probs.numel() as u32, 13, log_probs.shape()[1] as u32],
+                &self.inner.elementwise_pipeline,
+            )?;
+        }
+        Ok(output)
+    }
+
+    /// Reduces nonfinite-value indicators to a scalar for explicit validation.
+    /// The count can round for very large inputs; zero/nonzero remains reliable.
+    pub fn nonfinite_count_device(&self, input: &GpuTensor) -> Result<GpuTensor, GpuError> {
+        self.sum_device(&self.elementwise(input, input, 14)?)
+    }
+
     /// Adds identical-shape device tensors; broadcasting is not supported.
     pub fn add_device(&self, left: &GpuTensor, right: &GpuTensor) -> Result<GpuTensor, GpuError> {
         self.elementwise(left, right, 0)
@@ -294,6 +511,19 @@ impl GpuContext {
         parameters: [u32; 3],
         pipeline: &wgpu::ComputePipeline,
     ) -> Result<(), GpuError> {
+        self.dispatch_operation_layout(left, right, output, parameters, [0; 4], pipeline)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn dispatch_operation_layout(
+        &self,
+        left: &GpuTensor,
+        right: &GpuTensor,
+        output: &GpuTensor,
+        parameters: [u32; 3],
+        layout: [u32; 4],
+        pipeline: &wgpu::ComputePipeline,
+    ) -> Result<(), GpuError> {
         let [length, operation, auxiliary] = parameters;
         let groups = length.div_ceil(256);
         let grid = dispatch_grid(
@@ -308,7 +538,10 @@ impl GpuContext {
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("tensor operation parameters"),
-                contents: bytemuck::cast_slice(&[length, operation, groups, auxiliary]),
+                contents: bytemuck::cast_slice(&[
+                    length, operation, groups, auxiliary, layout[0], layout[1], layout[2],
+                    layout[3],
+                ]),
                 usage: wgpu::BufferUsages::UNIFORM,
             });
         let buffers = [&left.buffer, &right.buffer, &output.buffer, &parameters];

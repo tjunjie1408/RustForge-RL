@@ -3,6 +3,10 @@ struct Parameters {
     operation: u32,
     groups: u32,
     divisor: u32,
+    first_columns: u32,
+    second_columns: u32,
+    offset: u32,
+    padding: u32,
 }
 
 @group(0) @binding(0) var<storage, read> a: array<f32>;
@@ -23,6 +27,21 @@ fn elementwise(@builtin(workgroup_id) group: vec3<u32>,
         return;
     }
     switch parameters.operation {
+        case 20u: {
+            let width = parameters.first_columns + parameters.second_columns;
+            let row = index / width;
+            let column = index % width;
+            if (column < parameters.first_columns) {
+                output[index] = a[row * parameters.first_columns + column];
+            } else {
+                output[index] = b[row * parameters.second_columns + column - parameters.first_columns];
+            }
+        }
+        case 21u: {
+            let row = index / parameters.second_columns;
+            let column = index % parameters.second_columns;
+            output[index] = a[row * parameters.first_columns + parameters.offset + column];
+        }
         case 0u: { output[index] = a[index] + b[index]; }
         case 1u: { output[index] = a[index] * b[index]; }
         // Select zero for NaN, matching Tensor::relu's f32::max.
@@ -40,7 +59,63 @@ fn elementwise(@builtin(workgroup_id) group: vec3<u32>,
             }
             output[index] = value;
         }
-        default: { output[index] = a[index] / b[index]; }
+        case 10u: { output[index] = a[index] / b[index]; }
+        case 11u: { output[index] = exp(a[index]); }
+        case 12u: {
+            let offset = (index / parameters.divisor) * parameters.divisor;
+            var maximum = a[offset];
+            for (var col = 0u; col < parameters.divisor; col += 1u) {
+                let value = a[offset + col];
+                if ((bitcast<u32>(value) & 0x7f800000u) == 0x7f800000u) {
+                    output[index] = bitcast<f32>(0x7fc00000u);
+                    return;
+                }
+                maximum = max(maximum, value);
+            }
+            var total = 0.0;
+            for (var col = 0u; col < parameters.divisor; col += 1u) {
+                total += exp(a[offset + col] - maximum);
+            }
+            output[index] = (a[index] - maximum) - log(total);
+        }
+        case 13u: {
+            let offset = (index / parameters.divisor) * parameters.divisor;
+            var total = 0.0;
+            for (var col = 0u; col < parameters.divisor; col += 1u) {
+                total += b[offset + col];
+            }
+            output[index] = b[index] - exp(a[index]) * total;
+        }
+        case 14u: {
+            output[index] = select(0.0, 1.0, (bitcast<u32>(a[index]) & 0x7f800000u) == 0x7f800000u);
+        }
+        case 15u: {
+            let value = a[index];
+            if (value == 0.0) { output[index] = bitcast<f32>(0xff800000u); }
+            else if (value < 0.0 || ((bitcast<u32>(value) & 0x7fffffffu) > 0x7f800000u)) { output[index] = bitcast<f32>(0x7fc00000u); }
+            else { output[index] = log(value); }
+        }
+        case 16u: {
+            let value = a[index];
+            if ((bitcast<u32>(value) & 0x7fffffffu) > 0x7f800000u) { output[index] = bitcast<f32>(0x7fc00000u); }
+            else {
+                let e = exp(-2.0 * abs(value));
+                let magnitude = (1.0 - e) / (1.0 + e);
+                output[index] = select(magnitude, -magnitude, (bitcast<u32>(value) & 0x80000000u) != 0u);
+            }
+        }
+        case 17u: {
+            var total = 0.0;
+            for (var col = 0u; col < parameters.divisor; col += 1u) { total += a[index * parameters.divisor + col]; }
+            output[index] = total;
+        }
+        case 18u: { output[index] = a[index / parameters.divisor]; }
+        case 19u: {
+            let value = a[index];
+            output[index] = clamp(value, bitcast<f32>(parameters.divisor), b[index]);
+            if ((bitcast<u32>(value) & 0x7fffffffu) > 0x7f800000u) { output[index] = value; }
+        }
+        default: { output[index] = bitcast<f32>(0x7fc00000u); }
     }
 }
 

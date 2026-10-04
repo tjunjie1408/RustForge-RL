@@ -31,11 +31,10 @@ pub struct DqnRuntimeOptions {
 
 impl DqnRuntimeOptions {
     /// Checks unsupported combinations without constructing an agent or device.
-    pub fn validate(&self, use_per: bool) -> Result<(), TrainerError> {
+    pub fn validate(&self, _use_per: bool) -> Result<(), TrainerError> {
         let message = match self.device {
             DqnDevice::Cpu if self.resume.is_some() || self.checkpoint.is_some() =>
                 Some("runtime --resume and --checkpoint require --device gpu; CPU parameter files remain available through the existing library API"),
-            DqnDevice::Gpu if use_per => Some("GPU DQN does not support prioritized replay (--use-per)"),
             DqnDevice::Gpu if !cfg!(feature = "gpu") =>
                 Some("GPU support is not compiled in; rebuild with --features gpu"),
             _ => None,
@@ -129,8 +128,7 @@ impl DqnBackend {
             Self::Cpu(agent) => Ok(agent.train_step(batch, weights)),
             #[cfg(feature = "gpu")]
             Self::Gpu(agent) => agent
-                .train_step(batch)
-                .map(|loss| (loss, None))
+                .train_step_with_weights(batch, weights)
                 .map_err(gpu_error),
         }
     }

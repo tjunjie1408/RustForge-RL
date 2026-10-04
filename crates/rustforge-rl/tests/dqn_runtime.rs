@@ -297,7 +297,7 @@ fn force_stop_on_a_terminal_step_preserves_the_completed_episode() {
 
 #[test]
 fn unsupported_execution_options_fail_before_environment_interaction() {
-    use rustforge_rl::agent::{DqnDevice, DqnRuntimeOptions};
+    use rustforge_rl::agent::DqnRuntimeOptions;
     let options = DqnRuntimeOptions {
         resume: Some("missing.chk".into()),
         ..Default::default()
@@ -310,20 +310,6 @@ fn unsupported_execution_options_fail_before_environment_interaction() {
         .unwrap_err()
         .message
         .contains("require --device gpu"));
-    assert!(events.try_iter().next().is_none());
-    let mut per_config = config();
-    per_config.use_per = true;
-    let adapter = DqnTrainerAdapter::new(ThreeStepEnv::new(), per_config, 1, 10, "three-step")
-        .with_options(DqnRuntimeOptions {
-            device: DqnDevice::Gpu,
-            ..Default::default()
-        });
-    let (context, events, _, _) = runtime();
-    assert!(Box::new(adapter)
-        .run(context)
-        .unwrap_err()
-        .message
-        .contains("prioritized replay"));
     assert!(events.try_iter().next().is_none());
 }
 

@@ -65,9 +65,14 @@ struct Inner {
 #[derive(Clone)]
 enum Op {
     Add(GpuVariable, GpuVariable),
+    Concat(GpuVariable, GpuVariable, usize, usize),
     Bias(GpuVariable, GpuVariable),
     Gather(GpuVariable, Rc<GpuIndices>),
     Mul(GpuVariable, GpuVariable, Rc<GpuTensor>, Rc<GpuTensor>),
+    Div(GpuVariable, GpuVariable, Rc<GpuTensor>, Rc<GpuTensor>),
+    Log(GpuVariable, Rc<GpuTensor>),
+    Tanh(GpuVariable, Rc<GpuTensor>),
+    SumColumns(GpuVariable, usize),
     Matmul(
         GpuVariable,
         GpuVariable,
@@ -76,6 +81,8 @@ enum Op {
         MatrixKind,
     ),
     Relu(GpuVariable, Rc<GpuTensor>),
+    Exp(GpuVariable, Rc<GpuTensor>),
+    LogSoftmax(GpuVariable, Rc<GpuTensor>),
     Scale(GpuVariable, f32),
     Reduce(GpuVariable, f32),
 }
@@ -88,10 +95,23 @@ enum MatrixKind {
 impl Op {
     fn parents(&self) -> Vec<GpuVariable> {
         match self {
-            Self::Add(a, b) | Self::Bias(a, b) | Self::Mul(a, b, ..) | Self::Matmul(a, b, ..) => {
+            Self::Add(a, b)
+            | Self::Concat(a, b, ..)
+            | Self::Bias(a, b)
+            | Self::Mul(a, b, ..)
+            | Self::Div(a, b, ..)
+            | Self::Matmul(a, b, ..) => {
                 vec![a.clone(), b.clone()]
             }
-            Self::Relu(a, _) | Self::Scale(a, _) | Self::Reduce(a, _) | Self::Gather(a, _) => {
+            Self::Relu(a, _)
+            | Self::Log(a, _)
+            | Self::Tanh(a, _)
+            | Self::SumColumns(a, _)
+            | Self::Exp(a, _)
+            | Self::LogSoftmax(a, _)
+            | Self::Scale(a, _)
+            | Self::Reduce(a, _)
+            | Self::Gather(a, _) => {
                 vec![a.clone()]
             }
         }
@@ -192,6 +212,20 @@ impl GpuVariable {
     pub fn detach(&self) -> Self {
         Self::build(&self.context, self.data(), false, None)
     }
+    /// Independent leaf sharing an immutable value snapshot; no graph or gradient is retained.
+    pub fn leaf_snapshot(&self, requires_grad: bool) -> Self {
+        Self::build(&self.context, self.data(), requires_grad, None)
+    }
+    /// Joins matrix features and splits the adjoint back into both input graphs.
+    pub fn concat_columns(&self, rhs: &Self) -> Result<Self> {
+        let data = self
+            .context
+            .concat_columns_device(&self.data(), &rhs.data())?;
+        let (left, right) = (self.data().shape()[1], rhs.data().shape()[1]);
+        Ok(self.output(data, &[self, rhs], || {
+            Op::Concat(self.clone(), rhs.clone(), left, right)
+        }))
+    }
     pub fn add(&self, rhs: &Self) -> Result<Self> {
         Ok(self.output(
             self.context.add_device(&self.data(), &rhs.data())?,
@@ -231,6 +265,87 @@ impl GpuVariable {
             Op::Relu(self.clone(), a)
         }))
     }
+    /// Exact-shape division, saving both immutable inputs for backward.
+    pub fn div(&self, rhs: &Self) -> Result<Self> {
+        let (a, b) = (self.data(), rhs.data());
+        Ok(
+            self.output(self.context.div_device(&a, &b)?, &[self, rhs], || {
+                Op::Div(self.clone(), rhs.clone(), a, b)
+            }),
+        )
+    }
+    pub fn log(&self) -> Result<Self> {
+        let input = self.data();
+        Ok(self.output(self.context.log_device(&input)?, &[self], || {
+            Op::Log(self.clone(), input)
+        }))
+    }
+    pub fn tanh(&self) -> Result<Self> {
+        let data = Rc::new(self.context.tanh_device(&self.data())?);
+        let record = crate::is_grad_enabled() && self.requires_grad();
+        Ok(Self::build(
+            &self.context,
+            data.clone(),
+            record,
+            record.then(|| Op::Tanh(self.clone(), data)),
+        ))
+    }
+    /// Sum action columns of [batch,actions] into [batch,1].
+    pub fn sum_columns(&self) -> Result<Self> {
+        let input = self.data();
+        let output = self.context.sum_columns_device(&input)?;
+        Ok(self.output(output, &[self], || {
+            Op::SumColumns(self.clone(), input.shape()[1])
+        }))
+    }
+    /// Exponential with its immutable forward output saved for backward.
+    pub fn exp(&self) -> Result<Self> {
+        let data = Rc::new(self.context.exp_device(&self.data())?);
+        let record = crate::is_grad_enabled() && self.requires_grad();
+        Ok(Self::build(
+            &self.context,
+            data.clone(),
+            record,
+            record.then(|| Op::Exp(self.clone(), data)),
+        ))
+    }
+    /// Stable log probabilities over columns of [batch, actions].
+    pub fn log_softmax(&self) -> Result<Self> {
+        let data = Rc::new(self.context.log_softmax_device(&self.data())?);
+        let record = crate::is_grad_enabled() && self.requires_grad();
+        Ok(Self::build(
+            &self.context,
+            data.clone(),
+            record,
+            record.then(|| Op::LogSoftmax(self.clone(), data)),
+        ))
+    }
+    pub fn softmax(&self) -> Result<Self> {
+        self.log_softmax()?.exp()
+    }
+    /// Differentiable minimum with CPU RL's y - relu(y - x) tie convention.
+    pub fn minimum(&self, rhs: &Self) -> Result<Self> {
+        rhs.sub(&rhs.sub(self)?.relu()?)
+    }
+    /// Uses the same ReLU composition and boundary gradients as CPU clamp_var:
+    /// the lower endpoint passes gradient; the upper endpoint stops it.
+    pub fn clamp(&self, lower: f32, upper: f32) -> Result<Self> {
+        if !lower.is_finite() || !upper.is_finite() || lower > upper {
+            return Err(GpuError::InvalidBounds.into());
+        }
+        let constant = |value| {
+            Self::from_device(
+                &self.context,
+                self.context.full(self.data().shape(), value)?,
+                false,
+            )
+        };
+        let low = constant(lower)?;
+        let high = constant(upper)?;
+        let low_clipped = self.add(&low.sub(self)?.relu()?)?;
+        high.sub(&high.sub(&low_clipped)?.relu()?)
+    }
+
     pub fn sum(&self) -> Result<Self> {
         Ok(
             self.output(self.context.sum_device(&self.data())?, &[self], || {
@@ -322,6 +437,18 @@ impl GpuVariable {
                     contributions.push((a, g.clone()));
                     contributions.push((b, g));
                 }
+                Some(Op::Concat(a, b, left, right)) => {
+                    if a.requires_grad() {
+                        contributions
+                            .push((a, Rc::new(self.context.slice_columns_device(&g, 0, left)?)));
+                    }
+                    if b.requires_grad() {
+                        contributions.push((
+                            b,
+                            Rc::new(self.context.slice_columns_device(&g, left, right)?),
+                        ));
+                    }
+                }
                 Some(Op::Bias(a, b)) => {
                     if b.requires_grad() {
                         contributions.push((b, Rc::new(self.context.sum_rows_device(&g)?)));
@@ -336,6 +463,33 @@ impl GpuVariable {
                         contributions.push((b, Rc::new(self.context.mul_device(&g, &av)?)));
                     }
                 }
+                Some(Op::Div(a, b, av, bv)) => {
+                    if a.requires_grad() {
+                        contributions.push((a, Rc::new(self.context.div_device(&g, &bv)?)));
+                    }
+                    if b.requires_grad() {
+                        let numerator = self.context.mul_device(&g, &av)?;
+                        let denominator = self.context.mul_device(&bv, &bv)?;
+                        let divided = self.context.div_device(&numerator, &denominator)?;
+                        contributions.push((b, Rc::new(self.context.scale_device(&divided, -1.)?)));
+                    }
+                }
+                Some(Op::Log(a, input)) => {
+                    contributions.push((a, Rc::new(self.context.div_device(&g, &input)?)));
+                }
+                Some(Op::Tanh(a, output)) => {
+                    let squared = self.context.mul_device(&output, &output)?;
+                    let negative = self.context.scale_device(&squared, -1.)?;
+                    let ones = self.context.full(output.shape(), 1.)?;
+                    let derivative = self.context.add_device(&ones, &negative)?;
+                    contributions.push((a, Rc::new(self.context.mul_device(&g, &derivative)?)));
+                }
+                Some(Op::SumColumns(a, columns)) => {
+                    contributions.push((
+                        a,
+                        Rc::new(self.context.broadcast_columns_device(&g, columns)?),
+                    ));
+                }
                 Some(Op::Gather(a, indices)) => {
                     contributions
                         .push((a, Rc::new(self.context.scatter_rows_device(&g, &indices)?)));
@@ -345,6 +499,15 @@ impl GpuVariable {
                 }
                 Some(Op::Relu(a, av)) => {
                     contributions.push((a, Rc::new(self.context.relu_backward_device(&av, &g)?)))
+                }
+                Some(Op::Exp(a, output)) => {
+                    contributions.push((a, Rc::new(self.context.mul_device(&g, &output)?)));
+                }
+                Some(Op::LogSoftmax(a, output)) => {
+                    contributions.push((
+                        a,
+                        Rc::new(self.context.log_softmax_backward_device(&output, &g)?),
+                    ));
                 }
                 Some(Op::Reduce(a, f)) => {
                     let out = self
@@ -587,6 +750,33 @@ impl GpuAdam {
             t: 0,
         })
     }
+    /// Rebinds a device-resident state snapshot to same-shape, same-device leaves.
+    /// Immutable moments are shared until a step replaces them. Use independent
+    /// leaf snapshots to prepare an update without mutating the live optimizer.
+    pub fn fork(&self, params: Vec<GpuVariable>) -> Result<Self> {
+        validate_parameters(&params)?;
+        if params.len() != self.params.len() {
+            return Err(GpuAutogradError::InvalidOptimizer(
+                "Adam fork parameter count must match",
+            ));
+        }
+        for (old, new) in self.params.iter().zip(&params) {
+            if old.data().shape() != new.data().shape() || !old.context.is_compatible(&new.data()) {
+                return Err(GpuAutogradError::InvalidOptimizer(
+                    "Adam fork parameter shapes and devices must match",
+                ));
+            }
+        }
+        Ok(Self {
+            params,
+            moments: self.moments.clone(),
+            lr: self.lr,
+            beta1: self.beta1,
+            beta2: self.beta2,
+            epsilon: self.epsilon,
+            t: self.t,
+        })
+    }
     /// Downloads a validated host snapshot. Live gradients are not saved.
     pub fn state(&self) -> Result<GpuAdamState> {
         let moments = self
@@ -723,6 +913,39 @@ mod tests {
         assert!(
             weak.upgrade().is_none(),
             "graph nodes must not retain their outputs"
+        );
+        let categorical =
+            GpuVariable::new(&context, &Tensor::from_vec(vec![1., 2.], &[1, 2]), true).unwrap();
+        let weak = Rc::downgrade(&categorical.inner);
+        let graph = categorical
+            .log_softmax()
+            .unwrap()
+            .exp()
+            .unwrap()
+            .log()
+            .unwrap()
+            .tanh()
+            .unwrap()
+            .sum_columns()
+            .unwrap()
+            .div(&GpuVariable::new(&context, &Tensor::ones(&[1, 1]), false).unwrap())
+            .unwrap()
+            .mean()
+            .unwrap();
+        graph.backward().unwrap();
+        assert!(categorical
+            .grad_cpu()
+            .unwrap()
+            .unwrap()
+            .to_vec()
+            .iter()
+            .all(|value| value.is_finite()));
+        drop(categorical);
+        assert!(weak.upgrade().is_some());
+        drop(graph);
+        assert!(
+            weak.upgrade().is_none(),
+            "saved unary outputs must not form graph cycles"
         );
     }
 }

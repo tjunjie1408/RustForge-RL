@@ -185,6 +185,8 @@ fn explicit_headless_output_is_not_overwritten_without_permission() {
             Algorithm::Ppo => "existing-ppo",
             Algorithm::A2c => "existing-a2c",
             Algorithm::Reinforce => "existing-reinforce",
+            Algorithm::Td3 => "existing-td3",
+            Algorithm::Sac => "existing-sac",
         });
         std::fs::write(&output, "keep me").unwrap();
 
@@ -231,5 +233,101 @@ fn headless_dqn_preserves_the_exact_csv_v1_boundary() {
     assert_eq!(lines.len(), 2);
     assert_eq!(lines[1].split(',').count(), 5);
 
+    std::fs::remove_file(output).unwrap();
+}
+
+#[test]
+fn headless_continuous_ppo_pendulum_writes_generic_jsonl_metrics() {
+    let output = temporary_output("continuous-metrics");
+    let _ = std::fs::remove_file(&output);
+
+    rustforge_cli::commands::train::execute(TrainArgs {
+        execution: Default::default(),
+        algorithm: Algorithm::Ppo,
+        env: Environment::Pendulum,
+        episodes: 1,
+        no_log: false,
+        output: Some(output.clone()),
+        overwrite: false,
+        use_per: false,
+    })
+    .unwrap();
+
+    let content = std::fs::read_to_string(&output).unwrap();
+    let records: Vec<_> = content.lines().collect();
+    assert_eq!(records.len(), 1);
+    assert!(records[0].contains("\"reward.episode\":"));
+    assert!(records[0].contains("\"loss.policy\":"));
+    assert!(records[0].contains("\"loss.value\":"));
+    std::fs::remove_file(output).unwrap();
+}
+
+#[test]
+fn headless_cpu_td3_pendulum_writes_six_finite_jsonl_metrics() {
+    let output = temporary_output("td3-metrics");
+    let _ = std::fs::remove_file(&output);
+    rustforge_cli::commands::train::execute(TrainArgs {
+        execution: Default::default(),
+        algorithm: Algorithm::Td3,
+        env: Environment::Pendulum,
+        episodes: 1,
+        no_log: false,
+        output: Some(output.clone()),
+        overwrite: false,
+        use_per: false,
+    })
+    .unwrap();
+    let text = std::fs::read_to_string(&output).unwrap();
+    assert_eq!(text.lines().count(), 1);
+    let metrics = text
+        .split_once("\"metrics\":{")
+        .unwrap()
+        .1
+        .strip_suffix("}}\n")
+        .unwrap();
+    assert_eq!(metrics.split(',').count(), 6);
+    assert!(metrics.contains("\"loss.critic\":"));
+    assert!(metrics.split(',').all(|m| m
+        .split_once(':')
+        .unwrap()
+        .1
+        .parse::<f64>()
+        .unwrap()
+        .is_finite()));
+    std::fs::remove_file(output).unwrap();
+}
+
+#[test]
+fn headless_cpu_sac_pendulum_writes_eight_finite_jsonl_metrics() {
+    let output = temporary_output("sac-metrics");
+    let _ = std::fs::remove_file(&output);
+    rustforge_cli::commands::train::execute(TrainArgs {
+        execution: Default::default(),
+        algorithm: Algorithm::Sac,
+        env: Environment::Pendulum,
+        episodes: 1,
+        no_log: false,
+        output: Some(output.clone()),
+        overwrite: false,
+        use_per: false,
+    })
+    .unwrap();
+    let text = std::fs::read_to_string(&output).unwrap();
+    assert_eq!(text.lines().count(), 1);
+    let metrics = text
+        .split_once("\"metrics\":{")
+        .unwrap()
+        .1
+        .strip_suffix("}}\n")
+        .unwrap();
+    assert_eq!(metrics.split(',').count(), 8);
+    assert!(metrics.contains("\"loss.critic\":"));
+    assert!(metrics.split(',').all(|m| m
+        .split_once(':')
+        .unwrap()
+        .1
+        .parse::<f64>()
+        .unwrap()
+        .is_finite()));
     std::fs::remove_file(output).unwrap();
 }
