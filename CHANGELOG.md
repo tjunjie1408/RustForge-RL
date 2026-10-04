@@ -9,6 +9,14 @@ contain breaking changes.
 
 ### Added
 
+- GPU REINFORCE objective foundation with a seeded CPU-matching policy network,
+  stable categorical policy loss, detached advantages and optional resident
+  batch-mean baseline. Validates shapes, ownership and finite inputs/centered
+  advantages/loss. Tests cover f64 gradient parity, both baseline modes, four
+  actual CPU Adam updates, singleton/constant batches, extreme logits and invalid
+  inputs. A fixed-objective example and GPU CI steps verify optimization; owned
+  rollout training and runtime/CLI/checkpoints remain later stages.
+
 - GPU A2C worker/runtime integration and CartPole headless/live CLI device routing.
   Distinct bounded version-1 `RFGPUA2C` checkpoints save configuration, shared
   actor/value parameters, Adam moments and update counter with atomic replacement.

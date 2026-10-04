@@ -291,7 +291,7 @@ rustforge monitor logs/progress.csv   # rolling mean reward, loss, exploration/e
 | **Phase 5** | Python Bindings (PyO3) | ✅ Complete |
 | **Phase 5** | Terminal Training Console (`rustforge run` / `monitor`) | ✅ Complete |
 | **Phase 5** | Benchmarks vs SB3 | ✅ Complete (DQN/CartPole; ~22× faster) |
-| **Phase 5** | GPU Support (wgpu) | 🚧 Device tensors, autograd, neural-network modules and GPU DQN/Double DQN and checkpoint/resume, CLI/runtime device selection, prioritized replay and discrete PPO rollout/GAE training with CLI/runtime and checkpoints implemented; continuous Gaussian/PPO objectives, seeded continuous rollout/GAE agent training and Pendulum CLI/runtime/checkpoints implemented; GPU A2C objectives implemented; GPU A2C rollout/GAE agent training implemented; A2C CartPole runtime/CLI and checkpoints implemented; REINFORCE foundations next, hardware validation pending |
+| **Phase 5** | GPU Support (wgpu) | 🚧 Device tensors, autograd, neural-network modules and GPU DQN/Double DQN and checkpoint/resume, CLI/runtime device selection, prioritized replay and discrete PPO rollout/GAE training with CLI/runtime and checkpoints implemented; continuous Gaussian/PPO objectives, seeded continuous rollout/GAE agent training and Pendulum CLI/runtime/checkpoints implemented; GPU A2C objectives implemented; GPU A2C rollout/GAE agent training implemented; A2C CartPole runtime/CLI and checkpoints implemented; REINFORCE objective foundation implemented; REINFORCE rollout training next, hardware validation pending |
 
 ### GPU development
 
@@ -541,6 +541,22 @@ policy/value/total loss, categorical entropy, rollout size and throughput.
 Pause/resume retains the current rollout; graceful stop finishes it, while forced
 stop discards a partial rollout and saves the last completed update. Physical GPU
 validation remains deferred.
+
+GPU REINFORCE foundations are available through
+`agent::gpu_reinforce::{GpuReinforceNet, reinforce_loss}`. The seeded policy matches
+CPU REINFORCE's Linear/ReLU/Linear architecture. Its loss uses detached Monte Carlo
+advantages with an optional batch-mean baseline, without variance normalization.
+Mean subtraction stays on device. `checked_loss()` validates inputs, centered
+advantages and the scalar loss before backward; check gradients and their squares
+before Adam. Rollout training and runtime/CLI/checkpoints follow in later stages.
+
+```bash
+cargo test --locked -p rustforge-rl --features gpu --test gpu_reinforce_loss -- --include-ignored
+cargo run --locked -p rustforge-rl --features gpu --example gpu_reinforce_objective
+```
+
+The fixed objective example reduces loss from 0.774196 to 0.000944 in 80 updates.
+This validates objective optimization on llvmpipe; physical GPU tests remain deferred.
 
 See [the GPU implementation plan](docs/gpu-development.md) and its saved benchmark.
 

@@ -10,6 +10,8 @@ Stage 7c adds continuous runtime, Pendulum CLI routing and dual-optimizer checkp
 Stage 8a adds categorical A2C objective and shared-network update parity; stage 8b
 adds owned agent sampling, CPU rollout/GAE and fresh-environment learning.
 Stage 8c adds A2C worker/CLI routing, checkpoints and runtime controls.
+Stage 9a adds the REINFORCE categorical objective, optional mean baseline and
+seeded policy network.
 
 ## Implementation stages
 
@@ -33,7 +35,9 @@ Stage 8c adds A2C worker/CLI routing, checkpoints and runtime controls.
 | 8a | GPU A2C objective foundation | Complete: categorical actor/value/entropy objective, CPU/f64 gradient and actual seeded CPU A2C Adam parity, fixed-batch optimization |
 | 8b | GPU A2C agent training | Complete: owned network/Adam/clock, seeded sampling, CPU episode-local rollout/GAE, active-row CPU parity and environment learning |
 | 8c | GPU A2C runtime and checkpoints | Complete: worker-owned CPU/GPU agents, CartPole headless/live CLI, distinct shared-network/Adam checkpoints, metrics and controls |
-| 9a | GPU REINFORCE objective foundation | Next: categorical Monte Carlo policy loss, optional mean baseline and CPU gradient/update parity |
+| 9a | GPU REINFORCE objective foundation | Complete: categorical Monte Carlo policy loss, resident optional mean baseline, seeded policy and actual CPU gradient/Adam parity |
+| 9b | GPU REINFORCE agent training | Next: owned policy/Adam/clock, seeded sampling, Monte Carlo rollouts and environment learning |
+| 9c | GPU REINFORCE runtime and checkpoints | Planned: worker/CLI routing, bounded policy/Adam checkpoints, controls and resume contracts |
 
 ## Architecture decisions
 
@@ -1712,11 +1716,101 @@ GPU CI runs the codec, checkpoint and runtime suites and includes the CLI route 
 its existing device-selection suite. Counts above distinguish ignored native
 checks from adapter-required checks explicitly executed on llvmpipe.
 
-## Next implementation: stage 9a
+## Stage 9a: GPU REINFORCE objective foundation
 
-Add a GPU REINFORCE objective foundation using stable categorical log probabilities
-and a seeded policy network. Match the CPU Monte Carlo return convention and
-optional batch-mean baseline, including baseline-disabled loss and gradients.
-Verify actual CPU gradient/Adam-update parity and fixed-batch optimization before
-stage 9b adds owned rollout training and stage 9c adds runtime/CLI/checkpoints.
-Physical GPU profiling and full experiment-state persistence remain separate work.
+`agent::gpu_reinforce::GpuReinforceNet` uses Linear/ReLU/Linear with four
+parameters in CPU REINFORCE order. Initialization uses the supplied seed and
+its wrapping successor, matching `REINFORCE::new_seeded` exactly. Dimensions and
+parameter-size multiplication are validated before layer construction.
+
+`reinforce_loss` computes `-mean(log pi(action) * advantages)` with stable
+categorical log probabilities and typed action indices. Advantages are detached
+snapshots. With Monte Carlo rollout collection (zero values, lambda 1, zero final
+bootstrap), advantages equal discounted returns. The objective accepts supplied
+advantages like CPU REINFORCE; it does not compute returns itself or consume old
+log probabilities. There is no critic, entropy term, importance ratio or variance
+normalization. The optional baseline subtracts the batch mean from advantages.
+
+Mean reduction and scalar broadcast use existing device operators, so graph
+construction and baseline subtraction perform no host readback. `checked_loss`
+explicitly checks logits, supplied advantages, effective advantages and scalar
+loss for finite values before backward. A finite input can overflow the mean
+reduction, which is rejected at this boundary. Gradient and squared-gradient
+checks remain the optimizer caller's responsibility; the example performs both
+before each Adam step. This stage does not own an optimizer or training clock.
+
+Singleton or constant-advantage batches produce zero centered advantages when the
+baseline is enabled. Baseline-disabled batches preserve raw advantages. A single
+available action has zero policy loss and gradient. Stable log probabilities
+also handle finite extreme logits, including selecting the low-probability action.
+Shapes, action length/column metadata and cross-context tensors/indices are rejected
+through typed errors. Input advantages do not receive gradients in either mode.
+
+```bash
+cargo test --locked -p rustforge-rl --features gpu --test gpu_reinforce_loss -- --include-ignored
+cargo run --locked -p rustforge-rl --features gpu --example gpu_reinforce_objective
+```
+
+The seeded fixed example optimizes four identity observations with actions
+`[0, 0, 1, 1]` and baseline-disabled unit advantages. Loss decreases from
+**0.774196** to **0.000944** over 80 Adam updates. This verifies fixed-objective
+optimization on Mesa llvmpipe GL; it does not establish environment learning or
+physical GPU performance.
+
+### Deviations from Plan (stage 9a)
+
+- Reused existing scalar broadcast for detached mean centering instead of adding
+  an autograd operator or modifying CPU REINFORCE. No lower-layer or CPU algorithm
+  changes were needed.
+- Exposed effective detached advantages for diagnostics, and explicitly checked
+  them for reduction overflow before backward.
+- The fixed example uses baseline-disabled unit advantages: subtracting their
+  mean would correctly make this batch's policy gradient zero. Both baseline
+  modes are covered by loss/gradient and actual CPU Adam parity tests.
+- Rollout collection, owned optimizer/clock, runtime/CLI and checkpoints remain
+  stages 9b/9c. Physical GPU testing remains deferred by user instruction.
+
+### Issue Resolution Progress (stage 9a)
+
+| Work | Issue ID | Result |
+| --- | --- | --- |
+| Seeded policy network and dimension guards | Unassigned | Complete, four CPU-matching parameters including wrapping seed parity |
+| Stable categorical Monte Carlo objective | Unassigned | Complete, detached raw advantages and optional resident mean baseline |
+| Independent numerical and actual CPU update parity | Unassigned | Complete, f64 finite differences and four CPU Adam updates in each baseline mode |
+| Edge cases, invalid metadata and finite validation | Unassigned | Complete, singleton/constant batches, extreme logits, foreign contexts and baseline overflow |
+| Fixed optimization example and GPU CI | Unassigned | Complete, loss below 0.001 after 80 updates |
+| Owned Monte Carlo rollout agent | Unassigned | Next (9b) |
+| Runtime/CLI and resumable policy/Adam state | Unassigned | Planned (9c) |
+
+### Verification (stage 9a)
+
+| Check | Passing result | Delta from stage 8c |
+| --- | --- | --- |
+| Native workspace/all features, excluding Python | 1,076 passed, 139 ignored, 0 failed | +1 ordinary dimension test; +4 adapter-required objective tests |
+| Adapter-required REINFORCE objective suite | 4 passed, 0 failed | Both baseline modes, f64 gradients, CPU Adam parity, edge cases and rejection |
+| Fixed GPU REINFORCE objective example | Passed | Loss 0.774196 to 0.000944; 80 updates |
+| Workspace Clippy/all targets/all features, warnings denied | Passed | Excluding Python |
+| Rust 1.75 workspace/all targets/all features | Passed | Excluding Python; no dependency/lockfile changes |
+| Default-feature workspace/all-targets check | Passed | Excluding Python; new module/example feature gated |
+| Formatting and patch whitespace | Passed | `cargo fmt --all -- --check`, `git diff --check` |
+
+The four adapter-required tests cover (1) both baseline losses, detached input
+references and independent f64 finite differences, (2) seeded network logits,
+parameter gradients and four actual CPU REINFORCE Adam updates per baseline mode,
+(3) uniform/single-action/extreme logits and singleton/constant-advantage zero
+gradients, and (4) malformed/empty batches, invalid action metadata, foreign tensor
+and index ownership, nonfinite inputs and finite-input baseline overflow. One
+ordinary test validates dimensions without constructing an adapter. The native
+suite leaves adapter-required tests ignored; the focused suite explicitly executes
+all four on llvmpipe. GPU CI runs both the suite and fixed objective example.
+
+## Next implementation: stage 9b
+
+Build an owned GPU REINFORCE agent around the seeded policy, Adam and successful
+update counter. Add reproducible categorical sampling with a caller-controlled
+RNG, CPU episode-local discounted Monte Carlo rollout collection and one update
+per active rollout batch. Preserve the optional mean baseline and zero bootstrap
+at episode boundaries, reject malformed/nonfinite inputs before optimizer mutation,
+and verify actual CPU updates plus fresh environment learning. Runtime/CLI,
+checkpoint continuation and controls follow in stage 9c. Physical GPU profiling
+and full experiment-state persistence remain separate work.

@@ -61,3 +61,6 @@ pub mod gpu_gaussian;
 
 #[cfg(feature = "gpu")]
 pub mod gpu_a2c;
+
+#[cfg(feature = "gpu")]
+pub mod gpu_reinforce;

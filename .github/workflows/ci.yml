@@ -183,3 +183,7 @@ jobs:
         run: cargo test --locked -p rustforge-rl --features gpu --lib gpu_a2c::agent::checkpoint
       - name: Verify GPU A2C checkpoint/runtime resume and control handling
         run: cargo test --locked -p rustforge-rl --features gpu --test gpu_a2c_checkpoint --test gpu_a2c_runtime -- --include-ignored
+      - name: Verify GPU REINFORCE objective and actual CPU Adam parity
+        run: cargo test --locked -p rustforge-rl --features gpu --test gpu_reinforce_loss -- --include-ignored
+      - name: Optimize fixed GPU REINFORCE objective
+        run: cargo run --locked -p rustforge-rl --features gpu --example gpu_reinforce_objective
