@@ -1,4 +1,22 @@
-# CPU DQN benchmark
+# Performance benchmarks
+
+## Physical GPU and CPU comparison
+
+The [2026-10-05 GPU performance report](gpu-performance.md) provides measured
+CPU/direct/tiled matrix latency and CPU/GPU CLI training throughput for DQN,
+PPO (CartPole and Pendulum), A2C, REINFORCE, TD3 and SAC. It includes comparison
+diagrams, raw data, hardware details and reproducible commands.
+
+![CPU and GPU matmul comparison](../benchmarks/gpu_comparison/results/2026-10-05/figures/matmul-comparison.png)
+
+## Historical CPU DQN benchmark
+
+The existing RustForge/SB3 results below are retained as a separate historical
+dataset. They were not rerun with the GPU suite and use a different workload
+and timing boundary.
+
+See [why default CLI training can be slower on GPU](gpu-cli-performance.md)
+for the implementation paths, synchronization costs and softmax precision repair.
 
 ### RL Training Benchmark: RustForge vs Stable-Baselines3
 

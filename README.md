@@ -118,8 +118,14 @@ Adapter-required GPU tests are ignored by default. Run the explicit commands in
 
 ## Status
 
-GPU implementation stages through 11c are complete. Correctness checks run on
-Mesa llvmpipe; physical GPU validation and performance profiling remain pending.
+GPU implementation stages through 11c are complete. Historical correctness checks
+run on Mesa llvmpipe. The [physical GPU benchmark](docs/gpu-performance.md)
+compares CPU, direct/tiled matmul and all six CLI training algorithms on an RTX
+5060 Laptop GPU; its numerical checks and validation limits are documented.
+The softmax precision failure found during hardware validation has been fixed;
+[verification history](docs/gpu-performance.md#verification-history) distinguishes
+the original measurements from post-fix tests. See also
+[why default CLI training is slower on GPU](docs/gpu-cli-performance.md).
 Full experiment-state resume is separate from current agent checkpoints.
 
 The [CPU DQN/SB3 comparison](docs/performance.md) reports throughput and learning
@@ -128,6 +134,7 @@ curves under its stated setup; it does not establish GPU performance.
 - [Workflow details and compatibility](docs/usability.md)
 - [Python bindings](crates/rustforge-python/README.md)
 - [GPU implementation and verification](docs/gpu-development.md)
+- [CPU/GPU performance results and diagrams](docs/gpu-performance.md)
 - [Changelog](CHANGELOG.md)
 - [Contribution guide](CONTRIBUTING.md)
 

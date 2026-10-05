@@ -1,0 +1,58 @@
+{
+  "started_at": "2026-10-05T15:50:41.429076+08:00",
+  "source_commit": "9fc2582a20418f8e40c384eaa2721226a0f2ed0c",
+  "source_status": [
+    " M crates/rustforge-tensor/examples/gpu_benchmark.rs"
+  ],
+  "platform": "Windows-11-10.0.26200-SP0",
+  "cpu": "AMD Ryzen 7 250 w/ Radeon 780M Graphics",
+  "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: x86_64-pc-windows-msvc\nrelease: 1.96.0\nLLVM version: 22.1.2",
+  "gpu_inventory": "name, driver_version, memory.total [MiB]\nNVIDIA GeForce RTX 5060 Laptop GPU, 616.92, 8151 MiB",
+  "build": "release, locked dependencies, gpu feature",
+  "binary_sha256": {
+    "rustforge.exe": "649de052e24f20eb2d4f170fa5e450b935e3745007166da9fde97d1f6898a94c",
+    "gpu_benchmark.exe": "323f3658868c6efb7ce0e79312eae1a169be61f4c56ec7da79eabcdc37b382af"
+  },
+  "trials": 3,
+  "matrix_iterations": 100,
+  "matrix_sizes": "32,64,128,256,512,1024",
+  "profiles": [
+    [
+      "dqn",
+      "cartpole",
+      30
+    ],
+    [
+      "ppo",
+      "cartpole",
+      10
+    ],
+    [
+      "ppo",
+      "pendulum",
+      10
+    ],
+    [
+      "a2c",
+      "cartpole",
+      10
+    ],
+    [
+      "reinforce",
+      "cartpole",
+      10
+    ],
+    [
+      "td3",
+      "pendulum",
+      10
+    ],
+    [
+      "sac",
+      "pendulum",
+      10
+    ]
+  ],
+  "timing": "CLI process wall time including initialization, training and metrics persistence; compilation excluded",
+  "completed_at": "2026-10-05T16:27:09.106510+08:00"
+}

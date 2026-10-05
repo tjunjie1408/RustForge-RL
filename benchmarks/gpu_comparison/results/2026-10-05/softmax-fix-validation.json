@@ -1,0 +1,18 @@
+{
+  "date": "2026-10-05",
+  "source_base_commit": "9fc2582a20418f8e40c384eaa2721226a0f2ed0c",
+  "source_state": "Working tree fix; original timing dataset retained unchanged",
+  "adapter": "NVIDIA GeForce RTX 5060 Laptop GPU, Vulkan, driver 616.92",
+  "shader_sha256": "eb9f436542584a43d7449a19326f3695526ec0e349d30d3a973f015fe31d1070",
+  "release_cli_sha256": "a9125d2ea3c6f8482bcc5e7449d582bdbbe0d6e54e1661f44573f2e6582a0e45",
+  "performance_suite_rerun": false,
+  "checks": [
+    {"command": "cargo test --locked -p rustforge-tensor --features gpu --test gpu_matmul categorical_probabilities_preserve_common_logit_offsets -- --exact --ignored --test-threads=1", "result": "PRE-FIX: expected failure, log probability -0.5283203 vs -0.52797574"},
+    {"command": "cargo test --locked -p rustforge-tensor --features gpu --test gpu_matmul -- --include-ignored --test-threads=1", "result": "POST-FIX PASS: 24 tests, 0 ignored"},
+    {"command": "cargo test --locked -p rustforge-rl --features gpu --test gpu_ppo_loss --test gpu_a2c_loss --test gpu_reinforce_loss -- --include-ignored --test-threads=1", "result": "POST-FIX PASS: PPO 3, A2C 4, REINFORCE 4; 11 total"},
+    {"command": "cargo fmt --all -- --check", "result": "PASS"},
+    {"command": "cargo clippy --locked -p rustforge-tensor --features gpu --all-targets -- -D warnings", "result": "PASS"},
+    {"command": "cargo build --release --locked -p rustforge-cli --features gpu --bin rustforge", "result": "PASS"},
+    {"command": "rustforge train ppo --device gpu --env cartpole --episodes 2 --output <new smoke-test file>", "result": "PASS: 2 episodes, 51 steps; smoke check, not a new performance measurement"}
+  ]
+}

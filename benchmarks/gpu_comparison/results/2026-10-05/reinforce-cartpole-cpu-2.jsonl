@@ -1,0 +1,10 @@
+{"episode":0,"global_step":11,"metrics":{"reward.episode":10.0,"reward.moving_average":10.0,"loss.policy":0.019517453387379646,"rollout.size":11.0,"performance.steps_per_second":44534.41295546559}}
+{"episode":1,"global_step":51,"metrics":{"reward.episode":39.0,"reward.moving_average":24.5,"loss.policy":0.06645140051841736,"rollout.size":40.0,"performance.steps_per_second":108119.56752172991}}
+{"episode":2,"global_step":83,"metrics":{"reward.episode":31.0,"reward.moving_average":26.66666603088379,"loss.policy":1.0027692317962646,"rollout.size":32.0,"performance.steps_per_second":131391.48329903436}}
+{"episode":3,"global_step":94,"metrics":{"reward.episode":10.0,"reward.moving_average":22.5,"loss.policy":0.4548127353191376,"rollout.size":11.0,"performance.steps_per_second":134209.02341519133}}
+{"episode":4,"global_step":140,"metrics":{"reward.episode":45.0,"reward.moving_average":27.0,"loss.policy":0.09574559330940247,"rollout.size":46.0,"performance.steps_per_second":130450.98770033543}}
+{"episode":5,"global_step":161,"metrics":{"reward.episode":20.0,"reward.moving_average":25.83333396911621,"loss.policy":-0.41185125708580017,"rollout.size":21.0,"performance.steps_per_second":138637.73357444242}}
+{"episode":6,"global_step":226,"metrics":{"reward.episode":64.0,"reward.moving_average":31.285715103149414,"loss.policy":-0.361642450094223,"rollout.size":65.0,"performance.steps_per_second":166580.67369352104}}
+{"episode":7,"global_step":257,"metrics":{"reward.episode":30.0,"reward.moving_average":31.125,"loss.policy":0.06356648355722427,"rollout.size":31.0,"performance.steps_per_second":176003.28722092864}}
+{"episode":8,"global_step":274,"metrics":{"reward.episode":16.0,"reward.moving_average":29.44444465637207,"loss.policy":0.21416115760803223,"rollout.size":17.0,"performance.steps_per_second":180870.0244240544}}
+{"episode":9,"global_step":285,"metrics":{"reward.episode":10.0,"reward.moving_average":27.5,"loss.policy":-0.2957330048084259,"rollout.size":11.0,"performance.steps_per_second":182973.8058551618}}

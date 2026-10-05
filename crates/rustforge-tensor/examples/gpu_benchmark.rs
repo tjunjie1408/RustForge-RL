@@ -33,6 +33,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if iterations == 0 {
         return Err("iterations must be positive".into());
     }
+    let sizes = std::env::args()
+        .nth(2)
+        .map(|value| {
+            value
+                .split(',')
+                .map(str::parse::<usize>)
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?
+        .unwrap_or_else(|| vec![32, 64, 128, 256]);
+    if sizes.is_empty() || sizes.contains(&0) {
+        return Err("matrix sizes must be positive".into());
+    }
     let context = GpuContext::new()?;
     let naive = context.with_matmul_kernel(MatmulKernel::Naive);
     let tiled = context.with_matmul_kernel(MatmulKernel::Tiled);
@@ -42,7 +55,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "# CPU Tensor::matmul includes output allocation; three trials, alternating GPU order"
     );
     println!("n,iterations,trial,cpu_ms,naive_ms,tiled_ms");
-    for n in [32, 64, 128, 256] {
+    for n in sizes {
         let left = Tensor::rand_uniform(&[n, n], -1., 1., Some(123));
         let right = Tensor::rand_uniform(&[n, n], -1., 1., Some(124));
         let expected = left.matmul(&right);

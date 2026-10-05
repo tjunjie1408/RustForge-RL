@@ -1,0 +1,18 @@
+{
+  "checks": [
+    {"command": "cargo fmt --all -- --check", "result": "PASS"},
+    {"command": "cargo clippy --locked -p rustforge-tensor --features gpu --example gpu_benchmark -- -D warnings", "result": "PASS"},
+    {"command": "python benchmarks/gpu_comparison/test_metrics.py", "result": "PASS: 7 tests"},
+    {"command": "cargo test --locked -p rustforge-tensor --features gpu --test gpu_matmul -- --include-ignored --test-threads=1", "result": "FAIL: 22 passed, 1 failed, 0 ignored"},
+    {"command": "cargo test --locked -p rustforge-tensor --features gpu --test gpu_matmul stable_categorical_probabilities_cover_extreme_logits_empty_rows_and_exp -- --exact --ignored --test-threads=1", "result": "FAIL: same assertion reproduced in isolation"}
+  ],
+  "failure": {
+    "test": "stable_categorical_probabilities_cover_extreme_logits_empty_rows_and_exp",
+    "file": "crates/rustforge-tensor/tests/gpu_matmul.rs",
+    "line": 619,
+    "actual": 0.58981043,
+    "reference": 0.5897977,
+    "absolute_tolerance": 0.000002,
+    "status": "Open: observed numerical precision failure; specific cause not established. Production kernels and test tolerances were not changed."
+  }
+}
