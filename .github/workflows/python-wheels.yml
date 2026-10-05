@@ -66,8 +66,16 @@ jobs:
         shell: bash
         working-directory: crates/rustforge-python
         run: |
-          python -m pip install dist/*.whl pytest "gymnasium>=0.29"
-          python -m pytest -q tests -p no:cacheprovider
+          python -m venv "$RUNNER_TEMP/wheel-test"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            wheel_python="$RUNNER_TEMP/wheel-test/Scripts/python.exe"
+          else
+            wheel_python="$RUNNER_TEMP/wheel-test/bin/python"
+          fi
+          "$wheel_python" -m pip install dist/*.whl pytest "gymnasium>=0.29"
+          cd "$RUNNER_TEMP"
+          "$wheel_python" -c "import importlib.metadata, os, pathlib, rustforge, tomllib; root = pathlib.Path(os.environ['GITHUB_WORKSPACE']); version = tomllib.loads((root / 'Cargo.toml').read_text())['workspace']['package']['version']; assert importlib.metadata.version('rustforge-rl') == version; assert not pathlib.Path(rustforge.__file__).resolve().is_relative_to(root.resolve()); print(version, rustforge.__file__)"
+          "$wheel_python" -m pytest -q "$GITHUB_WORKSPACE/crates/rustforge-python/tests" -p no:cacheprovider
 
       - uses: actions/upload-artifact@v4
         with:

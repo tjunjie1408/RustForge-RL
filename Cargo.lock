@@ -1495,7 +1495,7 @@ checksum = "08d43f7aa6b08d49f382cde6a7982047c3426db949b1424bc4b7ec9ae12c6ce2"
 
 [[package]]
 name = "rustforge-autograd"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "approx",
  "dhat",
@@ -1508,7 +1508,7 @@ dependencies = [
 
 [[package]]
 name = "rustforge-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1523,7 +1523,7 @@ dependencies = [
 
 [[package]]
 name = "rustforge-nn"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "approx",
  "bincode",
@@ -1536,7 +1536,7 @@ dependencies = [
 
 [[package]]
 name = "rustforge-python"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "pyo3",
  "rustforge-rl",
@@ -1545,7 +1545,7 @@ dependencies = [
 
 [[package]]
 name = "rustforge-rl"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "approx",
  "bincode",
@@ -1566,7 +1566,7 @@ dependencies = [
 
 [[package]]
 name = "rustforge-tensor"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "approx",
  "bytemuck",
@@ -1582,7 +1582,7 @@ dependencies = [
 
 [[package]]
 name = "rustforge-tui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "crossbeam-channel",

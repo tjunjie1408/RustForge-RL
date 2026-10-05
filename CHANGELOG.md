@@ -7,7 +7,22 @@ contain breaking changes.
 
 ## [Unreleased]
 
+Changes below are prepared for 0.2.0; the release has not been published.
+
+### Fixed
+
+- GPU log-softmax preserves precision for large common logit offsets; a
+  regression test checks offsets up to ±10,000 against an f64 reference.
+- Release CLI binaries include the GPU feature. Artifact checks verify the
+  version, GPU plan discovery and CPU training before publication.
+
 ### Added
+
+- Physical RTX 5060 benchmarks, raw results and reproducible scripts, with
+  [matrix comparisons](docs/gpu-performance.md) and
+  [CLI comparisons](docs/gpu-cli-performance.md). The measured tiled 1024×1024
+  matrix multiplication is 12.74× faster than CPU; the seven measured default
+  CLI training profiles are slower on GPU. These are workload-specific results.
 
 - Human/agent workflow helpers: typed Python `make_env`, `available_envs` and
   `train`, native/Gym name aliases, pathlib training outputs and early validation.
@@ -26,8 +41,9 @@ contain breaking changes.
   Candidate restore preserves live state on failure; fixed-noise continued
   updates and saved bytes match exactly. Replay/environment/RNG/warm-up restart
   on resume. Shared CPU/GPU configuration validation and checkpoint/runtime/CLI
-  tests complete the planned SAC integration; physical GPU profiling remains
-  deferred.
+  tests complete the planned SAC integration. Physical GPU timings are now
+  documented in the linked benchmark guides; detailed kernel profiling remains
+  future work.
 
 - Owned GPU SAC agent with seeded Gaussian actor, twin critics/frozen targets,
   resident actor/joint-critic/log-temperature Adam states and one successful-update
