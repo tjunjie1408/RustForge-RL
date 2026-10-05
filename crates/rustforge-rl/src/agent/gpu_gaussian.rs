@@ -68,15 +68,8 @@ pub struct GpuGaussianSample {
 impl GpuGaussianSample {
     /// Validates the physical actions as well as density inputs/intermediates.
     pub fn checked_metrics(&self) -> Result<GpuGaussianMetrics> {
-        let context = self.actions.context();
-        if context
-            .download(&context.nonfinite_count_device(&self.actions.data())?)?
-            .item()
-            != 0.
-        {
-            return Err(GpuGaussianError::NonFinite);
-        }
-        self.distribution.checked_metrics()
+        self.distribution
+            .checked_metrics_with_action(Some(&self.actions))
     }
 }
 #[derive(Clone, Copy, Debug)]
@@ -87,20 +80,61 @@ pub struct GpuGaussianMetrics {
 impl GpuGaussianLogProb {
     /// Explicit scalar validation/readback before backward or optimizer updates.
     pub fn checked_metrics(&self) -> Result<GpuGaussianMetrics> {
-        for variable in self
-            .inputs
-            .iter()
-            .chain([&self.log_probs, &self.base_entropy])
+        self.checked_metrics_with_action(None)
+    }
+
+    fn checked_metrics_with_action(
+        &self,
+        action: Option<&GpuVariable>,
+    ) -> Result<GpuGaussianMetrics> {
+        let context = self.log_probs.context();
+        let _profile = context.profile_scope("gaussian_validation_metrics");
+        // Retain every immutable snapshot, including unclipped raw inputs. All
+        // original reduction kernels run unchanged; pack their results and the
+        // two diagnostic means into one readback without adding an autograd graph.
+        let variables = action
+            .into_iter()
+            .chain(self.inputs.iter())
+            .chain([&self.log_probs, &self.base_entropy]);
+        // Public diagnostic fields can be replaced with variables from another
+        // ownership scope. Preserve the original per-context checks in that
+        // unusual case; the normal generated distribution uses one packed read.
+        let log_probs = self.log_probs.data();
+        if variables
+            .clone()
+            .any(|v| !v.context().is_compatible(&log_probs))
         {
-            let c = variable.context();
-            let invalid = c.nonfinite_count_device(&variable.data())?;
-            if c.download(&invalid)?.item() != 0. {
+            for variable in variables {
+                let c = variable.context();
+                if c.download(&c.nonfinite_count_device(&variable.data())?)?
+                    .item()
+                    != 0.
+                {
+                    return Err(GpuGaussianError::NonFinite);
+                }
+            }
+            let metrics = GpuGaussianMetrics {
+                mean_log_prob: self.log_probs.mean()?.to_cpu()?.item(),
+                base_entropy: self.base_entropy.mean()?.to_cpu()?.item(),
+            };
+            if !metrics.mean_log_prob.is_finite() || !metrics.base_entropy.is_finite() {
                 return Err(GpuGaussianError::NonFinite);
             }
+            return Ok(metrics);
+        }
+        let mut scalars = variables
+            .map(|variable| context.nonfinite_count_device(&variable.data()))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let count = scalars.len();
+        scalars.push(context.mean_device(&log_probs)?);
+        scalars.push(context.mean_device(&self.base_entropy.data())?);
+        let values = context.download_scalars(&scalars.iter().collect::<Vec<_>>())?;
+        if values[..count].iter().any(|&value| value != 0.) {
+            return Err(GpuGaussianError::NonFinite);
         }
         let metrics = GpuGaussianMetrics {
-            mean_log_prob: self.log_probs.mean()?.to_cpu()?.item(),
-            base_entropy: self.base_entropy.mean()?.to_cpu()?.item(),
+            mean_log_prob: values[count],
+            base_entropy: values[count + 1],
         };
         if !metrics.mean_log_prob.is_finite() || !metrics.base_entropy.is_finite() {
             return Err(GpuGaussianError::NonFinite);

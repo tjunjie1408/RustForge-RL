@@ -63,6 +63,11 @@ impl GpuContext {
             self.inner
                 .queue
                 .write_buffer(&storage.buffer, 0, bytemuck::cast_slice(&values));
+            self.record_profile(super::GpuProfileCounters {
+                uploads: 1,
+                upload_bytes: (values.len() as u64) * 4,
+                ..Default::default()
+            });
             #[cfg(test)]
             self.inner
                 .transfers

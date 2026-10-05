@@ -138,6 +138,7 @@ impl GpuLinear {
 }
 impl GpuModule for GpuLinear {
     fn forward(&self, input: &GpuVariable) -> Result<GpuVariable> {
+        let _profile = input.context().profile_scope("linear_forward");
         let output = input.matmul_t(&self.weight)?;
         match &self.bias {
             Some(bias) => Ok(output.add_bias(bias)?),

@@ -576,7 +576,7 @@ impl GpuContext {
             pass.set_bind_group(0, &bindings, &[]);
             pass.dispatch_workgroups(grid[0], grid[1], 1);
         }
-        self.inner.queue.submit(Some(encoder.finish()));
+        self.submit_profiled(encoder, u64::from(length != 0), false);
         Ok(())
     }
 }

@@ -100,7 +100,9 @@ impl PrioritizedReplayBuffer {
         self.len() == 0
     }
 
-    /// Samples a batch using prioritization.
+    /// Samples a batch using prioritization without allocating.
+    ///
+    /// Only the active prefix is written; rows beyond `batch.size` remain unchanged.
     ///
     /// - `beta`: IS weight annealing parameter.
     /// - `batch`: The pre-allocated TransitionBatch to sample into.
@@ -123,52 +125,42 @@ impl PrioritizedReplayBuffer {
 
         let mut min_prob = f32::MAX;
 
-        // Temporary storage for sampled data
-        let mut sampled_data = Vec::with_capacity(actual_batch);
+        // Extract contiguous destinations once, outside the sampling loop.
+        let states = batch.states.data_mut().as_slice_mut().unwrap();
+        let next_states = batch.next_states.data_mut().as_slice_mut().unwrap();
+        let rewards = batch.rewards.data_mut().as_slice_mut().unwrap();
+        let dones = batch.dones.data_mut().as_slice_mut().unwrap();
+        let weights = weights.data_mut().as_slice_mut().unwrap();
 
         for b in 0..actual_batch {
             let lower = segment * (b as f32);
             let upper = segment * ((b + 1) as f32);
             let s = self.rng.gen_range(lower..upper);
-
             let (tree_idx, p, data_idx) = self.tree.get(s);
             let prob = p / total_p;
             if prob < min_prob {
                 min_prob = prob;
             }
-            sampled_data.push((tree_idx, prob, data_idx));
+
+            let src_offset = data_idx * self.obs_dim;
+            let dst_offset = b * self.obs_dim;
+            states[dst_offset..dst_offset + self.obs_dim]
+                .copy_from_slice(&self.states[src_offset..src_offset + self.obs_dim]);
+            next_states[dst_offset..dst_offset + self.obs_dim]
+                .copy_from_slice(&self.next_states[src_offset..src_offset + self.obs_dim]);
+            rewards[b] = self.rewards[data_idx];
+            dones[b] = if self.dones[data_idx] { 1.0 } else { 0.0 };
+            batch.actions[b] = self.actions[data_idx];
+            tree_indices[b] = tree_idx;
+
+            // Reuse caller-owned weights as scratch space. Preserve the original
+            // arithmetic and seeded draw order; only normalization needs a second pass.
+            weights[b] = (prob * self.len() as f32).powf(-beta);
         }
 
         let max_weight = (min_prob * self.len() as f32).powf(-beta);
-
-        let states_flat = batch.states.data_mut();
-        let next_states_flat = batch.next_states.data_mut();
-        let rewards_flat = batch.rewards.data_mut();
-        let dones_flat = batch.dones.data_mut();
-        let weights_flat = weights.data_mut();
-
-        for (b, &(tree_idx, prob, data_idx)) in sampled_data.iter().enumerate() {
-            let src_offset = data_idx * self.obs_dim;
-            let dst_offset = b * self.obs_dim;
-
-            let src_state = &self.states[src_offset..src_offset + self.obs_dim];
-            let dst_state =
-                &mut states_flat.as_slice_mut().unwrap()[dst_offset..dst_offset + self.obs_dim];
-            dst_state.copy_from_slice(src_state);
-
-            let src_ns = &self.next_states[src_offset..src_offset + self.obs_dim];
-            let dst_ns = &mut next_states_flat.as_slice_mut().unwrap()
-                [dst_offset..dst_offset + self.obs_dim];
-            dst_ns.copy_from_slice(src_ns);
-
-            rewards_flat.as_slice_mut().unwrap()[b] = self.rewards[data_idx];
-            dones_flat.as_slice_mut().unwrap()[b] = if self.dones[data_idx] { 1.0 } else { 0.0 };
-
-            let weight = (prob * self.len() as f32).powf(-beta) / max_weight;
-            weights_flat.as_slice_mut().unwrap()[b] = weight;
-
-            batch.actions[b] = self.actions[data_idx];
-            tree_indices[b] = tree_idx;
+        for weight in &mut weights[..actual_batch] {
+            *weight /= max_weight;
         }
 
         batch.size = actual_batch;
@@ -178,6 +170,99 @@ impl PrioritizedReplayBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn optimized_sampling_matches_reference_draws_weights_and_active_rows() {
+        for capacity in [7, 8] {
+            for pushes in [3, capacity + 5] {
+                for seed in [0, 42, 99] {
+                    let mut buf = PrioritizedReplayBuffer::with_seed(capacity, 2, 0.6, seed);
+                    for i in 0..pushes {
+                        buf.push(&[i as f32, -1.0], i, i as f32, &[2.0, i as f32], i % 2 == 0);
+                    }
+                    let indices: Vec<_> = (capacity - 1..capacity - 1 + buf.len()).collect();
+                    let errors: Vec<_> = (0..buf.len()).map(|i| (i + 1) as f32 * 3.0).collect();
+                    buf.update_priorities(&indices, &errors);
+                    let mut reference_rng = buf.rng.clone();
+
+                    for requested in [0, 1, 4, 12] {
+                        for beta in [0.0, 0.4, 1.0] {
+                            let mut batch = TransitionBatch::new(12, 2);
+                            for tensor in [
+                                &mut batch.states,
+                                &mut batch.next_states,
+                                &mut batch.rewards,
+                                &mut batch.dones,
+                            ] {
+                                tensor.data_mut().fill(-99.0);
+                            }
+                            batch.actions.fill(usize::MAX);
+                            let mut weights = Tensor::full(&[12, 1], -99.0);
+                            let mut tree_indices = [usize::MAX; 12];
+
+                            // Original two-pass sampler: keep draws before copying and weighting.
+                            let size = requested.min(buf.len());
+                            let total = buf.tree.total_priority();
+                            let segment = total / size as f32;
+                            let draws: Vec<_> = (0..size)
+                                .map(|b| {
+                                    let s = reference_rng
+                                        .gen_range(segment * b as f32..segment * (b + 1) as f32);
+                                    let (index, priority, slot) = buf.tree.get(s);
+                                    (index, priority / total, slot)
+                                })
+                                .collect();
+                            let min_prob = draws.iter().map(|draw| draw.1).fold(f32::MAX, f32::min);
+                            let max_weight = (min_prob * buf.len() as f32).powf(-beta);
+
+                            buf.sample(
+                                requested,
+                                beta,
+                                &mut batch,
+                                &mut weights,
+                                &mut tree_indices,
+                            );
+                            assert_eq!(batch.size, size);
+                            for (b, &(index, prob, slot)) in draws.iter().enumerate() {
+                                assert_eq!(tree_indices[b], index);
+                                assert_eq!(batch.actions[b], buf.actions[slot]);
+                                assert_eq!(
+                                    &batch.states.data().as_slice().unwrap()[b * 2..b * 2 + 2],
+                                    &buf.states[slot * 2..slot * 2 + 2]
+                                );
+                                assert_eq!(
+                                    &batch.next_states.data().as_slice().unwrap()[b * 2..b * 2 + 2],
+                                    &buf.next_states[slot * 2..slot * 2 + 2]
+                                );
+                                assert_eq!(batch.rewards.data()[[b, 0]], buf.rewards[slot]);
+                                assert_eq!(
+                                    batch.dones.data()[[b, 0]],
+                                    if buf.dones[slot] { 1.0 } else { 0.0 }
+                                );
+                                let expected = (prob * buf.len() as f32).powf(-beta) / max_weight;
+                                assert_eq!(weights.data()[[b, 0]].to_bits(), expected.to_bits());
+                            }
+                            for (b, &tree_index) in tree_indices.iter().enumerate().skip(size) {
+                                assert_eq!(tree_index, usize::MAX);
+                                assert_eq!(batch.actions[b], usize::MAX);
+                                assert_eq!(weights.data()[[b, 0]], -99.0);
+                                assert_eq!(batch.rewards.data()[[b, 0]], -99.0);
+                                assert_eq!(batch.dones.data()[[b, 0]], -99.0);
+                                for col in 0..2 {
+                                    assert_eq!(batch.states.data()[[b, col]], -99.0);
+                                    assert_eq!(batch.next_states.data()[[b, col]], -99.0);
+                                }
+                            }
+                            assert_eq!(
+                                buf.rng.clone().gen::<u64>(),
+                                reference_rng.clone().gen::<u64>()
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn test_per_push_and_sample() {

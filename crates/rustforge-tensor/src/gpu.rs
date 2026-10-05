@@ -13,7 +13,9 @@ use crate::Tensor;
 
 mod indices;
 mod operations;
+mod profiling;
 pub use indices::GpuIndices;
+pub use profiling::{GpuProfile, GpuProfileCounters, GpuProfilePhase, GpuProfileScope};
 
 /// Matrix kernel selection for measurement and adapter-specific tuning.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -132,6 +134,7 @@ impl std::error::Error for GpuError {
 pub struct GpuContext {
     inner: Arc<DeviceState>,
     matmul_kernel: MatmulKernel,
+    profiler: Option<Arc<profiling::Profiler>>,
 }
 
 struct DeviceState {
@@ -223,6 +226,7 @@ impl GpuContext {
         };
         Ok(Self {
             matmul_kernel,
+            profiler: None,
             inner: Arc::new(DeviceState {
                 resources,
                 #[cfg(test)]
@@ -300,12 +304,60 @@ impl GpuContext {
         Self {
             inner: Arc::clone(&self.inner),
             matmul_kernel: kernel,
+            profiler: self.profiler.clone(),
         }
+    }
+
+    /// Returns a tensor-compatible context with a fresh host profiler. Clones
+    /// of the returned handle share its collector; older handles are unchanged.
+    /// Profiling adds host accounting, but never GPU work or synchronization.
+    pub fn with_profiling(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+            matmul_kernel: self.matmul_kernel,
+            profiler: Some(Arc::new(profiling::Profiler::default())),
+        }
+    }
+
+    /// Snapshots counters and completed phases, or None when profiling is off.
+    pub fn profile_snapshot(&self) -> Option<GpuProfile> {
+        self.profiler.as_ref().map(|p| p.snapshot())
+    }
+
+    /// Measures an inclusive host phase until the returned guard is dropped.
+    /// Disabled contexts do not allocate or read the clock. Serialize operations
+    /// on context clones for useful phase attribution; overlapping phases overlap.
+    pub fn profile_scope(&self, name: &'static str) -> Option<GpuProfileScope> {
+        self.profiler.as_ref().map(|p| p.scope(name))
+    }
+
+    fn record_profile(&self, counters: GpuProfileCounters) {
+        if let Some(profiler) = &self.profiler {
+            profiler.record(counters);
+        }
+    }
+
+    fn submit_profiled(&self, encoder: wgpu::CommandEncoder, dispatches: u64, readback: bool) {
+        self.inner.queue.submit(Some(encoder.finish()));
+        self.record_profile(GpuProfileCounters {
+            submissions: 1,
+            compute_dispatches: dispatches,
+            readback_submissions: u64::from(readback),
+            ..Default::default()
+        });
     }
 
     /// Waits for previously queued device work without downloading tensor data.
     pub fn synchronize(&self) {
+        let started = self.profiler.as_ref().map(|_| std::time::Instant::now());
         self.inner.device.poll(wgpu::Maintain::Wait);
+        if let Some(started) = started {
+            self.record_profile(GpuProfileCounters {
+                host_waits: 1,
+                host_wait_ns: profiling::elapsed_ns(started),
+                ..Default::default()
+            });
+        }
     }
 
     /// Uploads a CPU tensor into owned, reusable device storage.
@@ -338,6 +390,13 @@ impl GpuContext {
                 contents,
                 usage: tensor_usage(),
             });
+        self.record_profile(GpuProfileCounters {
+            tensor_allocations: 1,
+            tensor_bytes: contents.len() as u64,
+            uploads: u64::from(!values.is_empty()),
+            upload_bytes: (values.len() as u64) * 4,
+            ..Default::default()
+        });
         Ok(GpuTensor {
             owner: Arc::clone(&self.inner),
             buffer,
@@ -358,6 +417,11 @@ impl GpuContext {
             usage: tensor_usage(),
             mapped_at_creation: false,
         });
+        self.record_profile(GpuProfileCounters {
+            tensor_allocations: 1,
+            tensor_bytes: bytes.max(4),
+            ..Default::default()
+        });
         Ok(GpuTensor {
             owner: Arc::clone(&self.inner),
             buffer,
@@ -375,6 +439,54 @@ impl GpuContext {
         ))
     }
 
+    /// Downloads single-element tensors in input order with one copy submission
+    /// and one blocking wait. Shapes and ownership are checked before queuing
+    /// anything. An empty list performs no allocation, submission or wait.
+    pub fn download_scalars(&self, tensors: &[&GpuTensor]) -> Result<Vec<f32>, GpuError> {
+        for tensor in tensors {
+            self.ensure_owner(tensor)?;
+            if tensor.numel() != 1 {
+                return Err(GpuError::ExpectedScalar {
+                    shape: tensor.shape().to_vec(),
+                });
+            }
+        }
+        let bytes = validate_storage(&[tensors.len()], &self.inner.device.limits())?;
+        if bytes == 0 {
+            return Ok(Vec::new());
+        }
+        let readback = self.inner.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("scalar batch readback"),
+            size: bytes,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let mut encoder =
+            self.inner
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("scalar batch download commands"),
+                });
+        for (i, tensor) in tensors.iter().enumerate() {
+            encoder.copy_buffer_to_buffer(&tensor.buffer, 0, &readback, i as u64 * 4, 4);
+        }
+        self.submit_profiled(encoder, 0, true);
+        self.record_readback(bytes);
+        self.finish_readback(&readback)
+    }
+
+    fn record_readback(&self, bytes: u64) {
+        #[cfg(test)]
+        self.inner
+            .transfers
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.record_profile(GpuProfileCounters {
+            readbacks: 1,
+            readback_bytes: bytes,
+            ..Default::default()
+        });
+    }
+
     // Shared raw readback keeps integer indices out of the f32 tensor API.
     fn readback_values<T: bytemuck::Pod>(&self, tensor: &GpuTensor) -> Result<Vec<T>, GpuError> {
         self.ensure_owner(tensor)?;
@@ -382,10 +494,6 @@ impl GpuContext {
         if output_bytes == 0 {
             return Ok(Vec::new());
         }
-        #[cfg(test)]
-        self.inner
-            .transfers
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let readback = self.inner.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("tensor readback"),
             size: output_bytes,
@@ -399,13 +507,21 @@ impl GpuContext {
                     label: Some("download commands"),
                 });
         encoder.copy_buffer_to_buffer(&tensor.buffer, 0, &readback, 0, output_bytes);
-        self.inner.queue.submit(Some(encoder.finish()));
+        self.submit_profiled(encoder, 0, true);
+        self.record_readback(output_bytes);
+        self.finish_readback(&readback)
+    }
+
+    fn finish_readback<T: bytemuck::Pod>(
+        &self,
+        readback: &wgpu::Buffer,
+    ) -> Result<Vec<T>, GpuError> {
         let slice = readback.slice(..);
         let (sender, receiver) = mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = sender.send(result);
         });
-        self.inner.device.poll(wgpu::Maintain::Wait);
+        self.synchronize();
         receiver
             .recv()
             .map_err(|error| GpuError::Readback(error.to_string()))?
@@ -576,7 +692,7 @@ impl GpuContext {
             pass.set_bind_group(0, &bindings, &[]);
             pass.dispatch_workgroups(n.div_ceil(8), m.div_ceil(8), 1);
         }
-        self.inner.queue.submit(Some(encoder.finish()));
+        self.submit_profiled(encoder, u64::from(k != 0), false);
         Ok(())
     }
 
@@ -888,6 +1004,7 @@ mod tests {
         let retained = GpuContext {
             inner: Arc::clone(&output.owner),
             matmul_kernel: MatmulKernel::Tiled,
+            profiler: None,
         };
         assert_eq!(retained.download(&output).unwrap().to_vec(), vec![3.; 4]);
         drop(retained);

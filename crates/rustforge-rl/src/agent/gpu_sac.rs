@@ -137,6 +137,7 @@ fn matrix_group(first: &GpuVariable, others: &[&GpuVariable]) -> Result<()> {
     Ok(())
 }
 fn finite(context: &GpuContext, variables: impl IntoIterator<Item = GpuVariable>) -> Result<()> {
+    let _profile = context.profile_scope("finite_validation");
     let mut count = None;
     for v in variables {
         let next = context.nonfinite_count_device(&v.data())?;
