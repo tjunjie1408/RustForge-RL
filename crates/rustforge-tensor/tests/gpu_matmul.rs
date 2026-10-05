@@ -652,6 +652,31 @@ fn stable_categorical_probabilities_cover_extreme_logits_empty_rows_and_exp() {
 
 #[test]
 #[ignore = "requires a GPU adapter"]
+fn categorical_probabilities_preserve_common_logit_offsets() {
+    let ctx = context();
+    let logits = [0.0_f64, -0.75, -1.5];
+    let normalizer = logits.iter().map(|value| value.exp()).sum::<f64>().ln();
+    for offset in [-10_000.0_f32, -1000.0, 0.0, 1000.0, 10_000.0] {
+        let data = logits.iter().map(|value| *value as f32 + offset).collect();
+        let input = ctx.upload(&Tensor::from_vec(data, &[1, 3])).unwrap();
+        let log_probs = ctx
+            .download(&ctx.log_softmax_device(&input).unwrap())
+            .unwrap();
+        let probs = ctx.download(&ctx.softmax_device(&input).unwrap()).unwrap();
+        for (column, logit) in logits.iter().enumerate() {
+            let expected = logit - normalizer;
+            assert_abs_diff_eq!(log_probs.to_vec()[column], expected as f32, epsilon = 2e-6);
+            assert_abs_diff_eq!(
+                probs.to_vec()[column],
+                expected.exp() as f32,
+                epsilon = 2e-6
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires a GPU adapter"]
 fn categorical_backward_validates_shapes_owners_and_propagates_nonfinite_rows() {
     let ctx = context();
     let logits = ctx

@@ -76,7 +76,10 @@ fn elementwise(@builtin(workgroup_id) group: vec3<u32>,
             for (var col = 0u; col < parameters.divisor; col += 1u) {
                 total += exp(a[offset + col] - maximum);
             }
-            output[index] = (a[index] - maximum) - log(total);
+            // Keep the common logit offset out of the final normalization.
+            // Explicit fma avoids the large-offset cancellation seen by the offset regression.
+            let shifted = fma(-1.0, maximum, a[index]);
+            output[index] = shifted - log(total);
         }
         case 13u: {
             let offset = (index / parameters.divisor) * parameters.divisor;
