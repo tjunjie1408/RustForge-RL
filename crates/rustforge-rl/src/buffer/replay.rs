@@ -198,10 +198,10 @@ impl ReplayBuffer {
         let mut rng = rand::thread_rng();
 
         // Build the batch data directly into flat f32 arrays
-        let states_flat = batch.states.data_mut();
-        let next_states_flat = batch.next_states.data_mut();
-        let rewards_flat = batch.rewards.data_mut();
-        let dones_flat = batch.dones.data_mut();
+        let states_flat = batch.states.data_mut().as_slice_mut().unwrap();
+        let next_states_flat = batch.next_states.data_mut().as_slice_mut().unwrap();
+        let rewards_flat = batch.rewards.data_mut().as_slice_mut().unwrap();
+        let dones_flat = batch.dones.data_mut().as_slice_mut().unwrap();
 
         for b in 0..actual_batch {
             let idx = rng.gen_range(0..self.len);
@@ -210,20 +210,18 @@ impl ReplayBuffer {
             let src_offset = idx * self.obs_dim;
             let dst_offset = b * self.obs_dim;
 
-            // Use raw indexed access via ndarray for zero-copy writes
+            // Copy directly into the pre-allocated contiguous destination.
             let src_state = &self.states[src_offset..src_offset + self.obs_dim];
-            let dst_state =
-                &mut states_flat.as_slice_mut().unwrap()[dst_offset..dst_offset + self.obs_dim];
+            let dst_state = &mut states_flat[dst_offset..dst_offset + self.obs_dim];
             dst_state.copy_from_slice(src_state);
 
             let src_ns = &self.next_states[src_offset..src_offset + self.obs_dim];
-            let dst_ns = &mut next_states_flat.as_slice_mut().unwrap()
-                [dst_offset..dst_offset + self.obs_dim];
+            let dst_ns = &mut next_states_flat[dst_offset..dst_offset + self.obs_dim];
             dst_ns.copy_from_slice(src_ns);
 
             // Rewards and dones: shape [batch_size, 1], so index is just [b]
-            rewards_flat.as_slice_mut().unwrap()[b] = self.rewards[idx];
-            dones_flat.as_slice_mut().unwrap()[b] = if self.dones[idx] { 1.0 } else { 0.0 };
+            rewards_flat[b] = self.rewards[idx];
+            dones_flat[b] = if self.dones[idx] { 1.0 } else { 0.0 };
 
             // Actions: direct usize write
             batch.actions[b] = self.actions[idx];
@@ -425,11 +423,11 @@ impl ContinuousReplayBuffer {
 
         let actual_batch = batch_size.min(self.len);
 
-        let states_flat = batch.states.data_mut();
-        let next_states_flat = batch.next_states.data_mut();
-        let rewards_flat = batch.rewards.data_mut();
-        let dones_flat = batch.dones.data_mut();
-        let actions_flat = batch.actions.data_mut();
+        let states_flat = batch.states.data_mut().as_slice_mut().unwrap();
+        let next_states_flat = batch.next_states.data_mut().as_slice_mut().unwrap();
+        let rewards_flat = batch.rewards.data_mut().as_slice_mut().unwrap();
+        let dones_flat = batch.dones.data_mut().as_slice_mut().unwrap();
+        let actions_flat = batch.actions.data_mut().as_slice_mut().unwrap();
 
         for b in 0..actual_batch {
             let idx = rng.gen_range(0..self.len);
@@ -438,26 +436,23 @@ impl ContinuousReplayBuffer {
             let src_s_offset = idx * self.obs_dim;
             let dst_s_offset = b * self.obs_dim;
             let src_state = &self.states[src_s_offset..src_s_offset + self.obs_dim];
-            let dst_state =
-                &mut states_flat.as_slice_mut().unwrap()[dst_s_offset..dst_s_offset + self.obs_dim];
+            let dst_state = &mut states_flat[dst_s_offset..dst_s_offset + self.obs_dim];
             dst_state.copy_from_slice(src_state);
 
             let src_ns = &self.next_states[src_s_offset..src_s_offset + self.obs_dim];
-            let dst_ns = &mut next_states_flat.as_slice_mut().unwrap()
-                [dst_s_offset..dst_s_offset + self.obs_dim];
+            let dst_ns = &mut next_states_flat[dst_s_offset..dst_s_offset + self.obs_dim];
             dst_ns.copy_from_slice(src_ns);
 
             // Copy continuous action
             let src_a_offset = idx * self.act_dim;
             let dst_a_offset = b * self.act_dim;
             let src_action = &self.actions[src_a_offset..src_a_offset + self.act_dim];
-            let dst_action = &mut actions_flat.as_slice_mut().unwrap()
-                [dst_a_offset..dst_a_offset + self.act_dim];
+            let dst_action = &mut actions_flat[dst_a_offset..dst_a_offset + self.act_dim];
             dst_action.copy_from_slice(src_action);
 
             // Rewards and dones
-            rewards_flat.as_slice_mut().unwrap()[b] = self.rewards[idx];
-            dones_flat.as_slice_mut().unwrap()[b] = if self.dones[idx] { 1.0 } else { 0.0 };
+            rewards_flat[b] = self.rewards[idx];
+            dones_flat[b] = if self.dones[idx] { 1.0 } else { 0.0 };
         }
 
         batch.size = actual_batch;

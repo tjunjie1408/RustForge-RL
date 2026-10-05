@@ -6,6 +6,7 @@ remain available; Python agents continue to use the CPU backend.
 
 - [Hardware measurements and verification history](gpu-performance.md)
 - [Why CLI training differs from a matrix benchmark](gpu-cli-performance.md)
+- [GPU training instrumentation and profiling](gpu-profiling.md)
 - [Benchmark collection and plotting](../benchmarks/gpu_comparison/README.md)
 
 This page summarizes current contracts. Detailed stage-by-stage implementation
@@ -40,6 +41,9 @@ and historical test inventories remain in Git history.
   Queue ordering allows device results to feed subsequent operations.
 - The convenience `matmul` uploads CPU inputs and downloads the result. Explicit
   downloads wait for completion; device-only chaining avoids those transfers.
+- `download_scalars` packs single-element results into one readback submission
+  and wait. Gaussian validation uses it for checks and metrics; see the
+  [readback comparison](gpu-batched-readback.md).
 - CPU/software adapters default to the direct matrix kernel; other adapters use
   the tiled kernel. `with_matmul_kernel` changes that choice on a shared context.
   The tiled shader uses 8 × 8 workgroup tiles and supports edge/transpose cases.

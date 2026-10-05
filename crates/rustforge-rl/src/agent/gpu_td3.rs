@@ -117,6 +117,7 @@ fn finite_data(
     context: &GpuContext,
     inputs: impl IntoIterator<Item = std::rc::Rc<rustforge_tensor::gpu::GpuTensor>>,
 ) -> Result<()> {
+    let _profile = context.profile_scope("finite_validation");
     let mut count = None;
     for data in inputs {
         let next = context.nonfinite_count_device(&data)?;

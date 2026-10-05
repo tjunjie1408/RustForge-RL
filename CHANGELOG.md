@@ -7,7 +7,26 @@ contain breaking changes.
 
 ## [Unreleased]
 
-Changes below are prepared for 0.2.0; the release has not been published.
+### Added
+
+- Opt-in GPU context counters and inclusive host phase timings, including shared
+  forward, backward, optimizer and validation hooks. A DQN/TD3/SAC profiling
+  example emits versioned JSON with adapter/config metadata; a standalone
+  verifier checks phase/work counts. Profiling adds no GPU synchronization.
+
+### Changed
+
+- GPU Gaussian validation packs check results and diagnostic means into one
+  scalar readback batch, preserving finite checks, gradient behavior and exact
+  metric values. The new `GpuContext::download_scalars` API shares one wait across
+  single-element tensors. Paired software-adapter SAC profiles verify fewer waits.
+
+- Replay sampling extracts contiguous batch storage once per call. Prioritized
+  replay reuses the weight tensor as scratch space, removing the per-batch heap
+  allocation while preserving seeded draws and importance weights. Added a
+  reproducible CPU sampling benchmark and allocation regression coverage.
+
+## [0.2.0]
 
 ### Fixed
 

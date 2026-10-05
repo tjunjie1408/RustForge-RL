@@ -388,6 +388,7 @@ impl GpuVariable {
     /// Seeds a scalar loss with one and accumulates gradients in trainable leaves.
     /// Each call uses fresh intermediate adjoints, including for shared graphs.
     pub fn backward(&self) -> Result<()> {
+        let _profile = self.context.profile_scope("backward");
         if self.data().numel() != 1 {
             return Err(GpuAutogradError::NonScalarLoss(
                 self.data().shape().to_vec(),
@@ -594,6 +595,10 @@ impl GpuSgd {
         }
     }
     pub fn step(&mut self) -> Result<()> {
+        let _profile = self
+            .params
+            .first()
+            .and_then(|p| p.context.profile_scope("optimizer"));
         let mut updates = Vec::new();
         for (index, p) in self.params.iter().enumerate() {
             let Some(g) = p.grad() else {
@@ -851,6 +856,10 @@ impl GpuAdam {
         }
     }
     pub fn step(&mut self) -> Result<()> {
+        let _profile = self
+            .params
+            .first()
+            .and_then(|p| p.context.profile_scope("optimizer"));
         let t = self
             .t
             .checked_add(1)

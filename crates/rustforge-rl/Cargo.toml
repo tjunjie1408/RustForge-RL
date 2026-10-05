@@ -86,3 +86,7 @@ tempfile = "3"
 [[example]]
 name = "gpu_sac_training"
 required-features = ["gpu"]
+
+[[example]]
+name = "gpu_training_profile"
+required-features = ["gpu"]

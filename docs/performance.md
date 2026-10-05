@@ -1,5 +1,13 @@
 # Performance benchmarks
 
+Use the [GPU profiling runner](gpu-profiling.md) to inspect training submissions,
+transfers, waits and host phase timings on your adapter.
+
+## Replay sampling
+
+The [v0.2.0 follow-up replay measurements](replay-performance.md) compare uniform,
+prioritized and continuous CPU sampling, with raw results and allocation checks.
+
 ## Physical GPU and CPU comparison
 
 The [2026-10-05 GPU performance report](gpu-performance.md) provides measured
