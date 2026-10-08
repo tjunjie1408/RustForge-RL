@@ -19,6 +19,7 @@ pub(super) fn checked_scalars(
         return Ok(None);
     }
     let _profile = context.profile_scope("objective_diagnostics");
+    let _batch = context.command_batch();
     let mut count = None;
     for variable in checks {
         let next = context.nonfinite_count_device(&variable.data())?;

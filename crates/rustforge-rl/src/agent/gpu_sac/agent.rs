@@ -431,6 +431,7 @@ fn noise(rows: usize, columns: usize, rng: &mut impl Rng) -> Tensor {
 fn checked_alpha(log_alpha: &GpuVariable) -> Result<f32> {
     let context = log_alpha.context();
     let _profile = context.profile_scope("temperature_readback");
+    let _batch = context.command_batch();
     let count = context.nonfinite_count_device(&log_alpha.data())?;
     let alpha = log_alpha.detach().exp()?;
     let values = context.download_scalars(&[&count, &alpha.data()])?;
