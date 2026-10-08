@@ -204,8 +204,7 @@ impl GpuTd3 {
             )?;
             let raw = self.actor.checked_forward(&input)?;
             let output = self.transform.scale_actor_actions(&raw)?;
-            output.checked()?;
-            Ok(output.actions.to_cpu()?.to_vec())
+            Ok(output.checked_to_cpu()?.to_vec())
         })?;
         actions
             .into_iter()

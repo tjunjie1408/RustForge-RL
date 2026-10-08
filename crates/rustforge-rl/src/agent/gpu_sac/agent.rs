@@ -221,8 +221,7 @@ impl GpuSac {
             let noise = GpuVariable::new(&self.context, &noise, false)?;
             let (mean, std) = self.actor.forward_raw(&state)?;
             let sample = self.transform.sample_with_noise(&mean, &std, &noise)?;
-            sample.checked_metrics()?;
-            Ok(sample.actions.to_cpu()?.to_vec())
+            Ok(sample.checked_actions()?.to_vec())
         })
     }
     pub fn deterministic_action(&self, state: &[f32]) -> Result<Vec<f32>> {
@@ -235,8 +234,7 @@ impl GpuSac {
                 false,
             )?;
             let sample = self.transform.sample_with_noise(&mean, &std, &zeros)?;
-            sample.checked_metrics()?;
-            Ok(sample.actions.to_cpu()?.to_vec())
+            Ok(sample.checked_actions()?.to_vec())
         })
     }
     fn validate_batch(&self, b: &ContinuousTransitionBatch) -> Result<()> {
@@ -431,8 +429,15 @@ fn noise(rows: usize, columns: usize, rng: &mut impl Rng) -> Tensor {
     )
 }
 fn checked_alpha(log_alpha: &GpuVariable) -> Result<f32> {
-    finite(log_alpha.context(), [log_alpha.clone()])?;
-    let alpha = log_alpha.detach().exp()?.to_cpu()?.item();
+    let context = log_alpha.context();
+    let _profile = context.profile_scope("temperature_readback");
+    let count = context.nonfinite_count_device(&log_alpha.data())?;
+    let alpha = log_alpha.detach().exp()?;
+    let values = context.download_scalars(&[&count, &alpha.data()])?;
+    if values[0] != 0. {
+        return Err(GpuSacError::NonFinite);
+    }
+    let alpha = values[1];
     if !alpha.is_finite() || alpha <= 0. {
         return Err(GpuSacError::InvalidTemperature);
     }

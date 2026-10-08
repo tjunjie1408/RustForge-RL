@@ -1,0 +1,13 @@
+algorithm,run,version,adapter,submissions,compute_dispatches,readbacks,host_waits,tensor_allocations,tensor_reuses,tensor_bytes,parameter_allocations,readback_bytes,training_host_ns
+td3,1,before,"llvmpipe (LLVM 19.1.7, 256 bits)",6635,6335,300,301,6604,0,13154712,2,1324,372459538
+td3,1,after,"llvmpipe (LLVM 19.1.7, 256 bits)",5005,5861,230,231,794,5336,3700596,32,1324,337711251
+sac,1,before,"llvmpipe (LLVM 19.1.7, 256 bits)",14208,13828,380,381,14849,0,19114844,1,5076,650024617
+sac,1,after,"llvmpipe (LLVM 19.1.7, 256 bits)",11876,13135,295,296,2153,12003,6264720,32,5076,603499054
+td3,2,after,"llvmpipe (LLVM 19.1.7, 256 bits)",5005,5861,230,231,794,5336,3700596,32,1324,335251839
+td3,2,before,"llvmpipe (LLVM 19.1.7, 256 bits)",6635,6335,300,301,6604,0,13154712,2,1324,396231722
+sac,2,after,"llvmpipe (LLVM 19.1.7, 256 bits)",11876,13135,295,296,2153,12003,6264720,32,5076,666653162
+sac,2,before,"llvmpipe (LLVM 19.1.7, 256 bits)",14208,13828,380,381,14849,0,19114844,1,5076,691957572
+td3,3,before,"llvmpipe (LLVM 19.1.7, 256 bits)",6635,6335,300,301,6604,0,13154712,2,1324,415878474
+td3,3,after,"llvmpipe (LLVM 19.1.7, 256 bits)",5005,5861,230,231,794,5336,3700596,32,1324,359951242
+sac,3,before,"llvmpipe (LLVM 19.1.7, 256 bits)",14208,13828,380,381,14849,0,19114844,1,5076,677616752
+sac,3,after,"llvmpipe (LLVM 19.1.7, 256 bits)",11876,13135,295,296,2153,12003,6264720,32,5076,558466773

@@ -11,9 +11,12 @@ use wgpu::util::DeviceExt;
 
 use crate::Tensor;
 
+mod batching;
 mod indices;
 mod operations;
 mod profiling;
+mod scratch;
+pub use batching::GpuCommandBatch;
 pub use indices::GpuIndices;
 pub use profiling::{GpuProfile, GpuProfileCounters, GpuProfilePhase, GpuProfileScope};
 
@@ -139,6 +142,9 @@ pub struct GpuContext {
 
 struct DeviceState {
     resources: Arc<DeviceResources>,
+    parameter_pool: Arc<scratch::BufferPool>,
+    readback_pool: Arc<scratch::BufferPool>,
+    tensor_pool: Arc<scratch::BufferPool>,
     #[cfg(test)]
     transfers: std::sync::atomic::AtomicUsize,
     #[cfg(test)]
@@ -171,7 +177,7 @@ struct DeviceResources {
 /// cannot be cloned; reuse inputs by reference and outputs by mutable borrow.
 pub struct GpuTensor {
     owner: Arc<DeviceState>,
-    buffer: wgpu::Buffer,
+    buffer: Arc<scratch::BufferLease>,
     shape: Vec<usize>,
 }
 
@@ -229,6 +235,9 @@ impl GpuContext {
             profiler: None,
             inner: Arc::new(DeviceState {
                 resources,
+                parameter_pool: scratch::BufferPool::new(32, 4096),
+                readback_pool: scratch::BufferPool::new(4, 8 * 1024 * 1024),
+                tensor_pool: scratch::BufferPool::new(64, 64 * 1024 * 1024),
                 #[cfg(test)]
                 transfers: std::sync::atomic::AtomicUsize::new(0),
                 #[cfg(test)]
@@ -338,17 +347,76 @@ impl GpuContext {
     }
 
     fn submit_profiled(&self, encoder: wgpu::CommandEncoder, dispatches: u64, readback: bool) {
+        self.flush_batch();
         self.inner.queue.submit(Some(encoder.finish()));
         self.record_profile(GpuProfileCounters {
             submissions: 1,
+            command_buffers: 1,
             compute_dispatches: dispatches,
             readback_submissions: u64::from(readback),
             ..Default::default()
         });
     }
 
+    // Keep the lease until its consumer is submitted. Queue writes then follow
+    // every previously submitted use, including uses from concurrent clones.
+    fn dispatch_parameters(&self, contents: &[u8]) -> scratch::BufferLease {
+        if let Some(buffer) = self.inner.parameter_pool.take(contents.len() as u64) {
+            self.inner.queue.write_buffer(&buffer, 0, contents);
+            self.record_profile(GpuProfileCounters {
+                parameter_reuses: 1,
+                ..Default::default()
+            });
+            return buffer;
+        }
+        // Both current uniform layouts fit in 32 bytes. Normalize capacity so
+        // short matmul uniforms cannot crowd larger operation uniforms out of
+        // the bounded cache after a batched submission.
+        let mut padded = [0u8; 32];
+        padded[..contents.len()].copy_from_slice(contents);
+        let buffer = self
+            .inner
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("dispatch parameters"),
+                contents: &padded,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
+        self.record_profile(GpuProfileCounters {
+            parameter_allocations: 1,
+            ..Default::default()
+        });
+        self.inner.parameter_pool.lease(buffer, padded.len() as u64)
+    }
+
+    fn readback_buffer(&self, bytes: u64) -> scratch::BufferLease {
+        if let Some(buffer) = self.inner.readback_pool.take(bytes) {
+            self.record_profile(GpuProfileCounters {
+                readback_reuses: 1,
+                ..Default::default()
+            });
+            return buffer;
+        }
+        let capacity = bytes
+            .next_power_of_two()
+            .max(64)
+            .min(self.inner.device.limits().max_buffer_size);
+        let buffer = self.inner.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("reusable readback"),
+            size: capacity,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        self.record_profile(GpuProfileCounters {
+            readback_allocations: 1,
+            ..Default::default()
+        });
+        self.inner.readback_pool.lease(buffer, capacity)
+    }
+
     /// Waits for previously queued device work without downloading tensor data.
     pub fn synchronize(&self) {
+        self.flush_batch();
         let started = self.profiler.as_ref().map(|_| std::time::Instant::now());
         self.inner.device.poll(wgpu::Maintain::Wait);
         if let Some(started) = started {
@@ -399,7 +467,7 @@ impl GpuContext {
         });
         Ok(GpuTensor {
             owner: Arc::clone(&self.inner),
-            buffer,
+            buffer: Arc::new(self.inner.tensor_pool.lease(buffer, contents.len() as u64)),
             shape: tensor.shape().to_vec(),
         })
     }
@@ -424,9 +492,26 @@ impl GpuContext {
         });
         Ok(GpuTensor {
             owner: Arc::clone(&self.inner),
-            buffer,
+            buffer: Arc::new(self.inner.tensor_pool.lease(buffer, bytes.max(4))),
             shape: shape.to_vec(),
         })
+    }
+
+    // Only kernels which overwrite every logical element may use recycled storage.
+    fn output_storage(&self, shape: &[usize]) -> Result<GpuTensor, GpuError> {
+        let bytes = validate_storage(shape, &self.inner.device.limits())?.max(4);
+        if let Some(buffer) = self.inner.tensor_pool.take(bytes) {
+            self.record_profile(GpuProfileCounters {
+                tensor_reuses: 1,
+                ..Default::default()
+            });
+            return Ok(GpuTensor {
+                owner: Arc::clone(&self.inner),
+                buffer: Arc::new(buffer),
+                shape: shape.to_vec(),
+            });
+        }
+        self.zeros(shape)
     }
 
     /// Downloads a tensor from this context's device, waiting for queued work.
@@ -437,6 +522,55 @@ impl GpuContext {
             self.readback_values::<f32>(tensor)?,
             tensor.shape(),
         ))
+    }
+
+    /// Copies arbitrary f32 tensors together, preserving input order and shapes.
+    /// Validates every owner/size before submitting; all-empty batches do no work.
+    pub fn download_tensors(&self, tensors: &[&GpuTensor]) -> Result<Vec<Tensor>, GpuError> {
+        let mut bytes = 0u64;
+        for tensor in tensors {
+            self.ensure_owner(tensor)?;
+            bytes = bytes
+                .checked_add(validate_storage(
+                    tensor.shape(),
+                    &self.inner.device.limits(),
+                )?)
+                .ok_or(GpuError::LimitExceeded)?;
+        }
+        if bytes > self.inner.device.limits().max_buffer_size {
+            return Err(GpuError::LimitExceeded);
+        }
+        if bytes == 0 {
+            return Ok(tensors.iter().map(|t| Tensor::zeros(t.shape())).collect());
+        }
+        let readback = self.readback_buffer(bytes);
+        let mut encoder =
+            self.inner
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("packed tensor readback"),
+                });
+        let mut offset = 0;
+        for tensor in tensors {
+            let length = tensor.numel() as u64 * 4;
+            if length != 0 {
+                encoder.copy_buffer_to_buffer(&tensor.buffer, 0, &readback, offset, length);
+            }
+            offset += length;
+        }
+        self.submit_profiled(encoder, 0, true);
+        self.record_readback(bytes);
+        let values: Vec<f32> = self.finish_readback(readback, bytes)?;
+        let mut offset = 0;
+        Ok(tensors
+            .iter()
+            .map(|tensor| {
+                let end = offset + tensor.numel();
+                let value = Tensor::from_vec(values[offset..end].to_vec(), tensor.shape());
+                offset = end;
+                value
+            })
+            .collect())
     }
 
     /// Downloads single-element tensors in input order with one copy submission
@@ -455,12 +589,7 @@ impl GpuContext {
         if bytes == 0 {
             return Ok(Vec::new());
         }
-        let readback = self.inner.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("scalar batch readback"),
-            size: bytes,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let readback = self.readback_buffer(bytes);
         let mut encoder =
             self.inner
                 .device
@@ -472,7 +601,7 @@ impl GpuContext {
         }
         self.submit_profiled(encoder, 0, true);
         self.record_readback(bytes);
-        self.finish_readback(&readback)
+        self.finish_readback(readback, bytes)
     }
 
     fn record_readback(&self, bytes: u64) {
@@ -494,12 +623,7 @@ impl GpuContext {
         if output_bytes == 0 {
             return Ok(Vec::new());
         }
-        let readback = self.inner.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("tensor readback"),
-            size: output_bytes,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let readback = self.readback_buffer(output_bytes);
         let mut encoder =
             self.inner
                 .device
@@ -509,14 +633,17 @@ impl GpuContext {
         encoder.copy_buffer_to_buffer(&tensor.buffer, 0, &readback, 0, output_bytes);
         self.submit_profiled(encoder, 0, true);
         self.record_readback(output_bytes);
-        self.finish_readback(&readback)
+        self.finish_readback(readback, output_bytes)
     }
 
     fn finish_readback<T: bytemuck::Pod>(
         &self,
-        readback: &wgpu::Buffer,
+        mut readback: scratch::BufferLease,
+        bytes: u64,
     ) -> Result<Vec<T>, GpuError> {
-        let slice = readback.slice(..);
+        // Never cache a buffer if mapping/copying fails or this operation unwinds.
+        readback.reusable = false;
+        let slice = readback.slice(..bytes);
         let (sender, receiver) = mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = sender.send(result);
@@ -530,6 +657,7 @@ impl GpuContext {
         let values = bytemuck::cast_slice::<u8, T>(&mapped).to_vec();
         drop(mapped);
         readback.unmap();
+        readback.reusable = true;
         Ok(values)
     }
 
@@ -571,7 +699,7 @@ impl GpuContext {
             transpose_right,
             &self.inner.device.limits(),
         )?;
-        let mut output = self.zeros(&[m as usize, n as usize])?;
+        let mut output = self.output_storage(&[m as usize, n as usize])?;
         self.matmul_into_impl(left, right, &mut output, transpose_left, transpose_right)?;
         Ok(output)
     }
@@ -645,29 +773,24 @@ impl GpuContext {
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("matmul commands"),
                 });
+        let mut parameters_lease = None;
         if k == 0 {
             // Clear a reused output instead of leaving a previous result behind.
             encoder.clear_buffer(&output.buffer, 0, None);
         } else {
-            let parameters =
-                self.inner
-                    .device
-                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("matmul dimensions"),
-                        contents: bytemuck::cast_slice(&[
-                            m,
-                            k,
-                            n,
-                            u32::from(transpose_left) | (u32::from(transpose_right) << 1),
-                        ]),
-                        usage: wgpu::BufferUsages::UNIFORM,
-                    });
+            let parameters = self.dispatch_parameters(bytemuck::cast_slice(&[
+                m,
+                k,
+                n,
+                u32::from(transpose_left) | (u32::from(transpose_right) << 1),
+            ]));
             let pipeline = match self.matmul_kernel {
                 MatmulKernel::Tiled => &self.inner.pipeline,
                 MatmulKernel::Naive => &self.inner.naive_pipeline,
             };
             let layout = pipeline.get_bind_group_layout(0);
-            let buffers = [&left.buffer, &right.buffer, &output.buffer, &parameters];
+            let buffers: [&wgpu::Buffer; 4] =
+                [&left.buffer, &right.buffer, &output.buffer, &parameters];
             let entries: Vec<_> = buffers
                 .iter()
                 .enumerate()
@@ -691,8 +814,17 @@ impl GpuContext {
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &bindings, &[]);
             pass.dispatch_workgroups(n.div_ceil(8), m.div_ceil(8), 1);
+            drop(pass);
+            parameters_lease = Some(parameters);
         }
-        self.submit_profiled(encoder, u64::from(k != 0), false);
+        // Releasing inside the branch would allow a concurrent clone to rewrite
+        // these uniforms before this encoder is submitted.
+        self.submit_compute(
+            encoder,
+            u64::from(k != 0),
+            parameters_lease,
+            &[left, right, output],
+        );
         Ok(())
     }
 

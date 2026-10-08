@@ -37,13 +37,27 @@ and historical test inventories remain in Git history.
   Uploads pack noncontiguous CPU data in logical row-major order. Empty tensors
   preserve logical shapes using minimal physical storage.
 - `matmul_device` queues work without host synchronization. `matmul_into` reuses
-  an exact-shape output buffer; it still allocates dispatch parameters/bindings.
+  an exact-shape output buffer. Dispatch uniforms use a bounded scratch cache;
+  bind groups and command encoders are still created for each dispatch.
   Queue ordering allows device results to feed subsequent operations.
+- `command_batch` groups compute command buffers on the calling thread, with
+  automatic flushing at downloads/waits and a 32-command limit. Linear layers
+  and optimizers use it internally. Finish a producing batch before handing its
+  outputs to another thread.
+- Fully written kernel outputs recycle storage after their last live owner drops.
+  Deferred batches retain storage/uniform leases until submission. Public zeros,
+  empty reductions and partially written scatter outputs keep zero initialization.
 - The convenience `matmul` uploads CPU inputs and downloads the result. Explicit
   downloads wait for completion; device-only chaining avoids those transfers.
 - `download_scalars` packs single-element results into one readback submission
-  and wait. Gaussian validation uses it for checks and metrics; see the
+  and wait. Gaussian and TD3/SAC objective validation use it for checks and
+  metrics. Readback staging buffers use a bounded cache shared by context clones;
+  see the [synchronization/buffer follow-up](gpu-sync-buffer-reuse.md) and the
   [readback comparison](gpu-batched-readback.md).
+- `download_tensors` packs arbitrary f32 shapes into one readback; TD3/SAC
+  inference combines final action validation and action copies. The
+  [execution walkthrough](gpu-execution-optimization.md) describes these changes
+  and fused SGD/Adam arithmetic.
 - CPU/software adapters default to the direct matrix kernel; other adapters use
   the tiled kernel. `with_matmul_kernel` changes that choice on a shared context.
   The tiled shader uses 8 × 8 workgroup tiles and supports edge/transpose cases.

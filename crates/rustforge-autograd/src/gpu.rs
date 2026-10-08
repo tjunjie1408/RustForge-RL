@@ -599,6 +599,7 @@ impl GpuSgd {
             .params
             .first()
             .and_then(|p| p.context.profile_scope("optimizer"));
+        let _batch = self.params.first().map(|p| p.context.command_batch());
         let mut updates = Vec::new();
         for (index, p) in self.params.iter().enumerate() {
             let Some(g) = p.grad() else {
@@ -608,16 +609,11 @@ impl GpuSgd {
                 g
             } else {
                 match &self.velocities[index] {
-                    Some(old) => Rc::new(
-                        p.context
-                            .add_device(&p.context.scale_device(old, self.momentum)?, &g)?,
-                    ),
+                    Some(old) => Rc::new(p.context.scale_add_device(&g, old, self.momentum)?),
                     None => g,
                 }
             };
-            let data = p
-                .context
-                .add_device(&p.data(), &p.context.scale_device(&velocity, -self.lr)?)?;
+            let data = p.context.scale_add_device(&p.data(), &velocity, -self.lr)?;
             updates.push((index, Rc::new(data), velocity));
         }
         for (index, data, velocity) in updates {
@@ -860,6 +856,7 @@ impl GpuAdam {
             .params
             .first()
             .and_then(|p| p.context.profile_scope("optimizer"));
+        let _batch = self.params.first().map(|p| p.context.command_batch());
         let t = self
             .t
             .checked_add(1)
@@ -873,19 +870,17 @@ impl GpuAdam {
             };
             let context = &p.context;
             let gm = context.scale_device(&g, 1.0 - self.beta1)?;
-            let gv = context.scale_device(&context.mul_device(&g, &g)?, 1.0 - self.beta2)?;
+            let gv = context.square_scale_device(&g, 1.0 - self.beta2)?;
             let (m, v) = match &self.moments[index] {
                 Some(old) => (
-                    context.add_device(&context.scale_device(&old.first, self.beta1)?, &gm)?,
-                    context.add_device(&context.scale_device(&old.second, self.beta2)?, &gv)?,
+                    context.scale_add_device(&gm, &old.first, self.beta1)?,
+                    context.scale_add_device(&gv, &old.second, self.beta2)?,
                 ),
                 None => (gm, gv),
             };
             let numerator = context.scale_device(&m, 1.0 / bias1)?;
-            let denominator =
-                context.sqrt_add_device(&context.scale_device(&v, 1.0 / bias2)?, self.epsilon)?;
-            let delta =
-                context.scale_device(&context.div_device(&numerator, &denominator)?, -self.lr)?;
+            let denominator = context.scale_sqrt_add_device(&v, 1.0 / bias2, self.epsilon)?;
+            let delta = context.div_scale_device(&numerator, &denominator, -self.lr)?;
             let data = context.add_device(&p.data(), &delta)?;
             updates.push((index, Rc::new(data), Rc::new(m), Rc::new(v)));
         }

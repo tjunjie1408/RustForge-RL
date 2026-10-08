@@ -12,6 +12,8 @@ mod dqn_runtime;
 pub mod dqn_train;
 pub mod epsilon_greedy;
 pub mod gaussian_policy;
+#[cfg(feature = "gpu")]
+mod gpu_diagnostics;
 mod live_runtime;
 mod on_policy_runtime;
 pub mod ppo;

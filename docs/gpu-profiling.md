@@ -54,19 +54,26 @@ uses its existing unseeded thread RNG, indicated by a null `replay_seed`.
 | Field / phase | Meaning |
 | --- | --- |
 | `submissions` | Explicit queue submissions, including compute, readback copies and zero-inner-dimension matmul clears |
+| `command_buffers` | Encoded command buffers; scoped batches submit several together, so this can exceed `submissions`. Zero-inner-dimension clears count as buffers without compute dispatches |
 | `compute_dispatches` | Compute dispatch calls, excluding empty operations and clears |
 | `readback_submissions` | Explicit device-to-readback-buffer copy submissions |
 | `uploads`, `upload_bytes` | Nonempty tensor/index uploads and logical bytes; includes initialized parameter tensors, excludes dispatch uniforms |
 | `readbacks`, `readback_bytes` | Nonempty readback batches requested and logical bytes, even if subsequent mapping fails; packed scalars share one batch |
 | `host_waits`, `host_wait_ns` | Blocking device poll calls and wall time inside those calls |
 | `tensor_allocations`, `tensor_bytes` | Newly allocated tensor storage and physical bytes; empty tensors reserve four bytes |
+| `tensor_reuses` | Recycled device storage for fully overwritten kernel outputs; live graph snapshots and optimizer state remain immutable |
+| `parameter_allocations`, `parameter_reuses` | Explicit dispatch-uniform buffers created or leased from the shared context cache; excludes wgpu internal upload staging |
+| `readback_allocations`, `readback_reuses` | Explicit readback staging buffers created or leased; buffer capacity may exceed the logical download length |
 | `initialization` | Agent/network initialization in the driver; process device initialization is reported separately |
 | `inference`, `environment`, `replay`, `training` | Driver host phases, including CPU work and any waits inside them |
 | `batch_upload` | DQN's separate batch upload; TD3/SAC uploads remain inside their training methods |
 | `linear_forward` | Shared GPU affine-layer forward calls; excludes subsequent activations and network-level checks |
 | `backward`, `optimizer` | Shared GPU autograd and SGD/Adam calls, including failed/no-op calls |
 | `finite_validation` | TD3/SAC finite-check helpers, including their reductions and scalar readbacks |
+| `objective_diagnostics` | TD3/SAC objective finite-count reductions and packed scalar diagnostics, with one readback/wait per call |
 | `gaussian_validation_metrics` | Gaussian density validation and its diagnostic readback; sampled actions now share that batch |
+| `inference_readback` | TD3 action validation flags packed with physical actions |
+| `temperature_readback` | SAC log-temperature validation flag packed with its exponentiated value |
 | `final_completion` | One explicit completion wait at the end of the profiling driver |
 
 Profiling itself adds **no GPU commands, transfers, timestamp queries or waits**.
@@ -148,3 +155,16 @@ GPU buffer/dispatch/check consolidation remain follow-up work.
 | DQN/TD3/SAC structured profiling runner | Unassigned | Verified on llvmpipe |
 | Counter and numerical-equivalence regression tests | Unassigned | Passed |
 | Physical GPU latency profiling | Unassigned | Deferred |
+
+The [synchronization and scratch reuse follow-up](gpu-sync-buffer-reuse.md)
+measures the new caches and batched objective checks. Scratch counters are
+additive fields in the existing version-1 profiling JSON; fresh collectors may
+reuse buffers already retained by their shared context.
+
+The [GPU execution follow-up](gpu-execution-optimization.md) adds bounded queue
+submission batches, recycled kernel-output storage and fused optimizer arithmetic.
+`command_buffers` and `tensor_reuses` are additive version-1 JSON fields.
+Compute dispatches are counted when encoded; actual queue submissions are counted
+when a batch flushes. A live batch may therefore show dispatches without a matching
+submission yet. Opening/flush contexts account for submissions; serialize contexts
+and use one collector when comparing inclusive phase counters.

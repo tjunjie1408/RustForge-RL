@@ -179,6 +179,29 @@ pub struct GpuTd3Actions {
     inputs: Vec<GpuVariable>,
 }
 impl GpuTd3Actions {
+    /// Checks the same raw snapshots and downloads actions in one packed readback.
+    pub fn checked_to_cpu(&self) -> Result<Tensor> {
+        let context = self.inputs[0].context();
+        let _profile = context.profile_scope("inference_readback");
+        let mut count = None;
+        for variable in self
+            .inputs
+            .iter()
+            .chain([&self.normalized_actions, &self.actions])
+        {
+            let next = context.nonfinite_count_device(&variable.data())?;
+            count = Some(match count {
+                Some(old) => context.add_device(&old, &next)?,
+                None => next,
+            });
+        }
+        let action = self.actions.data();
+        let mut values = context.download_tensors(&[&count.expect("action inputs"), &action])?;
+        if values[0].item() != 0. {
+            return Err(GpuTd3Error::NonFinite);
+        }
+        Ok(values.pop().expect("packed actions"))
+    }
     /// Explicit validation; includes raw inputs/intermediates so clipping cannot hide overflow.
     pub fn checked(&self) -> Result<()> {
         finite(
@@ -264,6 +287,37 @@ pub struct GpuTd3CriticLoss {
 impl GpuTd3CriticLoss {
     /// Explicit readbacks before backward; callers must check gradients/squares before Adam.
     pub fn checked_metrics(&self) -> Result<GpuTd3CriticMetrics> {
+        let checks: Vec<_> = self
+            .inputs
+            .iter()
+            .chain([&self.target_values])
+            .cloned()
+            .collect();
+        if let Some(v) = super::gpu_diagnostics::checked_scalars(
+            self.inputs[0].context(),
+            &checks,
+            &[
+                &self.mask_violation,
+                &self.critic1_loss,
+                &self.critic2_loss,
+                &self.total_loss,
+            ],
+        )? {
+            if v[0] != 0. {
+                return Err(GpuTd3Error::NonFinite);
+            }
+            if v[1] != 0. {
+                return Err(GpuTd3Error::InvalidBatch);
+            }
+            if v[2..].iter().any(|x| !x.is_finite()) {
+                return Err(GpuTd3Error::NonFinite);
+            }
+            return Ok(GpuTd3CriticMetrics {
+                critic1_loss: v[2],
+                critic2_loss: v[3],
+                total_loss: v[4],
+            });
+        }
         finite(self.inputs.iter().chain([&self.target_values]).cloned())?;
         if self.mask_violation.to_cpu()?.item() != 0. {
             return Err(GpuTd3Error::InvalidBatch);
@@ -330,6 +384,16 @@ pub struct GpuTd3ActorLoss {
 }
 impl GpuTd3ActorLoss {
     pub fn checked_loss(&self) -> Result<f32> {
+        if let Some(v) = super::gpu_diagnostics::checked_scalars(
+            self.input.context(),
+            std::slice::from_ref(&self.input),
+            &[&self.loss],
+        )? {
+            if v[0] != 0. || !v[1].is_finite() {
+                return Err(GpuTd3Error::NonFinite);
+            }
+            return Ok(v[1]);
+        }
         finite([self.input.clone()])?;
         let loss = self.loss.to_cpu()?.item();
         if !loss.is_finite() {

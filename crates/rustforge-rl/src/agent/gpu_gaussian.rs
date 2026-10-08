@@ -69,7 +69,14 @@ impl GpuGaussianSample {
     /// Validates the physical actions as well as density inputs/intermediates.
     pub fn checked_metrics(&self) -> Result<GpuGaussianMetrics> {
         self.distribution
-            .checked_metrics_with_action(Some(&self.actions))
+            .checked_metrics_with_action(Some(&self.actions), false)
+            .map(|v| v.0)
+    }
+    /// Validates all density/physical-action snapshots and reads actions with metrics.
+    pub fn checked_actions(&self) -> Result<Tensor> {
+        self.distribution
+            .checked_metrics_with_action(Some(&self.actions), true)
+            .map(|v| v.1.expect("requested action readback"))
     }
 }
 #[derive(Clone, Copy, Debug)]
@@ -80,13 +87,14 @@ pub struct GpuGaussianMetrics {
 impl GpuGaussianLogProb {
     /// Explicit scalar validation/readback before backward or optimizer updates.
     pub fn checked_metrics(&self) -> Result<GpuGaussianMetrics> {
-        self.checked_metrics_with_action(None)
+        self.checked_metrics_with_action(None, false).map(|v| v.0)
     }
 
     fn checked_metrics_with_action(
         &self,
         action: Option<&GpuVariable>,
-    ) -> Result<GpuGaussianMetrics> {
+        download_action: bool,
+    ) -> Result<(GpuGaussianMetrics, Option<Tensor>)> {
         let context = self.log_probs.context();
         let _profile = context.profile_scope("gaussian_validation_metrics");
         // Retain every immutable snapshot, including unclipped raw inputs. All
@@ -120,7 +128,14 @@ impl GpuGaussianLogProb {
             if !metrics.mean_log_prob.is_finite() || !metrics.base_entropy.is_finite() {
                 return Err(GpuGaussianError::NonFinite);
             }
-            return Ok(metrics);
+            return Ok((
+                metrics,
+                if download_action {
+                    Some(action.expect("action requested").to_cpu()?)
+                } else {
+                    None
+                },
+            ));
         }
         let mut scalars = variables
             .map(|variable| context.nonfinite_count_device(&variable.data()))
@@ -128,7 +143,19 @@ impl GpuGaussianLogProb {
         let count = scalars.len();
         scalars.push(context.mean_device(&log_probs)?);
         scalars.push(context.mean_device(&self.base_entropy.data())?);
-        let values = context.download_scalars(&scalars.iter().collect::<Vec<_>>())?;
+        let (values, actions) = if download_action {
+            let data = action.expect("action requested").data();
+            let mut references: Vec<_> = scalars.iter().collect();
+            references.push(&data);
+            let mut values = context.download_tensors(&references)?;
+            let actions = values.pop();
+            (values.iter().map(Tensor::item).collect::<Vec<_>>(), actions)
+        } else {
+            (
+                context.download_scalars(&scalars.iter().collect::<Vec<_>>())?,
+                None,
+            )
+        };
         if values[..count].iter().any(|&value| value != 0.) {
             return Err(GpuGaussianError::NonFinite);
         }
@@ -139,7 +166,7 @@ impl GpuGaussianLogProb {
         if !metrics.mean_log_prob.is_finite() || !metrics.base_entropy.is_finite() {
             return Err(GpuGaussianError::NonFinite);
         }
-        Ok(metrics)
+        Ok((metrics, actions))
     }
 }
 impl GpuGaussianTransform {

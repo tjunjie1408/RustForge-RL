@@ -7,10 +7,13 @@ use std::{
 };
 
 /// Cumulative host-observed work. Bytes describe logical transfers and physical
-/// tensor storage; parameter, binding and readback buffer allocations are excluded.
+/// tensor storage. Scratch allocations/reuses are counted separately; bind group
+/// and encoder allocations are excluded.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct GpuProfileCounters {
     pub submissions: u64,
+    pub command_buffers: u64,
+    pub tensor_reuses: u64,
     pub compute_dispatches: u64,
     pub readback_submissions: u64,
     pub uploads: u64,
@@ -22,12 +25,18 @@ pub struct GpuProfileCounters {
     pub host_wait_ns: u64,
     pub tensor_allocations: u64,
     pub tensor_bytes: u64,
+    pub parameter_allocations: u64,
+    pub parameter_reuses: u64,
+    pub readback_allocations: u64,
+    pub readback_reuses: u64,
 }
 
 impl GpuProfileCounters {
     fn since(&self, before: &Self) -> Self {
         Self {
             submissions: self.submissions.saturating_sub(before.submissions),
+            command_buffers: self.command_buffers.saturating_sub(before.command_buffers),
+            tensor_reuses: self.tensor_reuses.saturating_sub(before.tensor_reuses),
             compute_dispatches: self
                 .compute_dispatches
                 .saturating_sub(before.compute_dispatches),
@@ -44,6 +53,16 @@ impl GpuProfileCounters {
                 .tensor_allocations
                 .saturating_sub(before.tensor_allocations),
             tensor_bytes: self.tensor_bytes.saturating_sub(before.tensor_bytes),
+            parameter_allocations: self
+                .parameter_allocations
+                .saturating_sub(before.parameter_allocations),
+            parameter_reuses: self
+                .parameter_reuses
+                .saturating_sub(before.parameter_reuses),
+            readback_allocations: self
+                .readback_allocations
+                .saturating_sub(before.readback_allocations),
+            readback_reuses: self.readback_reuses.saturating_sub(before.readback_reuses),
         }
     }
 
@@ -51,6 +70,8 @@ impl GpuProfileCounters {
         macro_rules! add { ($($field:ident),*) => { $(self.$field = self.$field.saturating_add(other.$field);)* }; }
         add!(
             submissions,
+            command_buffers,
+            tensor_reuses,
             compute_dispatches,
             readback_submissions,
             uploads,
@@ -60,7 +81,11 @@ impl GpuProfileCounters {
             host_waits,
             host_wait_ns,
             tensor_allocations,
-            tensor_bytes
+            tensor_bytes,
+            parameter_allocations,
+            parameter_reuses,
+            readback_allocations,
+            readback_reuses
         );
     }
 }

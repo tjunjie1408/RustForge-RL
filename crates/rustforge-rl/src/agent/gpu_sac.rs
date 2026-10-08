@@ -180,6 +180,39 @@ pub struct GpuSacCriticMetrics {
 impl GpuSacCriticLoss {
     /// Explicit scalar validation/readback before backward. Check gradients/squares before Adam.
     pub fn checked_metrics(&self) -> Result<GpuSacCriticMetrics> {
+        let checks: Vec<_> = self
+            .inputs
+            .iter()
+            .chain([
+                &self.target_values,
+                &self.critic1_loss,
+                &self.critic2_loss,
+                &self.total_loss,
+            ])
+            .cloned()
+            .collect();
+        if let Some(v) = super::gpu_diagnostics::checked_scalars(
+            self.total_loss.context(),
+            &checks,
+            &[
+                &self.mask_violation,
+                &self.critic1_loss,
+                &self.critic2_loss,
+                &self.total_loss,
+            ],
+        )? {
+            if v[0] != 0. {
+                return Err(GpuSacError::NonFinite);
+            }
+            if v[1] != 0. {
+                return Err(GpuSacError::InvalidBatch);
+            }
+            return Ok(GpuSacCriticMetrics {
+                critic1_loss: v[2],
+                critic2_loss: v[3],
+                total_loss: v[4],
+            });
+        }
         finite(
             self.total_loss.context(),
             self.inputs
@@ -266,6 +299,15 @@ pub struct GpuSacActorLoss {
 }
 impl GpuSacActorLoss {
     pub fn checked_loss(&self) -> Result<f32> {
+        let checks: Vec<_> = self.inputs.iter().chain([&self.loss]).cloned().collect();
+        if let Some(v) =
+            super::gpu_diagnostics::checked_scalars(self.loss.context(), &checks, &[&self.loss])?
+        {
+            if v[0] != 0. {
+                return Err(GpuSacError::NonFinite);
+            }
+            return Ok(v[1]);
+        }
         finite(
             self.loss.context(),
             self.inputs.iter().chain([&self.loss]).cloned(),
@@ -309,6 +351,23 @@ pub struct GpuSacTemperatureMetrics {
 }
 impl GpuSacTemperatureLoss {
     pub fn checked_metrics(&self) -> Result<GpuSacTemperatureMetrics> {
+        let checks: Vec<_> = self.inputs.iter().chain([&self.loss]).cloned().collect();
+        if let Some(v) = super::gpu_diagnostics::checked_scalars(
+            self.loss.context(),
+            &checks,
+            &[&self.alpha, &self.loss],
+        )? {
+            if v[0] != 0. {
+                return Err(GpuSacError::NonFinite);
+            }
+            if !v[1].is_finite() || v[1] <= 0. {
+                return Err(GpuSacError::InvalidTemperature);
+            }
+            return Ok(GpuSacTemperatureMetrics {
+                loss: v[2],
+                alpha: v[1],
+            });
+        }
         finite(
             self.loss.context(),
             self.inputs.iter().chain([&self.loss]).cloned(),

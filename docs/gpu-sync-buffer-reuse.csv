@@ -1,0 +1,13 @@
+algorithm,run,version,adapter,readbacks,host_waits,compute_dispatches,submissions,readback_bytes,parameter_allocations,parameter_reuses,readback_allocations,readback_reuses,training_host_ns
+td3,1,before,"llvmpipe (LLVM 19.1.7, 256 bits)",331,332,6335,6666,1324,6335,0,331,0,638438343
+td3,1,after,"llvmpipe (LLVM 19.1.7, 256 bits)",300,301,6335,6635,1324,2,6333,1,299,568166248
+sac,1,before,"llvmpipe (LLVM 19.1.7, 256 bits)",429,430,13828,14257,5076,13828,0,429,0,962568364
+sac,1,after,"llvmpipe (LLVM 19.1.7, 256 bits)",380,381,13828,14208,5076,1,13827,1,379,877948052
+td3,2,before,"llvmpipe (LLVM 19.1.7, 256 bits)",331,332,6335,6666,1324,6335,0,331,0,536501198
+td3,2,after,"llvmpipe (LLVM 19.1.7, 256 bits)",300,301,6335,6635,1324,2,6333,1,299,547844555
+sac,2,before,"llvmpipe (LLVM 19.1.7, 256 bits)",429,430,13828,14257,5076,13828,0,429,0,1218407955
+sac,2,after,"llvmpipe (LLVM 19.1.7, 256 bits)",380,381,13828,14208,5076,1,13827,1,379,923895600
+td3,3,before,"llvmpipe (LLVM 19.1.7, 256 bits)",331,332,6335,6666,1324,6335,0,331,0,565689451
+td3,3,after,"llvmpipe (LLVM 19.1.7, 256 bits)",300,301,6335,6635,1324,2,6333,1,299,629595995
+sac,3,before,"llvmpipe (LLVM 19.1.7, 256 bits)",429,430,13828,14257,5076,13828,0,429,0,1411274477
+sac,3,after,"llvmpipe (LLVM 19.1.7, 256 bits)",380,381,13828,14208,5076,1,13827,1,379,1008009216
