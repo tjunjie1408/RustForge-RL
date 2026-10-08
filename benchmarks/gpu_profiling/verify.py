@@ -50,15 +50,24 @@ def main():
             backwards *= 3
         assert phases["backward"]["calls"] == backwards
         assert phases["optimizer"]["calls"] == backwards
-        assert counters["submissions"] == counters["compute_dispatches"] + counters["readback_submissions"]
+        assert counters["command_buffers"] == counters["compute_dispatches"] + counters["readback_submissions"]
+        assert counters["submissions"] < counters["command_buffers"]
+        assert counters["tensor_reuses"] > 0
         assert counters["readbacks"] == counters["readback_submissions"]
         assert counters["host_waits"] == counters["readbacks"] + 1
+        assert counters["parameter_allocations"] + counters["parameter_reuses"] == counters["compute_dispatches"]
+        assert counters["readback_allocations"] + counters["readback_reuses"] == counters["readbacks"]
+        assert counters["parameter_reuses"] > 0 and counters["readback_reuses"] > 0
         assert counters["uploads"] > 0 and counters["upload_bytes"] > 0
         for phase in phases.values():
             assert phase["calls"] > 0 and phase["host_elapsed_ns"] > 0
             assert phase["counters"]["host_waits"] <= counters["host_waits"]
         if algorithm != "dqn":
             assert phases["finite_validation"]["counters"]["readbacks"] > 0
+            objectives = phases["objective_diagnostics"]
+            assert objectives["calls"] == backwards
+            assert objectives["counters"]["readbacks"] == backwards
+            assert objectives["counters"]["host_waits"] == backwards
         if algorithm == "sac":
             gaussian = phases["gaussian_validation_metrics"]
             assert gaussian["counters"]["readbacks"] == gaussian["calls"]

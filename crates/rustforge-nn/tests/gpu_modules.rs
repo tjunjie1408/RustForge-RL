@@ -286,3 +286,51 @@ fn frozen_module_snapshots_sync_without_online_aliasing_or_partial_updates() {
         0.,
     );
 }
+
+#[test]
+#[ignore = "requires a hardware or software wgpu adapter"]
+fn affine_and_adam_scopes_batch_commands_without_host_waits() {
+    let c = GpuContext::new().unwrap().with_profiling();
+    let linear =
+        GpuLinear::from_tensors(&c, &Tensor::ones(&[2, 3]), Some(&Tensor::zeros(&[2]))).unwrap();
+    let input = GpuVariable::new(&c, &Tensor::ones(&[4, 3]), false).unwrap();
+    let output = linear.forward(&input).unwrap();
+    let phase = &c.profile_snapshot().unwrap().phases["linear_forward"];
+    assert_eq!(
+        (
+            phase.counters.compute_dispatches,
+            phase.counters.command_buffers,
+            phase.counters.submissions,
+            phase.counters.host_waits
+        ),
+        (2, 2, 1, 0)
+    );
+    assert_eq!(output.to_cpu().unwrap().to_vec(), vec![3.; 8]);
+    let frozen = linear.frozen_snapshot();
+    let mut adam = GpuAdam::new(linear.parameters(), 0.001).unwrap();
+    for _ in 0..2 {
+        adam.zero_grad();
+        linear
+            .forward(&input)
+            .unwrap()
+            .sum()
+            .unwrap()
+            .backward()
+            .unwrap();
+        adam.step().unwrap();
+    }
+    let phase = &c.profile_snapshot().unwrap().phases["optimizer"];
+    assert_eq!(
+        (
+            phase.calls,
+            phase.counters.submissions,
+            phase.counters.host_waits
+        ),
+        (2, 2, 0)
+    );
+    assert!(phase.counters.command_buffers > phase.counters.submissions);
+    assert_eq!(
+        frozen.forward(&input).unwrap().to_cpu().unwrap().to_vec(),
+        vec![3.; 8]
+    );
+}

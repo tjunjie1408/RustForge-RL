@@ -173,3 +173,51 @@ fn replaced_fields_in_other_contexts_keep_previous_validation_behavior() {
         ));
     }
 }
+
+#[test]
+#[ignore = "requires a hardware or software wgpu adapter"]
+fn checked_action_readback_preserves_bits_and_rejects_hidden_invalid_noise() {
+    let c = GpuContext::new().unwrap().with_profiling();
+    let transform = GpuGaussianTransform::new(&c, &[-2., -1.], &[2., 3.]).unwrap();
+    let mean = variable(&c, vec![0.2; 6], &[3, 2], true);
+    let std = variable(&c, vec![-0.3; 6], &[3, 2], true);
+    let noise = variable(&c, vec![0.5; 6], &[3, 2], false);
+    let sample = transform.sample_with_noise(&mean, &std, &noise).unwrap();
+    let expected = sample.actions.to_cpu().unwrap().to_vec();
+    let before = c.profile_snapshot().unwrap().counters;
+    let actual = sample.checked_actions().unwrap().to_vec();
+    let after = c.profile_snapshot().unwrap().counters;
+    assert_eq!(
+        actual.into_iter().map(f32::to_bits).collect::<Vec<_>>(),
+        expected.into_iter().map(f32::to_bits).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        (
+            after.readbacks - before.readbacks,
+            after.host_waits - before.host_waits
+        ),
+        (1, 1)
+    );
+    sample
+        .distribution
+        .log_probs
+        .sum()
+        .unwrap()
+        .backward()
+        .unwrap();
+    assert!(mean
+        .grad_cpu()
+        .unwrap()
+        .unwrap()
+        .to_vec()
+        .iter()
+        .all(|v| v.is_finite()));
+    let bad_noise = variable(&c, vec![f32::INFINITY; 6], &[3, 2], false);
+    let invalid = transform
+        .sample_with_noise(&mean, &std, &bad_noise)
+        .unwrap();
+    assert!(matches!(
+        invalid.checked_actions(),
+        Err(GpuGaussianError::NonFinite)
+    ));
+}
