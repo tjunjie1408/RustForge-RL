@@ -27,6 +27,22 @@ fn elementwise(@builtin(workgroup_id) group: vec3<u32>,
         return;
     }
     switch parameters.operation {
+        case 22u: {
+            let scaled = b[index] * bitcast<f32>(parameters.divisor);
+            output[index] = a[index] + scaled;
+        }
+        case 23u: {
+            let squared = a[index] * a[index];
+            output[index] = squared * bitcast<f32>(parameters.divisor);
+        }
+        case 24u: {
+            let corrected = a[index] * bitcast<f32>(parameters.divisor);
+            output[index] = sqrt(corrected) + bitcast<f32>(parameters.first_columns);
+        }
+        case 25u: {
+            let ratio = a[index] / b[index];
+            output[index] = ratio * bitcast<f32>(parameters.divisor);
+        }
         case 20u: {
             let width = parameters.first_columns + parameters.second_columns;
             let row = index / width;

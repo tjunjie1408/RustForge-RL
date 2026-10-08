@@ -59,6 +59,7 @@ impl GpuContext {
         }
         let storage = self.zeros(&[actions.len()])?;
         if !actions.is_empty() {
+            self.flush_batch();
             let values: Vec<u32> = actions.iter().map(|&action| action as u32).collect();
             self.inner
                 .queue
@@ -91,7 +92,7 @@ impl GpuContext {
         if columns > u32::MAX as usize {
             return Err(GpuError::LimitExceeded);
         }
-        let storage = self.zeros(&[matrix.shape()[0]])?;
+        let storage = self.output_storage(&[matrix.shape()[0]])?;
         if !storage.is_empty() {
             self.dispatch_operation(
                 matrix,
@@ -132,7 +133,7 @@ impl GpuContext {
         indices: &GpuIndices,
     ) -> Result<GpuTensor, GpuError> {
         self.validate_indices(matrix, indices)?;
-        let output = self.zeros(&[indices.len(), 1])?;
+        let output = self.output_storage(&[indices.len(), 1])?;
         if !output.is_empty() {
             self.dispatch_operation(
                 matrix,

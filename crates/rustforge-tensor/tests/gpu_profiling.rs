@@ -36,6 +36,8 @@ fn counters_cover_tensor_and_index_transfers_without_extra_work() {
     assert_eq!((c.uploads, c.upload_bytes), (3, 40));
     assert_eq!((c.readbacks, c.readback_bytes), (2, 24));
     assert_eq!(c.host_waits, 3);
+    assert_eq!((c.parameter_allocations, c.parameter_reuses), (1, 0));
+    assert_eq!((c.readback_allocations, c.readback_reuses), (1, 1));
     assert_eq!((c.tensor_allocations, c.tensor_bytes), (5, 60));
     assert_eq!(snapshot.phases["chain"].counters, *c);
     assert_eq!(snapshot.phases["chain"].calls, 1);

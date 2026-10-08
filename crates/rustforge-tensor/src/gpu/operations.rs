@@ -1,7 +1,5 @@
 //! Device elementwise kernels and hierarchical full-tensor reductions.
 
-use wgpu::util::DeviceExt;
-
 use super::{GpuContext, GpuError, GpuTensor};
 
 pub(super) fn create_pipelines(
@@ -73,7 +71,7 @@ impl GpuContext {
         let first = u32::try_from(a[1]).map_err(|_| GpuError::LimitExceeded)?;
         let second = u32::try_from(b[1]).map_err(|_| GpuError::LimitExceeded)?;
         u32::try_from(columns).map_err(|_| GpuError::LimitExceeded)?;
-        let output = self.zeros(&[a[0], columns])?;
+        let output = self.output_storage(&[a[0], columns])?;
         if !output.is_empty() {
             self.dispatch_operation_layout(
                 left,
@@ -110,7 +108,7 @@ impl GpuContext {
         let stride = u32::try_from(shape[1]).map_err(|_| GpuError::LimitExceeded)?;
         let width = u32::try_from(len).map_err(|_| GpuError::LimitExceeded)?;
         let offset = u32::try_from(start).map_err(|_| GpuError::LimitExceeded)?;
-        let output = self.zeros(&[shape[0], len])?;
+        let output = self.output_storage(&[shape[0], len])?;
         if !output.is_empty() {
             self.dispatch_operation_layout(
                 input,
@@ -148,7 +146,7 @@ impl GpuContext {
             return Err(GpuError::InvalidBounds);
         }
         let bound = self.full(input.shape(), upper)?;
-        let output = self.zeros(input.shape())?;
+        let output = self.output_storage(input.shape())?;
         if !input.is_empty() {
             self.dispatch_operation(
                 input,
@@ -168,7 +166,7 @@ impl GpuContext {
                 shape: matrix.shape().to_vec(),
             });
         }
-        let output = self.zeros(&[matrix.shape()[0], 1])?;
+        let output = self.output_storage(&[matrix.shape()[0], 1])?;
         if !output.is_empty() {
             self.dispatch_operation(
                 matrix,
@@ -192,7 +190,7 @@ impl GpuContext {
                 shape: column.shape().to_vec(),
             });
         }
-        let output = self.zeros(&[column.shape()[0], columns])?;
+        let output = self.output_storage(&[column.shape()[0], columns])?;
         if !output.is_empty() {
             self.dispatch_operation(
                 column,
@@ -215,7 +213,7 @@ impl GpuContext {
                 shape: input.shape().to_vec(),
             });
         }
-        let output = self.zeros(input.shape())?;
+        let output = self.output_storage(input.shape())?;
         if !input.is_empty() {
             self.dispatch_operation(
                 input,
@@ -252,7 +250,7 @@ impl GpuContext {
                 right: gradient.shape().to_vec(),
             });
         }
-        let output = self.zeros(log_probs.shape())?;
+        let output = self.output_storage(log_probs.shape())?;
         if !log_probs.is_empty() {
             self.dispatch_operation(
                 log_probs,
@@ -304,7 +302,7 @@ impl GpuContext {
                 bias: bias.shape().to_vec(),
             });
         }
-        let output = self.zeros(matrix.shape())?;
+        let output = self.output_storage(matrix.shape())?;
         if !matrix.is_empty() {
             self.dispatch_operation(
                 matrix,
@@ -326,7 +324,10 @@ impl GpuContext {
                 shape: matrix.shape().to_vec(),
             });
         }
-        let output = self.zeros(&[matrix.shape()[1]])?;
+        if matrix.is_empty() {
+            return self.zeros(&[matrix.shape()[1]]);
+        }
+        let output = self.output_storage(&[matrix.shape()[1]])?;
         if !matrix.is_empty() {
             self.dispatch_operation(
                 matrix,
@@ -343,7 +344,7 @@ impl GpuContext {
     /// Negative and nonfinite inputs follow shader floating-point semantics.
     pub fn sqrt_add_device(&self, input: &GpuTensor, epsilon: f32) -> Result<GpuTensor, GpuError> {
         self.ensure_owner(input)?;
-        let output = self.zeros(input.shape())?;
+        let output = self.output_storage(input.shape())?;
         if !input.is_empty() {
             self.dispatch_operation(
                 input,
@@ -375,7 +376,7 @@ impl GpuContext {
                 right: right.shape().to_vec(),
             });
         }
-        let output = self.zeros(left.shape())?;
+        let output = self.output_storage(left.shape())?;
         if !left.is_empty() {
             self.dispatch_operation(
                 left,
@@ -388,10 +389,75 @@ impl GpuContext {
         Ok(output)
     }
 
+    /// Fused a + b * factor, used for optimizer and target updates.
+    pub fn scale_add_device(
+        &self,
+        a: &GpuTensor,
+        b: &GpuTensor,
+        factor: f32,
+    ) -> Result<GpuTensor, GpuError> {
+        self.fused_elementwise(a, b, 22, factor, 0.)
+    }
+    /// Fused (input * input) * factor, preserving operation order.
+    pub fn square_scale_device(
+        &self,
+        input: &GpuTensor,
+        factor: f32,
+    ) -> Result<GpuTensor, GpuError> {
+        self.fused_elementwise(input, input, 23, factor, 0.)
+    }
+    /// Fused sqrt(input * factor) + epsilon, used by bias-corrected Adam.
+    pub fn scale_sqrt_add_device(
+        &self,
+        input: &GpuTensor,
+        factor: f32,
+        epsilon: f32,
+    ) -> Result<GpuTensor, GpuError> {
+        self.fused_elementwise(input, input, 24, factor, epsilon)
+    }
+    /// Fused (a / b) * factor, preserving division before scaling.
+    pub fn div_scale_device(
+        &self,
+        a: &GpuTensor,
+        b: &GpuTensor,
+        factor: f32,
+    ) -> Result<GpuTensor, GpuError> {
+        self.fused_elementwise(a, b, 25, factor, 0.)
+    }
+    fn fused_elementwise(
+        &self,
+        a: &GpuTensor,
+        b: &GpuTensor,
+        operation: u32,
+        factor: f32,
+        epsilon: f32,
+    ) -> Result<GpuTensor, GpuError> {
+        self.ensure_owner(a)?;
+        self.ensure_owner(b)?;
+        if a.shape() != b.shape() {
+            return Err(GpuError::ElementwiseShapeMismatch {
+                left: a.shape().to_vec(),
+                right: b.shape().to_vec(),
+            });
+        }
+        let output = self.output_storage(a.shape())?;
+        if !output.is_empty() {
+            self.dispatch_operation_layout(
+                a,
+                b,
+                &output,
+                [a.numel() as u32, operation, factor.to_bits()],
+                [epsilon.to_bits(), 0, 0, 0],
+                &self.inner.elementwise_pipeline,
+            )?;
+        }
+        Ok(output)
+    }
+
     /// Multiplies each element by a host scalar without downloading data.
     pub fn scale_device(&self, input: &GpuTensor, scale: f32) -> Result<GpuTensor, GpuError> {
         self.ensure_owner(input)?;
-        let output = self.zeros(input.shape())?;
+        let output = self.output_storage(input.shape())?;
         if !input.is_empty() {
             self.dispatch_operation(
                 input,
@@ -428,7 +494,7 @@ impl GpuContext {
                 shape: input.shape().to_vec(),
             });
         }
-        let output = self.zeros(shape)?;
+        let output = self.output_storage(shape)?;
         if !output.is_empty() {
             self.dispatch_operation(
                 input,
@@ -443,7 +509,7 @@ impl GpuContext {
 
     /// Creates a constant tensor directly on the device, without a tensor upload.
     pub fn full(&self, shape: &[usize], value: f32) -> Result<GpuTensor, GpuError> {
-        let output = self.zeros(shape)?;
+        let output = self.output_storage(shape)?;
         if !output.is_empty() {
             let dummy = self.zeros(&[])?;
             self.dispatch_operation(
@@ -483,7 +549,7 @@ impl GpuContext {
             } else {
                 vec![groups as usize]
             };
-            let output = self.zeros(&shape)?;
+            let output = self.output_storage(&shape)?;
             let operation = if mean && groups == 1 { 4 } else { 3 };
             self.dispatch_operation(
                 current,
@@ -533,18 +599,11 @@ impl GpuContext {
                 .limits()
                 .max_compute_workgroups_per_dimension,
         )?;
-        let parameters = self
-            .inner
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("tensor operation parameters"),
-                contents: bytemuck::cast_slice(&[
-                    length, operation, groups, auxiliary, layout[0], layout[1], layout[2],
-                    layout[3],
-                ]),
-                usage: wgpu::BufferUsages::UNIFORM,
-            });
-        let buffers = [&left.buffer, &right.buffer, &output.buffer, &parameters];
+        let parameters = self.dispatch_parameters(bytemuck::cast_slice(&[
+            length, operation, groups, auxiliary, layout[0], layout[1], layout[2], layout[3],
+        ]));
+        let buffers: [&wgpu::Buffer; 4] =
+            [&left.buffer, &right.buffer, &output.buffer, &parameters];
         let entries: Vec<_> = buffers
             .iter()
             .enumerate()
@@ -576,7 +635,12 @@ impl GpuContext {
             pass.set_bind_group(0, &bindings, &[]);
             pass.dispatch_workgroups(grid[0], grid[1], 1);
         }
-        self.submit_profiled(encoder, u64::from(length != 0), false);
+        self.submit_compute(
+            encoder,
+            u64::from(length != 0),
+            Some(parameters),
+            &[left, right, output],
+        );
         Ok(())
     }
 }
