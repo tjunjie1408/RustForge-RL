@@ -50,6 +50,9 @@ def main():
             backwards *= 3
         assert phases["backward"]["calls"] == backwards
         assert phases["optimizer"]["calls"] == backwards
+        backward_counts = phases["backward"]["counters"]
+        assert backward_counts["submissions"] < backward_counts["compute_dispatches"]
+        assert backward_counts["host_waits"] == 0
         assert counters["command_buffers"] == counters["compute_dispatches"] + counters["readback_submissions"]
         assert counters["submissions"] < counters["command_buffers"]
         assert counters["tensor_reuses"] > 0
@@ -68,9 +71,12 @@ def main():
             assert objectives["calls"] == backwards
             assert objectives["counters"]["readbacks"] == backwards
             assert objectives["counters"]["host_waits"] == backwards
+            for phase in (phases["finite_validation"], objectives):
+                assert phase["counters"]["submissions"] < phase["counters"]["command_buffers"]
         if algorithm == "sac":
             gaussian = phases["gaussian_validation_metrics"]
             assert gaussian["counters"]["readbacks"] == gaussian["calls"]
+            assert gaussian["counters"]["submissions"] < gaussian["counters"]["command_buffers"]
         finite(data)
         print(f"{algorithm}: {updates} updates, {counters['submissions']} submissions, "
               f"{counters['readbacks']} readbacks; adapter {data['adapter']['name']}")

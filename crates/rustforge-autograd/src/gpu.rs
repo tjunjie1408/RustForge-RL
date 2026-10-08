@@ -397,6 +397,7 @@ impl GpuVariable {
         if !self.requires_grad() {
             return Ok(());
         }
+        let _batch = self.context.command_batch();
         let mut visited = HashSet::new();
         let mut order = Vec::new();
         let mut stack = vec![(self.clone(), false)];
@@ -479,11 +480,8 @@ impl GpuVariable {
                     contributions.push((a, Rc::new(self.context.div_device(&g, &input)?)));
                 }
                 Some(Op::Tanh(a, output)) => {
-                    let squared = self.context.mul_device(&output, &output)?;
-                    let negative = self.context.scale_device(&squared, -1.)?;
-                    let ones = self.context.full(output.shape(), 1.)?;
-                    let derivative = self.context.add_device(&ones, &negative)?;
-                    contributions.push((a, Rc::new(self.context.mul_device(&g, &derivative)?)));
+                    contributions
+                        .push((a, Rc::new(self.context.tanh_backward_device(&output, &g)?)));
                 }
                 Some(Op::SumColumns(a, columns)) => {
                     contributions.push((

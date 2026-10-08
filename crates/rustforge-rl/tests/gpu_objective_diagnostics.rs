@@ -24,6 +24,8 @@ fn one_wait<T>(context: &GpuContext, read: impl FnOnce() -> T) -> T {
     let after = context.profile_snapshot().unwrap().counters;
     assert_eq!(after.host_waits - before.host_waits, 1);
     assert_eq!(after.readbacks - before.readbacks, 1);
+    // These small objectives fit one bounded compute group and one readback.
+    assert_eq!(after.submissions - before.submissions, 2);
     result
 }
 
@@ -98,6 +100,7 @@ fn all_five_objectives_read_exact_metrics_with_one_wait_each() {
     let phase = &context.profile_snapshot().unwrap().phases["objective_diagnostics"];
     assert_eq!(phase.calls, 10);
     assert_eq!(phase.counters.readbacks, 10);
+    assert_eq!(phase.counters.submissions, 20);
 }
 
 #[test]

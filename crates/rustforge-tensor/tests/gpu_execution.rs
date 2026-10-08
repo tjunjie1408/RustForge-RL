@@ -235,3 +235,104 @@ fn fused_optimizer_primitives_match_unfused_formulas_and_reduce_dispatches() {
         Err(GpuError::ElementwiseShapeMismatch { .. })
     ));
 }
+
+#[test]
+#[ignore = "requires a hardware or software wgpu adapter"]
+fn nonfinite_reduction_maps_only_the_first_pass_and_ignores_cached_tails() {
+    let c = GpuContext::new().unwrap().with_profiling();
+    for len in [0usize, 1, 255, 256, 257, 65_536, 65_537] {
+        let mut values: Vec<_> = (0..len)
+            .map(|i| [0., -0., f32::MAX, f32::MIN, f32::MIN_POSITIVE, -1.][i % 6])
+            .collect();
+        for i in (0..len).step_by(127) {
+            values[i] = [f32::NAN, f32::INFINITY, f32::NEG_INFINITY][i % 3];
+        }
+        let expected = values.iter().filter(|v| !v.is_finite()).count() as f32;
+        let input = c.upload(&Tensor::from_vec(values, &[len])).unwrap();
+        let before = c.profile_snapshot().unwrap().counters;
+        let count = c.nonfinite_count_device(&input).unwrap();
+        let after = c.profile_snapshot().unwrap().counters;
+        let mut passes = 0;
+        let mut remaining = len;
+        while remaining != 0 {
+            passes += 1;
+            remaining = remaining.div_ceil(256);
+            if remaining == 1 {
+                break;
+            }
+        }
+        assert_eq!(after.compute_dispatches - before.compute_dispatches, passes);
+        assert_eq!(after.host_waits, before.host_waits);
+        assert_eq!(c.download(&count).unwrap().item(), expected);
+    }
+    let c = GpuContext::new().unwrap();
+    drop(c.full(&[1024], f32::NAN).unwrap());
+    let finite = c.full(&[257], f32::MAX).unwrap();
+    assert_eq!(
+        c.download(&c.nonfinite_count_device(&finite).unwrap())
+            .unwrap()
+            .item(),
+        0.
+    );
+    let foreign = GpuContext::new().unwrap().zeros(&[]).unwrap();
+    assert!(matches!(
+        c.nonfinite_count_device(&foreign),
+        Err(GpuError::DeviceMismatch)
+    ));
+}
+
+#[test]
+#[ignore = "requires a hardware or software wgpu adapter"]
+fn fused_tanh_backward_matches_staged_arithmetic_and_special_values() {
+    let c = GpuContext::new().unwrap().with_profiling();
+    let output = c
+        .upload(&Tensor::from_vec(
+            vec![-1., 1., -0., 0., 0.25, -0.5, f32::NAN],
+            &[7],
+        ))
+        .unwrap();
+    let gradient = c
+        .upload(&Tensor::from_vec(
+            vec![f32::INFINITY, 2., 0., -0., 2., f32::INFINITY, 1.],
+            &[7],
+        ))
+        .unwrap();
+    let squared = c.mul_device(&output, &output).unwrap();
+    let negative = c.scale_device(&squared, -1.).unwrap();
+    let ones = c.full(output.shape(), 1.).unwrap();
+    let derivative = c.add_device(&ones, &negative).unwrap();
+    let staged = c.mul_device(&gradient, &derivative).unwrap();
+    let before = c.profile_snapshot().unwrap().counters;
+    let fused = c.tanh_backward_device(&output, &gradient).unwrap();
+    let after = c.profile_snapshot().unwrap().counters;
+    assert_eq!(after.compute_dispatches - before.compute_dispatches, 1);
+    assert_eq!(after.host_waits, before.host_waits);
+    for (actual, expected) in c
+        .download(&fused)
+        .unwrap()
+        .to_vec()
+        .into_iter()
+        .zip(c.download(&staged).unwrap().to_vec())
+    {
+        if expected.is_nan() {
+            assert!(actual.is_nan());
+        } else {
+            assert_eq!(actual.to_bits(), expected.to_bits());
+        }
+    }
+    let empty = c.zeros(&[0, 3]).unwrap();
+    assert_eq!(
+        c.tanh_backward_device(&empty, &empty).unwrap().shape(),
+        &[0, 3]
+    );
+    let invalid = c.zeros(&[1]).unwrap();
+    assert!(matches!(
+        c.tanh_backward_device(&output, &invalid),
+        Err(GpuError::ElementwiseShapeMismatch { .. })
+    ));
+    let foreign = GpuContext::new().unwrap().zeros(&[7]).unwrap();
+    assert!(matches!(
+        c.tanh_backward_device(&output, &foreign),
+        Err(GpuError::DeviceMismatch)
+    ));
+}

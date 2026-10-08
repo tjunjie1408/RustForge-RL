@@ -118,6 +118,7 @@ fn finite_data(
     inputs: impl IntoIterator<Item = std::rc::Rc<rustforge_tensor::gpu::GpuTensor>>,
 ) -> Result<()> {
     let _profile = context.profile_scope("finite_validation");
+    let _batch = context.command_batch();
     let mut count = None;
     for data in inputs {
         let next = context.nonfinite_count_device(&data)?;
@@ -183,6 +184,7 @@ impl GpuTd3Actions {
     pub fn checked_to_cpu(&self) -> Result<Tensor> {
         let context = self.inputs[0].context();
         let _profile = context.profile_scope("inference_readback");
+        let _batch = context.command_batch();
         let mut count = None;
         for variable in self
             .inputs

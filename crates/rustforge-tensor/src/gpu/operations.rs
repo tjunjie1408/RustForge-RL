@@ -266,7 +266,7 @@ impl GpuContext {
     /// Reduces nonfinite-value indicators to a scalar for explicit validation.
     /// The count can round for very large inputs; zero/nonzero remains reliable.
     pub fn nonfinite_count_device(&self, input: &GpuTensor) -> Result<GpuTensor, GpuError> {
-        self.sum_device(&self.elementwise(input, input, 14)?)
+        self.reduce(input, false, true)
     }
 
     /// Adds identical-shape device tensors; broadcasting is not supported.
@@ -480,6 +480,16 @@ impl GpuContext {
         self.elementwise(input, gradient, 4)
     }
 
+    /// Applies the tanh derivative to an identical-shape incoming gradient.
+    /// `output` is the saved forward tanh value, preserving snapshot semantics.
+    pub fn tanh_backward_device(
+        &self,
+        output: &GpuTensor,
+        gradient: &GpuTensor,
+    ) -> Result<GpuTensor, GpuError> {
+        self.elementwise(output, gradient, 26)
+    }
+
     /// Broadcasts a single-element device tensor to an arbitrary output shape.
     /// This explicit primitive is used to backpropagate full sum and mean.
     pub fn broadcast_scalar_device(
@@ -526,22 +536,28 @@ impl GpuContext {
     /// Reduces all elements to a device scalar using a hierarchical sum.
     /// Empty tensors produce zero, matching Tensor::sum.
     pub fn sum_device(&self, input: &GpuTensor) -> Result<GpuTensor, GpuError> {
-        self.reduce(input, false)
+        self.reduce(input, false, false)
     }
 
     /// Reduces all elements to a device scalar mean.
     /// Empty tensors produce zero, matching Tensor::mean.
     pub fn mean_device(&self, input: &GpuTensor) -> Result<GpuTensor, GpuError> {
-        self.reduce(input, true)
+        self.reduce(input, true, false)
     }
 
-    fn reduce(&self, input: &GpuTensor, mean: bool) -> Result<GpuTensor, GpuError> {
+    fn reduce(
+        &self,
+        input: &GpuTensor,
+        mean: bool,
+        nonfinite: bool,
+    ) -> Result<GpuTensor, GpuError> {
         self.ensure_owner(input)?;
         if input.is_empty() {
             return self.zeros(&[]);
         }
         let mut current = input;
         let mut intermediate: Option<GpuTensor> = None;
+        let mut first_pass = true;
         loop {
             let groups = (current.numel() as u32).div_ceil(256);
             let shape = if groups == 1 {
@@ -550,7 +566,13 @@ impl GpuContext {
                 vec![groups as usize]
             };
             let output = self.output_storage(&shape)?;
-            let operation = if mean && groups == 1 { 4 } else { 3 };
+            let operation = if nonfinite && first_pass {
+                14
+            } else if mean && groups == 1 {
+                4
+            } else {
+                3
+            };
             self.dispatch_operation(
                 current,
                 current,
@@ -563,6 +585,7 @@ impl GpuContext {
             }
             // Submitted commands retain the previous buffer until they finish.
             intermediate.replace(output);
+            first_pass = false;
             current = intermediate
                 .as_ref()
                 .expect("reduction output just assigned");

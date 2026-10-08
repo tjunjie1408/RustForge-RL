@@ -98,7 +98,7 @@ impl GpuGaussianLogProb {
         let context = self.log_probs.context();
         let _profile = context.profile_scope("gaussian_validation_metrics");
         // Retain every immutable snapshot, including unclipped raw inputs. All
-        // original reduction kernels run unchanged; pack their results and the
+        // checked snapshots remain covered; pack their reduction results and the
         // two diagnostic means into one readback without adding an autograd graph.
         let variables = action
             .into_iter()
@@ -137,6 +137,7 @@ impl GpuGaussianLogProb {
                 },
             ));
         }
+        let _batch = context.command_batch();
         let mut scalars = variables
             .map(|variable| context.nonfinite_count_device(&variable.data()))
             .collect::<std::result::Result<Vec<_>, _>>()?;

@@ -27,6 +27,12 @@ fn elementwise(@builtin(workgroup_id) group: vec3<u32>,
         return;
     }
     switch parameters.operation {
+        case 26u: {
+            let squared = a[index] * a[index];
+            let negative = squared * -1.0;
+            let derivative = 1.0 + negative;
+            output[index] = b[index] * derivative;
+        }
         case 22u: {
             let scaled = b[index] * bitcast<f32>(parameters.divisor);
             output[index] = a[index] + scaled;
@@ -152,7 +158,11 @@ fn reduce(@builtin(workgroup_id) group: vec3<u32>,
     let index = group_index * 256u + lane;
     partials[lane] = 0.0;
     if (index < parameters.length) {
-        partials[lane] = a[index];
+        if (parameters.operation == 14u) {
+            partials[lane] = select(0.0, 1.0, (bitcast<u32>(a[index]) & 0x7f800000u) == 0x7f800000u);
+        } else {
+            partials[lane] = a[index];
+        }
     }
     workgroupBarrier();
     for (var stride = 128u; stride > 0u; stride /= 2u) {
