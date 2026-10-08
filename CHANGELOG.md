@@ -16,6 +16,13 @@ contain breaking changes.
 
 ### Changed
 
+- GPU backward traversals batch command submissions and fuse the tanh derivative.
+  Nonfinite validation maps indicators directly into the first reduction pass,
+  eliminating a whole-size temporary and one dispatch per nonempty check.
+  TD3/SAC/Gaussian validation loops group compute up to their existing readback
+  boundaries. Paired TD3/SAC profiles preserve seeded diagnostics and transfers;
+  see the [review follow-up](docs/gpu-reduction-backward-optimization.md).
+
 - GPU linear layers and optimizers batch queue submissions. Fully overwritten
   kernel outputs reuse bounded storage after all live snapshots release it;
   pending batches retain storage and uniform leases until submission. SGD/Adam

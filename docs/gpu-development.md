@@ -42,8 +42,8 @@ and historical test inventories remain in Git history.
   Queue ordering allows device results to feed subsequent operations.
 - `command_batch` groups compute command buffers on the calling thread, with
   automatic flushing at downloads/waits and a 32-command limit. Linear layers
-  and optimizers use it internally. Finish a producing batch before handing its
-  outputs to another thread.
+  and optimizers, plus backward traversals, use it internally. Finish a producing
+  batch before handing its outputs to another thread.
 - Fully written kernel outputs recycle storage after their last live owner drops.
   Deferred batches retain storage/uniform leases until submission. Public zeros,
   empty reductions and partially written scatter outputs keep zero initialization.
@@ -58,6 +58,11 @@ and historical test inventories remain in Git history.
   inference combines final action validation and action copies. The
   [execution walkthrough](gpu-execution-optimization.md) describes these changes
   and fused SGD/Adam arithmetic.
+- Finite checks map indicators directly into their first hierarchical reduction;
+  backward batches gradient commands and uses a fused tanh derivative. TD3/SAC
+  and Gaussian validation batch compute up to existing readback boundaries. See the
+  [review follow-up](gpu-reduction-backward-optimization.md) for paired work
+  counts, allocation tradeoffs and the next implementation candidates.
 - CPU/software adapters default to the direct matrix kernel; other adapters use
   the tiled kernel. `with_matmul_kernel` changes that choice on a shared context.
   The tiled shader uses 8 × 8 workgroup tiles and supports edge/transpose cases.
