@@ -32,6 +32,12 @@ network shapes.
 
 ## What the implementation actually does
 
+This describes the measured v0.2.0 implementation. The subsequent
+[synchronization and buffer reuse change](gpu-sync-buffer-reuse.md) caches
+dispatch uniforms/readback staging and batches objective diagnostics; the
+physical measurements above have not been rerun for that change or the later
+[command batching, storage reuse and optimizer fusion](gpu-execution-optimization.md).
+
 1. **CPU environments impose a dependency loop.** TD3 selects an action, calls
    `env.step`, writes the next observation, samples CPU replay and trains before
    proceeding. CPU and GPU cannot freely execute those dependent steps in

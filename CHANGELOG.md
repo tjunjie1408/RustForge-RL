@@ -16,6 +16,20 @@ contain breaking changes.
 
 ### Changed
 
+- GPU linear layers and optimizers batch queue submissions. Fully overwritten
+  kernel outputs reuse bounded storage after all live snapshots release it;
+  pending batches retain storage and uniform leases until submission. SGD/Adam
+  fuse common elementwise arithmetic. TD3/SAC inference packs final action
+  checks and downloads; SAC temperature checks share one scalar readback.
+  Profiling now exposes command-buffer counts and tensor reuse. See the
+  [execution walkthrough](docs/gpu-execution-optimization.md).
+
+- TD3/SAC critic, actor and temperature diagnostics pack finite checks and scalar
+  metrics into one readback/wait per objective, preserving validation precedence.
+  GPU contexts reuse bounded dispatch-uniform and readback staging buffers across
+  clones without extra synchronization; new profiling counters expose cache use.
+  Queued/concurrent reuse and numerical parity are covered by adapter tests.
+
 - GPU Gaussian validation packs check results and diagnostic means into one
   scalar readback batch, preserving finite checks, gradient behavior and exact
   metric values. The new `GpuContext::download_scalars` API shares one wait across
