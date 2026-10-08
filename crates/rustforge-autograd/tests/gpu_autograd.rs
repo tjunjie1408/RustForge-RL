@@ -51,6 +51,49 @@ fn shared_graph_repeated_backward_and_cpu_parity() {
 
 #[test]
 #[ignore = "requires a GPU adapter"]
+fn backward_batches_shared_tanh_graphs_and_preserves_forward_snapshots() {
+    let c = GpuContext::new().unwrap().with_profiling();
+    let values = [-0.5f32, 0.25, 2., -20., 20.];
+    let x = GpuVariable::new(&c, &Tensor::from_vec(values.to_vec(), &[5]), true).unwrap();
+    let y = x.tanh().unwrap();
+    let loss = y.mul(&y).unwrap().sum().unwrap();
+    let saved = y.to_cpu().unwrap().to_vec();
+    let replacement = GpuVariable::new(&c, &Tensor::ones(&[5]), false).unwrap();
+    x.copy_data_from(&replacement).unwrap();
+    let expected: Vec<_> = saved.iter().map(|v| 2. * v * (1. - v * v)).collect();
+    for repetition in 1..=2 {
+        let before = c.profile_snapshot().unwrap().counters;
+        loss.backward().unwrap();
+        let after = c.profile_snapshot().unwrap().counters;
+        assert_eq!(
+            after.compute_dispatches - before.compute_dispatches,
+            5 + repetition
+        );
+        assert_eq!(after.submissions - before.submissions, 1);
+        assert_eq!(after.host_waits, before.host_waits);
+        close(
+            &x.grad_cpu().unwrap().unwrap().to_vec(),
+            &expected
+                .iter()
+                .map(|v| *v * repetition as f32)
+                .collect::<Vec<_>>(),
+            2e-6,
+        );
+    }
+    let before = c.profile_snapshot().unwrap().counters;
+    assert!(x.backward().is_err());
+    replacement.sum().unwrap().backward().unwrap();
+    // The frozen reduction itself queues work, but neither backward queues any.
+    let after = c.profile_snapshot().unwrap().counters;
+    assert_eq!(after.compute_dispatches - before.compute_dispatches, 1);
+    let phase = &c.profile_snapshot().unwrap().phases["backward"];
+    assert_eq!(phase.calls, 4);
+    assert_eq!(phase.counters.submissions, 2);
+    assert_eq!(phase.counters.host_waits, 0);
+}
+
+#[test]
+#[ignore = "requires a GPU adapter"]
 fn matrix_gradients_match_finite_differences() {
     // Rectangular matrices catch swapped dimensions in each transpose rule.
     for kind in 0..3 {
