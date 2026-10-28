@@ -1,12 +1,46 @@
 use clap::Parser;
 use rustforge_cli::cli::{Cli, Commands};
-use std::{fs, path::PathBuf};
+use std::fs;
+use std::path::PathBuf;
 
 fn directory(name: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!("rustforge-device-{}-{name}", std::process::id()));
-    fs::create_dir_all(&path).unwrap();
+    fs::create_dir_all(&path).expect("create device-selection test directory");
     path
 }
+#[cfg(feature = "gpu")]
+#[test]
+fn explicit_unavailable_backend_never_falls_back_to_another_backend() {
+    use std::process::Command;
+
+    let directory = directory("backend-override");
+    let metrics_path = directory.join("output.csv");
+    let process_output = Command::new(env!("CARGO_BIN_EXE_rustforge"))
+        .args([
+            "train",
+            "dqn",
+            "--device",
+            "gpu",
+            "--episodes",
+            "1",
+            "--output",
+        ])
+        .arg(&metrics_path)
+        .env("WGPU_BACKEND", "rustforge-unsupported-backend")
+        .output()
+        .expect("start CLI subprocess with an explicit GPU backend");
+    let stderr = String::from_utf8_lossy(&process_output.stderr);
+    assert!(
+        !process_output.status.success(),
+        "unsupported WGPU_BACKEND unexpectedly selected an adapter"
+    );
+    assert!(
+        stderr.contains("no compatible GPU adapter available"),
+        "expected an adapter-selection error, got: {stderr}"
+    );
+    fs::remove_dir_all(directory).expect("remove backend-selection test directory");
+}
+
 #[test]
 fn unsupported_device_combinations_preserve_existing_output() {
     let directory = directory("invalid");

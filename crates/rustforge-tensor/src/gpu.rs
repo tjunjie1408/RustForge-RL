@@ -206,6 +206,9 @@ impl GpuContext {
     /// Creates an isolated tensor ownership scope on the process compute device.
     /// Device/queue/pipelines are initialized once and retained for the process
     /// lifetime. Separate contexts reject each other's tensors; clones share a scope.
+    /// Set `WGPU_BACKEND` before the first context to restrict backend discovery
+    /// (for example, `vulkan`, `dx12`, or `metal`). An unavailable explicit backend
+    /// returns an error instead of selecting an unrequested backend.
     pub fn new() -> Result<Self, GpuError> {
         // wgpu 0.19 EGL instances may share a display, while repeated adapter
         // enumeration creates separate locks for the same GL context. Multiple
@@ -247,7 +250,11 @@ impl GpuContext {
     }
 
     async fn initialize() -> Result<DeviceResources, GpuError> {
-        let instance = wgpu::Instance::default();
+        let backends = wgpu::util::backend_bits_from_env().unwrap_or(wgpu::Backends::all());
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends,
+            ..Default::default()
+        });
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,

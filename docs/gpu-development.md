@@ -29,6 +29,13 @@ and historical test inventories remain in Git history.
 
 ### Device storage and execution
 
+- Set `WGPU_BACKEND` before the first GPU context to restrict backend discovery,
+  for example `vulkan`, `dx12`, `metal`, or a comma-separated list. Without an
+  override, WGPU discovers all enabled backends as before. An unavailable explicit
+  selection returns an adapter error. The process-wide device retains the first
+  successful selection. In PowerShell, `$env:WGPU_BACKEND = 'vulkan'` limits child
+  processes to Vulkan without changing system graphics settings. Remove that
+  variable when the diagnostic session ends.
 - `GpuContext` owns a tensor scope over a process-wide device, queue and cached
   pipelines. Clones share ownership; separately created contexts reject each
   other's tensors even when they use the same adapter. Tensors retain their

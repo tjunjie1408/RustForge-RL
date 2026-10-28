@@ -11,6 +11,10 @@ contain breaking changes.
 
 ### Added
 
+- Process-level `WGPU_BACKEND` selection before the first GPU context, allowing
+  backend-specific startup diagnostics without changing system graphics settings.
+  An unavailable explicit selection returns an adapter error.
+
 - Opt-in GPU context counters and inclusive host phase timings, including shared
   forward, backward, optimizer and validation hooks. A DQN/TD3/SAC profiling
   example emits versioned JSON with adapter/config metadata; a standalone
@@ -66,9 +70,12 @@ contain breaking changes.
 
 ### Known limitations
 
-- A Windows GPU profiling child exited once with an invalid-handle exception
-  during pre-release validation. Direct and full-verifier reruns passed; the
-  responsible component has not been identified and no crash fix is claimed.
+- On the tested Windows/NVIDIA system, GPU startup intermittently exited with
+  exception `0xc0000008` during pre-release profiling and CLI benchmarking.
+  The captured exception stack runs through the NVIDIA driver and Windows
+  `SetEvent`, while the main thread is still discovering DX12 adapters. The cause
+  of the invalid handle remains unconfirmed; backend selection is an isolation
+  mechanism, and no underlying driver fix is claimed.
 
 ## [0.2.0]
 

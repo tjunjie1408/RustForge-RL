@@ -100,6 +100,7 @@ def main():
         "rustc": capture(["rustc", "-Vv"]).stdout.strip(),
         "gpu_inventory": capture(["nvidia-smi", "--query-gpu=name,driver_version,memory.total", "--format=csv"]).stdout.strip(),
         "build": "release, locked dependencies, gpu feature",
+        "wgpu_backend_override": os.environ.get("WGPU_BACKEND"),
         "binary_sha256": {binary.name: hashlib.sha256(binary.read_bytes()).hexdigest() for binary in (cli, matrix)},
         "trials": args.trials,
         "matrix_iterations": args.iterations,
@@ -114,7 +115,9 @@ def main():
     save_text(args.output / "matmul.csv", measured.stdout)
     save_text(args.output / "matmul.log", measured.stderr)
     if measured.returncode:
-        raise RuntimeError(f"matmul failed: {measured.stderr}")
+        save_json(args.output / "failure.json", {"run_id": "matmul", "returncode": measured.returncode,
+                  "returncode_hex": f"0x{measured.returncode & 0xffffffff:08x}"})
+        raise RuntimeError(f"matmul failed (exit {measured.returncode}): {measured.stderr}")
     samples = []
     for algorithm, environment, episodes in PROFILES:
         for trial in range(args.trials):
@@ -131,7 +134,9 @@ def main():
                 elapsed = time.perf_counter() - started
                 save_text(args.output / f"{run_id}.log", measured.stdout + measured.stderr)
                 if measured.returncode:
-                    raise RuntimeError(f"{run_id} failed: {measured.stderr}")
+                    save_json(args.output / "failure.json", {"run_id": run_id, "returncode": measured.returncode,
+                              "returncode_hex": f"0x{measured.returncode & 0xffffffff:08x}"})
+                    raise RuntimeError(f"{run_id} failed (exit {measured.returncode}): {measured.stderr}")
                 steps, reward = read_metrics(metrics, algorithm, episodes)
                 samples.append({"algorithm": algorithm, "environment": environment, "device": device,
                                 "trial": trial, "episodes": episodes, "steps": steps,
