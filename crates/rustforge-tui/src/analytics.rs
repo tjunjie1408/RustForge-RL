@@ -82,10 +82,10 @@ pub fn downsample_min_max(
             let Some(value) = value.filter(|value| value.is_finite()) else {
                 continue;
             };
-            if minimum.map_or(true, |(_, current)| value < current) {
+            if minimum.is_none_or(|(_, current)| value < current) {
                 minimum = Some((index, value));
             }
-            if maximum.map_or(true, |(_, current)| value > current) {
+            if maximum.is_none_or(|(_, current)| value > current) {
                 maximum = Some((index, value));
             }
         }

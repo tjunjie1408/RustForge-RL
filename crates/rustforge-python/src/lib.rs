@@ -13,7 +13,7 @@ use env::{PyCartPole, PyGridWorld, PyMountainCar, PyMountainCarContinuous, PyPen
 use space::PySpace;
 
 /// The `rustforge._core` extension module.
-#[pymodule]
+#[pymodule(gil_used = true)]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyDQN>()?;
     m.add_class::<PySpace>()?;

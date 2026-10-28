@@ -58,7 +58,7 @@ pub fn learn(context: &GpuContext) -> Result<LearningReport, Box<dyn std::error:
         if episode >= 64 {
             replay.sample_with_rng(64, &mut batch, &mut sampling);
             let (critic, actor) = agent.train_step_with_rng(&batch, &mut smoothing)?;
-            assert!(critic.is_finite() && actor.map_or(true, |v| v.is_finite()));
+            assert!(critic.is_finite() && actor.is_none_or(|v| v.is_finite()));
         }
     }
     let action = agent.select_action(&[1., 0.], 0.)?[0];

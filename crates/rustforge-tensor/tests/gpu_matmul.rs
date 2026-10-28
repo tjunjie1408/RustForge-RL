@@ -824,7 +824,7 @@ fn gpu_column_reduction_and_broadcast_cover_shapes_and_owner_errors() {
         let repeated = c.broadcast_columns_device(&sum, cols).unwrap();
         let expected: Vec<_> = expected
             .iter()
-            .flat_map(|v| std::iter::repeat(*v).take(cols))
+            .flat_map(|v| std::iter::repeat_n(*v, cols))
             .collect();
         assert_eq!(c.download(&repeated).unwrap().to_vec(), expected);
     }

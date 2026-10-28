@@ -7,7 +7,7 @@ use rustforge_rl::env::Space;
 ///
 /// `kind` is one of `"discrete"`, `"box"`, or `"multidiscrete"`. Only the fields
 /// relevant to that kind are populated; the rest are `None`.
-#[pyclass(name = "Space", module = "rustforge._core")]
+#[pyclass(name = "Space", module = "rustforge._core", from_py_object)]
 #[derive(Clone)]
 pub struct PySpace {
     #[pyo3(get)]

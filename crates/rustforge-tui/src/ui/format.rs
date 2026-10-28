@@ -34,7 +34,7 @@ pub fn grouped(value: u64) -> String {
     let digits = value.to_string();
     let mut output = String::with_capacity(digits.len() + digits.len() / 3);
     for (index, digit) in digits.chars().enumerate() {
-        if index > 0 && (digits.len() - index) % 3 == 0 {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
             output.push(',');
         }
         output.push(digit);
@@ -92,8 +92,8 @@ pub fn progress_bar(fraction: f64, width: usize, ascii: bool) -> (String, String
     let filled = ((fraction * width as f64).round() as usize).min(width);
     let (full, empty) = if ascii { ('#', '-') } else { ('█', '░') };
     (
-        std::iter::repeat(full).take(filled).collect(),
-        std::iter::repeat(empty).take(width - filled).collect(),
+        std::iter::repeat_n(full, filled).collect(),
+        std::iter::repeat_n(empty, width - filled).collect(),
     )
 }
 

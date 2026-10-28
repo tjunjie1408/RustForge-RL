@@ -15,14 +15,14 @@ gpu = ["rustforge-rl/gpu"]
 
 [dependencies]
 serde_json = "1"
-anyhow = "1.0.102"
+anyhow = { workspace = true }
 clap = { version = "4", features = ["derive"] }
 rustforge-autograd = { path = "../rustforge-autograd" }
 rustforge-tensor = { path = "../rustforge-tensor" }
 rustforge-nn = { path = "../rustforge-nn" }
 rustforge-rl = { path = "../rustforge-rl" }
 rustforge-tui = { path = "../rustforge-tui" }
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
 [[bin]]
 name = "rustforge"

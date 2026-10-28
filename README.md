@@ -8,7 +8,7 @@ REINFORCE, TD3 and SAC. Python currently exposes native environments and CPU DQN
 
 ## CLI
 
-Build/install from this checkout with Rust 1.75 or newer:
+Build/install from this checkout with Rust 1.88 or newer:
 
 ```bash
 cargo install --path crates/rustforge-cli --locked

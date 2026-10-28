@@ -301,8 +301,8 @@ impl DQN {
         // ── 6. Periodically update target network (hard copy) ──
         self.train_steps += 1;
         let freq = self.config.target_update_freq;
-        // `freq == 0` disables target updates (and avoids a division by zero).
-        if freq != 0 && self.train_steps % freq == 0 {
+        // `freq == 0` disables target updates.
+        if freq != 0 && self.train_steps.is_multiple_of(freq) {
             self.update_target();
         }
 

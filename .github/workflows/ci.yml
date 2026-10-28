@@ -38,22 +38,26 @@ jobs:
     - name: Run Clippy
       run: cargo clippy --workspace --all-targets --all-features --exclude rustforge-python -- -D warnings
 
-  # Keep the declared `rust-version` honest. Cargo.lock stays at format v3 and
+  # Keep the declared `rust-version` honest, including Python bindings.
   # .cargo/config.toml makes dependency resolution prefer MSRV-compatible versions.
   msrv:
-    name: MSRV (Rust 1.75)
+    name: MSRV (Rust 1.88)
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v5
 
     - name: Set up Rust
-      uses: dtolnay/rust-toolchain@1.75
+      uses: dtolnay/rust-toolchain@1.88.0
+
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
 
     - name: Cache cargo registry
       uses: Swatinem/rust-cache@v2
 
     - name: Check workspace on the declared MSRV
-      run: cargo check --workspace --all-targets --all-features --locked --exclude rustforge-python
+      run: cargo check --workspace --all-targets --all-features --locked
 
   test:
     name: Test on ${{ matrix.os }}
@@ -94,6 +98,9 @@ jobs:
 
       - name: Clippy (bindings)
         run: cargo clippy -p rustforge-python --features extension-module -- -D warnings
+
+      - name: Verify Python iterator security regressions
+        run: cargo test --locked -p rustforge-python --test iterator_security
 
       - name: Build, install & test
         working-directory: crates/rustforge-python

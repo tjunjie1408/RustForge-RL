@@ -37,6 +37,11 @@ contain breaking changes.
   clones without extra synchronization; new profiling counters expose cache use.
   Queued/concurrent reuse and numerical parity are covered by adapter tests.
 
+- Raise the workspace minimum Rust version to 1.88. Upgrade PyO3 and Ratatui while
+  preserving the Python 3.9 stable ABI and GIL requirement. Unify the terminal
+  backend and event handling on Crossterm 0.29.
+  Update the Anyhow, Rand, Tokio and LRU security version floors.
+
 - GPU Gaussian validation packs check results and diagnostic means into one
   scalar readback batch, preserving finite checks, gradient behavior and exact
   metric values. The new `GpuContext::download_scalars` API shares one wait across

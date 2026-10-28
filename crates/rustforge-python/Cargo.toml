@@ -18,7 +18,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 rustforge-rl = { path = "../rustforge-rl" }
 rustforge-tensor = { path = "../rustforge-tensor" }
-pyo3 = { version = "0.25" }
+pyo3 = { version = "0.30.1" }
 
 [features]
 # Enabled ONLY by maturin (see pyproject.toml). Left off during `cargo test`/`cargo clippy`
