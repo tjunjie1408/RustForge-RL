@@ -7,6 +7,8 @@ contain breaking changes.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-28
+
 ### Added
 
 - Opt-in GPU context counters and inclusive host phase timings, including shared
@@ -51,6 +53,22 @@ contain breaking changes.
   replay reuses the weight tensor as scratch space, removing the per-batch heap
   allocation while preserving seeded draws and importance weights. Added a
   reproducible CPU sampling benchmark and allocation regression coverage.
+
+### Security
+
+- Upgrade dependencies affected by the current PyO3, LRU, Anyhow, Rand and Tokio
+  advisories, and add oversized Python iterator regression tests. The minimum
+  supported Rust version is now 1.88.
+- Retain Bincode 1.3.3 and the macOS Metal backend's build-time Paste dependency.
+  Their RustSec advisories report discontinued maintenance, with no patched
+  versions. They do not block this release; the migration priorities and input
+  boundaries are recorded in [dependency maintenance](docs/dependency-maintenance.md).
+
+### Known limitations
+
+- A Windows GPU profiling child exited once with an invalid-handle exception
+  during pre-release validation. Direct and full-verifier reruns passed; the
+  responsible component has not been identified and no crash fix is claimed.
 
 ## [0.2.0]
 
@@ -364,5 +382,7 @@ First public release.
 - The declared MSRV (Rust 1.75) is enforced in CI; `Cargo.lock` uses format
   v3 and dependency resolution prefers MSRV-compatible versions.
 
-[Unreleased]: https://github.com/tjunjie1408/RustForge-RL/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/tjunjie1408/RustForge-RL/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/tjunjie1408/RustForge-RL/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/tjunjie1408/RustForge-RL/releases/tag/v0.2.0
 [0.1.0]: https://github.com/tjunjie1408/RustForge-RL/releases/tag/v0.1.0
